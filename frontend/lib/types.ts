@@ -1,0 +1,139 @@
+export type ApiResponse<T> = {
+  ok: boolean;
+  data: T | null;
+  error: { code: string; message: string; step?: string | null } | null;
+  step_status: Record<string, string>;
+};
+
+export type UserProfile = {
+  destination: string;
+  days: number;
+  nights: number;
+  hotel_name?: string | null;
+  hotel_area?: string | null;
+  travelers: { count: number; type: string };
+  budget_level: "low" | "medium" | "high";
+  transport_preference: string[];
+  route_goal?: string;
+  preferences: Record<string, number>;
+  constraints: {
+    avoid_too_tired: boolean;
+    physical_intensity?: "high" | "medium" | "low";
+    must_visit: string[];
+    avoid_visit: string[];
+  };
+};
+
+export type PoiRow = {
+  id: number;
+  raw_poi: Record<string, unknown>;
+  grounded_poi: GroundedPoi;
+  decision: "keep" | "delete" | "must_visit" | "optional" | "arrange_nearby";
+  system_decision: "include" | "optional" | "needs_confirmation" | "exclude";
+  user_override: "must_include" | "optional" | "remove" | "rename_confirm" | "arrange_nearby" | "none";
+  final_decision: "include" | "optional" | "exclude" | "unresolved";
+  inferred_role: "visit" | "meal" | "hotel" | "start" | "end" | "transport" | "backup";
+  decision_reason: string;
+  place_pool_item: PlacePoolItem;
+  manual_name?: string | null;
+};
+
+export type PlacePoolItem = {
+  id: string;
+  display_name: string;
+  type_label: string;
+  status_label: "已识别" | "需确认" | "未匹配";
+  decision_label: "已纳入" | "待定" | "需确认" | "未纳入";
+  primary_actions: string[];
+  needs_attention: boolean;
+};
+
+export type GroundedPoi = {
+  raw_name: string;
+  standard_name: string;
+  amap_id: string;
+  address: string;
+  location: { lng?: number | null; lat?: number | null };
+  city: string;
+  district: string;
+  category_raw?: string;
+  category_normalized: string;
+  match_confidence: number;
+  match_status: "matched" | "ambiguous" | "unmatched";
+  is_chain?: boolean;
+  selection_mode?: string;
+  candidate_options?: Array<Record<string, unknown>>;
+  contexts?: string[];
+  experience_tags?: string[];
+};
+
+export type SessionData = {
+  session_id: string;
+  raw_input: string;
+  notes: string;
+  user_profile: UserProfile;
+  pois: PoiRow[];
+  itinerary_state?: ItineraryState | null;
+  revision_history: Array<Record<string, unknown>>;
+};
+
+export type ItineraryState = {
+  runtime_pois: RuntimePoi[];
+  route_matrix: Array<Record<string, unknown>>;
+  itinerary: Itinerary;
+  verification: { passed: boolean; issues: Array<{ type: string; severity: string; message: string; suggestion?: string }> };
+};
+
+export type RuntimePoi = {
+  poi_id: string;
+  standard_name: string;
+  location: { lng?: number | null; lat?: number | null };
+  match_status: string;
+  final_decision?: string;
+};
+
+export type Itinerary = {
+  destination: string;
+  route_summary?: {
+    main_message?: string;
+    scheduled_places_count?: number;
+    unscheduled_places_count?: number;
+    attention_required_count?: number;
+  };
+  days: DayRoute[];
+  global_risks: string[];
+  uncertain_pois: Array<Record<string, unknown>>;
+  unscheduled_places?: Array<{ name: string; reason: string }>;
+  attention_places?: Array<{ name: string; reason: string }>;
+  revision_notes: string[];
+};
+
+export type DayRoute = {
+  day: number;
+  theme: string;
+  summary: string;
+  total_outing_min?: number;
+  total_outing_minutes?: number;
+  outing_duration_min?: number;
+  outing_duration_minutes?: number;
+  hotel_departure_transport_min?: number;
+  hotel_return_transport_min?: number;
+  hotel_to_first_transport_min?: number;
+  last_to_hotel_transport_min?: number;
+  meal_breaks?: Array<{ duration_min?: number; duration_minutes?: number }>;
+  items: ItineraryItem[];
+  removed_pois?: Array<{ name: string; reason: string }>;
+  alternatives?: Array<Record<string, unknown> | string>;
+};
+
+export type ItineraryItem = {
+  time_block: string;
+  poi_id: string;
+  name: string;
+  arrival_time?: string;
+  duration_min: number;
+  reason: string;
+  transport_to_next?: { mode: string; duration_min?: number; distance_m?: number; amap_navigation_link?: string };
+  risk_notes?: string[];
+  amap_link?: string;
+};
