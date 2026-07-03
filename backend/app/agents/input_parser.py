@@ -6,7 +6,8 @@ from app.schemas.models import UserProfile
 
 
 CITY_PATTERN = re.compile(r"(?:目的地|去|到)[:：\s]*([\u4e00-\u9fa5A-Za-z]{2,12})")
-HOTEL_PATTERN = re.compile(r"(?:酒店|住|住宿|起点)(?:在|：|:)?\s*([\u4e00-\u9fa5A-Za-z0-9]+?)(?:附近|周边|一带|。|，|,|\s|$)")
+HOTEL_PATTERN = re.compile(r"(?:酒店名|酒店|住|住宿|起点)(?:在|：|:)?\s*([^\n。。，,]+?)(?:附近|周边|一带|。|，|,|\n|$)")
+TRAVELER_COUNT_PATTERN = re.compile(r"(?:出行人数|人数|几个人|几人|同行人数)(?:是|：|:)?\s*(\d+)\s*(?:人|位)?")
 
 
 def parse_user_profile(user_input: str) -> dict:
@@ -16,10 +17,12 @@ def parse_user_profile(user_input: str) -> dict:
     profile.destination = _parse_destination(text)
     profile.days = _parse_days(text)
     profile.nights = max(profile.days - 1, 0)
-    profile.hotel_area = _parse_hotel_area(text)
-    profile.start_point = profile.hotel_area
-    profile.travelers.type = _parse_traveler_type(text)
+    profile.hotel_name = _parse_hotel_name(text)
+    profile.start_point = profile.hotel_name
+    profile.travelers.count = _parse_traveler_count(text)
     profile.budget_level = _parse_budget(text)
+    profile.transport_preference = _parse_transport_preference(text)
+    profile.route_goal = _parse_route_goal(text)
     profile.preferences = _parse_preferences(text)
     profile.constraints.physical_intensity = _parse_physical_intensity(text)
     profile.constraints.avoid_too_tired = profile.constraints.physical_intensity == "low"
@@ -51,24 +54,26 @@ def _parse_days(text: str) -> int:
     return 1
 
 
-def _parse_hotel_area(text: str) -> str | None:
+def _parse_hotel_name(text: str) -> str | None:
     match = HOTEL_PATTERN.search(text)
     if not match:
         return None
-    area = match.group(1).strip(" ：:，,。")
-    return area or None
+    name = match.group(1).strip(" ：:，,。")
+    return name or None
 
 
-def _parse_traveler_type(text: str) -> str:
-    if any(token in text for token in ["对象", "情侣", "女朋友", "男朋友"]):
-        return "情侣"
-    if "孩子" in text or "亲子" in text:
-        return "亲子"
-    if "老人" in text or "父母" in text:
-        return "家庭"
-    if "朋友" in text or "闺蜜" in text:
-        return "朋友"
-    return "未说明"
+def _parse_traveler_count(text: str) -> int:
+    match = TRAVELER_COUNT_PATTERN.search(text)
+    if match:
+        return max(1, min(int(match.group(1)), 20))
+    match = re.search(r"(\d+)\s*(?:个人|人|位)\s*(?:出行|旅行|旅游|去|同行)?", text)
+    if match:
+        return max(1, min(int(match.group(1)), 20))
+    cn_counts = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    match = re.search(r"([一二两三四五六七八九十])\s*(?:个人|人|位)", text)
+    if match:
+        return cn_counts[match.group(1)]
+    return 1
 
 
 def _parse_budget(text: str) -> str:
@@ -77,6 +82,25 @@ def _parse_budget(text: str) -> str:
     if any(token in text for token in ["高预算", "不差钱", "品质"]):
         return "high"
     return "medium"
+
+
+def _parse_transport_preference(text: str) -> list[str]:
+    preferences: list[str] = []
+    if any(token in text for token in ["步行", "走路", "少坐车"]):
+        preferences.append("walking")
+    if any(token in text for token in ["打车", "出租车", "网约车"]):
+        preferences.append("taxi")
+    if any(token in text for token in ["地铁", "公交", "公共交通"]):
+        preferences.append("public_transport")
+    return preferences or ["walking", "taxi", "public_transport"]
+
+
+def _parse_route_goal(text: str) -> str:
+    if any(token in text for token in ["美食优先", "多安排美食", "吃"]):
+        return "food_first"
+    if any(token in text for token in ["拍照优先", "出片", "打卡"]):
+        return "photo_first"
+    return "balanced"
 
 
 def _parse_physical_intensity(text: str) -> str:

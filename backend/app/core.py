@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 class AppError(Exception):
     def __init__(self, message: str, code: str = "app_error", step: str | None = None):
@@ -22,5 +26,6 @@ def api_error(error: Exception, step_status: dict | None = None) -> dict:
     if isinstance(error, AppError):
         payload = {"code": error.code, "message": error.message, "step": error.step}
     else:
+        logger.exception("Unexpected error while handling request", exc_info=error)
         payload = {"code": "internal_error", "message": "服务处理失败，请稍后重试。", "step": None}
     return {"ok": False, "data": None, "error": payload, "step_status": step_status or {}}

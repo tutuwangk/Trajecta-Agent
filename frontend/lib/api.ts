@@ -1,6 +1,6 @@
-import type { ApiResponse, SessionData } from "./types";
+import type { ApiResponse, SessionData, UserProfile } from "./types";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+const API_BASE = "/api/backend";
 
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
   let response: Response;
@@ -32,15 +32,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
   return response.json();
 }
 
-export function createSession(payload: { raw_input: string; notes: string }) {
+export function createSession(payload: { raw_input: string; notes: string; user_profile?: UserProfile }) {
   return request<{ session_id: string; user_profile: Record<string, unknown> }>("/sessions", {
     method: "POST",
     body: JSON.stringify(payload)
   });
 }
 
+export function recognizePlaces(sessionId: string) {
+  return request<Record<string, unknown>>(`/sessions/${sessionId}/recognize-places`, { method: "POST" });
+}
+
 export function extractPois(sessionId: string) {
-  return request<Record<string, unknown>>(`/sessions/${sessionId}/extract-pois`, { method: "POST" });
+  return recognizePlaces(sessionId);
 }
 
 export function getSession(sessionId: string) {
@@ -48,8 +52,12 @@ export function getSession(sessionId: string) {
 }
 
 export function updatePois(sessionId: string, decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
-  return request<{ pois: SessionData["pois"] }>(`/sessions/${sessionId}/pois`, {
-    method: "PATCH",
+  return updatePlaceOverrides(sessionId, decisions);
+}
+
+export function updatePlaceOverrides(sessionId: string, decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
+  return request<{ pois: SessionData["pois"] }>(`/sessions/${sessionId}/place-overrides`, {
+    method: "POST",
     body: JSON.stringify({ decisions })
   });
 }

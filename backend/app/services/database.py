@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from app.agents.input_parser import parse_user_profile
+from app.agents.place_organizer import build_place_pool_item, legacy_decision, organize_place
+
 
 class SQLiteStore:
     def __init__(self, db_path: str | None = None):
@@ -38,6 +41,11 @@ class SQLiteStore:
                     raw_poi TEXT NOT NULL,
                     grounded_poi TEXT NOT NULL,
                     decision TEXT NOT NULL DEFAULT 'keep',
+                    system_decision TEXT NOT NULL DEFAULT 'include',
+                    user_override TEXT NOT NULL DEFAULT 'none',
+                    final_decision TEXT NOT NULL DEFAULT 'include',
+                    inferred_role TEXT NOT NULL DEFAULT 'visit',
+                    decision_reason TEXT NOT NULL DEFAULT '',
                     manual_name TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
@@ -64,6 +72,20 @@ class SQLiteStore:
                 );
                 """
             )
+            self._ensure_poi_columns(connection)
+
+    def _ensure_poi_columns(self, connection) -> None:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(pois)").fetchall()}
+        migrations = {
+            "system_decision": "ALTER TABLE pois ADD COLUMN system_decision TEXT NOT NULL DEFAULT 'include'",
+            "user_override": "ALTER TABLE pois ADD COLUMN user_override TEXT NOT NULL DEFAULT 'none'",
+            "final_decision": "ALTER TABLE pois ADD COLUMN final_decision TEXT NOT NULL DEFAULT 'include'",
+            "inferred_role": "ALTER TABLE pois ADD COLUMN inferred_role TEXT NOT NULL DEFAULT 'visit'",
+            "decision_reason": "ALTER TABLE pois ADD COLUMN decision_reason TEXT NOT NULL DEFAULT ''",
+        }
+        for column, statement in migrations.items():
+            if column not in columns:
+                connection.execute(statement)
 
     def create_session(self, raw_input: str, notes: str, user_profile: dict) -> str:
         session_id = str(uuid.uuid4())
@@ -80,45 +102,69 @@ class SQLiteStore:
             row = connection.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
         if not row:
             return None
+        raw_input = row["raw_input"]
+        notes = row["notes"]
+        user_profile = _backfill_user_profile(json.loads(row["user_profile"]), raw_input, notes)
         return {
             "session_id": row["id"],
-            "raw_input": row["raw_input"],
-            "notes": row["notes"],
-            "user_profile": json.loads(row["user_profile"]),
+            "raw_input": raw_input,
+            "notes": notes,
+            "user_profile": user_profile,
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
 
-    def save_pois(self, session_id: str, raw_pois: list[dict], grounded_pois: list[dict]) -> None:
+    def save_pois(self, session_id: str, raw_pois: list[dict], grounded_pois: list[dict], user_profile: dict | None = None) -> None:
         now = _now()
+        session = self.get_session(session_id)
+        profile = user_profile or (session.get("user_profile", {}) if session else {})
         with self.connect() as connection:
             connection.execute("DELETE FROM pois WHERE session_id = ?", (session_id,))
             for raw_poi, grounded_poi in zip(raw_pois, grounded_pois, strict=False):
+                organized = organize_place(raw_poi, grounded_poi, profile)
                 connection.execute(
-                    "INSERT INTO pois (session_id, raw_poi, grounded_poi, decision, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                    (session_id, _json(raw_poi), _json(grounded_poi), "keep", now, now),
+                    """
+                    INSERT INTO pois (
+                        session_id, raw_poi, grounded_poi, decision, system_decision, user_override,
+                        final_decision, inferred_role, decision_reason, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session_id,
+                        _json(raw_poi),
+                        _json(grounded_poi),
+                        legacy_decision(organized["user_override"], organized["final_decision"]),
+                        organized["system_decision"],
+                        organized["user_override"],
+                        organized["final_decision"],
+                        organized["inferred_role"],
+                        organized["decision_reason"],
+                        now,
+                        now,
+                    ),
                 )
 
     def list_pois(self, session_id: str) -> list[dict]:
         with self.connect() as connection:
             rows = connection.execute("SELECT * FROM pois WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
         return [
-            {
-                "id": row["id"],
-                "raw_poi": json.loads(row["raw_poi"]),
-                "grounded_poi": json.loads(row["grounded_poi"]),
-                "decision": row["decision"],
-                "manual_name": row["manual_name"],
-            }
+            _poi_row(row)
             for row in rows
         ]
 
-    def update_poi_decisions(self, session_id: str, decisions: list[dict], rematch_grounded=None) -> None:
+    def update_poi_decisions(self, session_id: str, decisions: list[dict], rematch_grounded=None, arrange_nearby_grounded=None) -> None:
         now = _now()
         by_poi_id = {decision["poi_id"]: decision for decision in decisions}
         with self.connect() as connection:
-            rows = connection.execute("SELECT id, raw_poi, grounded_poi FROM pois WHERE session_id = ?", (session_id,)).fetchall()
-            for row in rows:
+            session = connection.execute("SELECT user_profile FROM sessions WHERE id = ?", (session_id,)).fetchone()
+            user_profile = json.loads(session["user_profile"]) if session else {}
+            rows = connection.execute(
+                "SELECT id, raw_poi, grounded_poi, final_decision FROM pois WHERE session_id = ? ORDER BY id",
+                (session_id,),
+            ).fetchall()
+            decoded_rows = [_decode_poi_context_row(row) for row in rows]
+            for index, row in enumerate(rows):
                 raw_poi = json.loads(row["raw_poi"])
                 grounded = json.loads(row["grounded_poi"])
                 poi_id = f"amap_{grounded.get('amap_id')}" if grounded.get("amap_id") else f"raw_{grounded.get('raw_name')}"
@@ -132,9 +178,42 @@ class SQLiteStore:
                         grounded = rematch_grounded(raw_poi, grounded, manual_name)
                     else:
                         grounded["raw_name"] = manual_name
+                requested_decision = decision.get("decision", "keep")
+                if requested_decision == "arrange_nearby" and arrange_nearby_grounded:
+                    grounded = arrange_nearby_grounded(raw_poi, grounded, _nearby_context(decoded_rows, index))
+                if requested_decision in {"must_include", "must_visit", "optional"} and _has_map_candidate(grounded):
+                    grounded["match_status"] = "matched"
+                user_override = "rename_confirm" if manual_name and requested_decision in {"keep", "none"} else requested_decision
+                organized = organize_place(raw_poi, grounded, user_profile, user_override)
+                legacy = legacy_decision(organized["user_override"], organized["final_decision"])
                 connection.execute(
-                    "UPDATE pois SET decision = ?, manual_name = ?, raw_poi = ?, grounded_poi = ?, updated_at = ? WHERE id = ?",
-                    (decision.get("decision", "keep"), manual_name or None, _json(raw_poi), _json(grounded), now, row["id"]),
+                    """
+                    UPDATE pois SET
+                      decision = ?,
+                      system_decision = ?,
+                      user_override = ?,
+                      final_decision = ?,
+                      inferred_role = ?,
+                      decision_reason = ?,
+                      manual_name = ?,
+                      raw_poi = ?,
+                      grounded_poi = ?,
+                      updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        legacy,
+                        organized["system_decision"],
+                        organized["user_override"],
+                        organized["final_decision"],
+                        organized["inferred_role"],
+                        organized["decision_reason"],
+                        manual_name or None,
+                        _json(raw_poi),
+                        _json(grounded),
+                        now,
+                        row["id"],
+                    ),
                 )
 
     def save_itinerary(self, session_id: str, runtime_pois: list[dict], route_matrix: list[dict], itinerary: dict, verification: dict) -> None:
@@ -195,8 +274,83 @@ class SQLiteStore:
             )
 
 
+def _poi_row(row) -> dict:
+    raw_poi = json.loads(row["raw_poi"])
+    grounded_poi = json.loads(row["grounded_poi"])
+    return {
+        "id": row["id"],
+        "raw_poi": raw_poi,
+        "grounded_poi": grounded_poi,
+        "decision": row["decision"],
+        "system_decision": row["system_decision"],
+        "user_override": row["user_override"],
+        "final_decision": row["final_decision"],
+        "inferred_role": row["inferred_role"],
+        "decision_reason": row["decision_reason"],
+        "place_pool_item": build_place_pool_item(
+            raw_poi,
+            grounded_poi,
+            row["system_decision"],
+            row["user_override"],
+            row["final_decision"],
+            row["inferred_role"],
+        ),
+        "manual_name": row["manual_name"],
+    }
+
+
+def _decode_poi_context_row(row) -> dict:
+    return {
+        "id": row["id"],
+        "raw_poi": json.loads(row["raw_poi"]),
+        "grounded_poi": json.loads(row["grounded_poi"]),
+        "final_decision": row["final_decision"],
+    }
+
+
+def _nearby_context(rows: list[dict], index: int) -> dict:
+    previous_grounded = None
+    next_grounded = None
+    for row in reversed(rows[:index]):
+        grounded = row["grounded_poi"]
+        if _is_route_anchor(row):
+            previous_grounded = grounded
+            break
+    for row in rows[index + 1:]:
+        grounded = row["grounded_poi"]
+        if _is_route_anchor(row):
+            next_grounded = grounded
+            break
+    return {
+        "previous_grounded": previous_grounded,
+        "next_grounded": next_grounded,
+        "accepted_grounded": [row["grounded_poi"] for row in rows if _is_route_anchor(row)],
+    }
+
+
+def _is_route_anchor(row: dict) -> bool:
+    grounded = row["grounded_poi"]
+    return row.get("final_decision") in {"include", "optional"} and grounded.get("match_status") == "matched" and _has_map_candidate(grounded)
+
+
+def _has_map_candidate(grounded: dict) -> bool:
+    location = grounded.get("location") or {}
+    return bool(grounded.get("amap_id") and location.get("lng") is not None and location.get("lat") is not None)
+
+
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False)
+
+
+def _backfill_user_profile(user_profile: dict, raw_input: str, notes: str) -> dict:
+    if user_profile.get("hotel_name") or "酒店名" not in f"{raw_input}\n{notes}":
+        return user_profile
+    parsed = parse_user_profile(f"{raw_input}\n{notes}")
+    hotel_name = parsed.get("hotel_name")
+    if hotel_name:
+        user_profile["hotel_name"] = hotel_name
+        user_profile["start_point"] = user_profile.get("start_point") or hotel_name
+    return user_profile
 
 
 def _now() -> str:

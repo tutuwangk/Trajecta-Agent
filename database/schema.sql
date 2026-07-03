@@ -13,6 +13,11 @@ CREATE TABLE IF NOT EXISTS pois (
   raw_poi JSONB NOT NULL,
   grounded_poi JSONB NOT NULL,
   decision TEXT NOT NULL DEFAULT 'keep',
+  system_decision TEXT NOT NULL DEFAULT 'include',
+  user_override TEXT NOT NULL DEFAULT 'none',
+  final_decision TEXT NOT NULL DEFAULT 'include',
+  inferred_role TEXT NOT NULL DEFAULT 'visit',
+  decision_reason TEXT NOT NULL DEFAULT '',
   manual_name TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

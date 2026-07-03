@@ -52,6 +52,24 @@ def verify_itinerary(
                         "suggestion": "移入不确定地点或让用户手动确认。",
                     }
                 )
+            if poi.get("final_decision") == "exclude":
+                issues.append(
+                    {
+                        "type": "excluded_place_scheduled",
+                        "severity": "high",
+                        "message": f"{item.get('name')} 已被移除或默认排除，不应进入路线。",
+                        "suggestion": "删除该地点，并把原因放入未安排地点。",
+                    }
+                )
+            if poi.get("final_decision") == "unresolved":
+                issues.append(
+                    {
+                        "type": "unresolved_place_scheduled",
+                        "severity": "high",
+                        "message": f"{item.get('name')} 还需要确认，不应作为正式路线节点。",
+                        "suggestion": "先作为待确认地点展示，确认后再进入路线。",
+                    }
+                )
         if len(districts) > 2:
             issues.append(
                 {

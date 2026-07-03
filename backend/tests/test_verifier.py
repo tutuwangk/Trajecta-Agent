@@ -148,3 +148,27 @@ def test_verify_itinerary_flags_adjacent_long_transfer_and_ambiguous_poi():
     issue_types = {issue["type"] for issue in result["issues"]}
     assert "long_transfer" in issue_types
     assert "unmatched_poi_scheduled" in issue_types
+
+
+def test_verify_itinerary_flags_removed_or_unresolved_decision_scheduled():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [
+                    {"poi_id": "p1", "name": "太古里"},
+                    {"poi_id": "p2", "name": "晓市集"},
+                ],
+            }
+        ]
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "太古里", "match_status": "matched", "final_decision": "exclude"},
+        {"poi_id": "p2", "standard_name": "晓市集", "match_status": "matched", "final_decision": "unresolved"},
+    ]
+
+    result = verify_itinerary(itinerary, {"constraints": {}}, [], runtime_pois)
+
+    issue_types = {issue["type"] for issue in result["issues"]}
+    assert "excluded_place_scheduled" in issue_types
+    assert "unresolved_place_scheduled" in issue_types

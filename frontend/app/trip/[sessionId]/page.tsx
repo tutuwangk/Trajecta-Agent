@@ -2,10 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { extractPois, getSession, planTrip, reviseTrip, updatePois } from "@/lib/api";
+import { getSession, planTrip, recognizePlaces, reviseTrip, updatePlaceOverrides } from "@/lib/api";
 import type { SessionData } from "@/lib/types";
 import { ItineraryCard } from "@/components/ItineraryCard";
-import { POIConfirmTable } from "@/components/POIConfirmTable";
+import { PlacePool } from "@/components/PlacePool";
 import { RevisionPanel } from "@/components/RevisionPanel";
 
 export default function TripPage() {
@@ -14,6 +14,8 @@ export default function TripPage() {
   const [session, setSession] = useState<SessionData | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const recognizing = status === "正在识别地点";
+  const generatingRoute = status === "正在生成路线";
 
   async function load() {
     const result = await getSession(sessionId);
@@ -31,7 +33,7 @@ export default function TripPage() {
 
   async function handlePoiChange(decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
     setStatus("正在保存地点选择");
-    const result = await updatePois(sessionId, decisions);
+    const result = await updatePlaceOverrides(sessionId, decisions);
     if (!result.ok) {
       setError(result.error?.message || "保存失败");
       setStatus("");
@@ -55,11 +57,11 @@ export default function TripPage() {
   }
 
   async function handleExtract() {
-    setStatus("正在重新整理地点");
+    setStatus("正在识别地点");
     setError("");
-    const result = await extractPois(sessionId);
+    const result = await recognizePlaces(sessionId);
     if (!result.ok) {
-      setError(result.error?.message || "地点整理失败");
+      setError(result.error?.message || "地点识别失败");
       setStatus("");
       return;
     }
@@ -98,12 +100,12 @@ export default function TripPage() {
                 <div className="mt-1 font-semibold">{session.user_profile.days} 天</div>
               </div>
               <div className="metric">
-                <div className="text-xs text-muted">酒店区域</div>
-                <div className="mt-1 font-semibold">{session.user_profile.hotel_area || "未填写"}</div>
+                <div className="text-xs text-muted">酒店名</div>
+                <div className="mt-1 font-semibold">{session.user_profile.hotel_name || session.user_profile.hotel_area || "未填写"}</div>
               </div>
               <div className="metric">
-                <div className="text-xs text-muted">同行人</div>
-                <div className="mt-1 font-semibold">{session.user_profile.travelers.type}</div>
+                <div className="text-xs text-muted">出行人数</div>
+                <div className="mt-1 font-semibold">{session.user_profile.travelers.count || 1} 人</div>
               </div>
               <div className="metric">
                 <div className="text-xs text-muted">地点</div>
@@ -112,11 +114,11 @@ export default function TripPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className="btn-secondary" onClick={handleExtract} disabled={Boolean(status)}>
-              重新整理地点
+            <button className="btn-secondary gap-2" onClick={handleExtract} disabled={Boolean(status)}>
+              <LoadingButtonLabel loading={recognizing} label="识别地点" loadingLabel="正在识别" dark={false} />
             </button>
-            <button className="btn-primary" onClick={handlePlan} disabled={Boolean(status)}>
-              生成 / 更新路线
+            <button className="btn-primary gap-2" onClick={handlePlan} disabled={Boolean(status)}>
+              <LoadingButtonLabel loading={generatingRoute} label="生成路线" loadingLabel="正在生成" dark />
             </button>
           </div>
         </div>
@@ -124,9 +126,29 @@ export default function TripPage() {
         {error && <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</p>}
       </section>
 
-      <POIConfirmTable pois={session.pois} onChange={handlePoiChange} />
+      <PlacePool pois={session.pois} onChange={handlePoiChange} />
       <ItineraryCard itinerary={session.itinerary_state?.itinerary} />
       <RevisionPanel onRevise={handleRevise} disabled={!session.itinerary_state || Boolean(status)} />
     </main>
+  );
+}
+
+function LoadingButtonLabel({
+  loading,
+  label,
+  loadingLabel,
+  dark
+}: {
+  loading: boolean;
+  label: string;
+  loadingLabel: string;
+  dark: boolean;
+}) {
+  const spinnerClass = dark ? "border-white/40 border-t-white" : "border-line border-t-ink";
+  return (
+    <>
+      {loading && <span className={`h-4 w-4 animate-spin rounded-full border-2 ${spinnerClass}`} />}
+      {loading ? loadingLabel : label}
+    </>
   );
 }

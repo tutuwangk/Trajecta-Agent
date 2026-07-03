@@ -34,12 +34,14 @@ class UserProfile(BaseModel):
     days: int = 1
     nights: int = 0
     start_date: str | None = None
+    hotel_name: str | None = None
     hotel_area: str | None = None
     start_point: str | None = None
     end_point: str | None = None
     travelers: TravelerProfile = Field(default_factory=TravelerProfile)
     budget_level: Literal["low", "medium", "high"] = "medium"
     transport_preference: list[str] = Field(default_factory=lambda: ["walking", "taxi", "public_transport"])
+    route_goal: str = "balanced"
     preferences: PreferenceWeights = Field(default_factory=PreferenceWeights)
     constraints: TravelConstraints = Field(default_factory=TravelConstraints)
 
@@ -52,7 +54,17 @@ class SessionCreate(BaseModel):
 
 class PoiDecision(BaseModel):
     poi_id: str
-    decision: Literal["keep", "delete", "must_visit", "optional"]
+    decision: Literal[
+        "keep",
+        "delete",
+        "must_visit",
+        "optional",
+        "must_include",
+        "remove",
+        "rename_confirm",
+        "arrange_nearby",
+        "none",
+    ]
     manual_name: str | None = None
 
 

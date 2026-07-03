@@ -1,4 +1,5 @@
 import type { DayRoute } from "@/lib/types";
+import { DayTimeline } from "./DayTimeline";
 import { POICard } from "./POICard";
 
 export function DayRouteCard({ day }: { day: DayRoute }) {
@@ -32,20 +33,21 @@ export function DayRouteCard({ day }: { day: DayRoute }) {
           </div>
         </div>
       </div>
+      <DayTimeline day={day} />
       <div className="space-y-3">
         {day.items.map((item, index) => (
           <POICard key={`${item.poi_id}-${index}`} item={item} />
         ))}
       </div>
       {Boolean(day.removed_pois?.length) && (
-        <div className="mt-4 rounded-3xl border border-line bg-surface p-4 text-sm">
-          <div className="font-semibold text-ink">未安排地点</div>
+        <details className="mt-4 rounded-3xl border border-line bg-surface p-4 text-sm">
+          <summary className="cursor-pointer font-semibold text-ink">没放进路线的地点</summary>
           <ul className="mt-2 space-y-1 text-muted">
             {day.removed_pois?.map((poi) => (
               <li key={poi.name}>{poi.name}：{poi.reason}</li>
             ))}
           </ul>
-        </div>
+        </details>
       )}
     </section>
   );

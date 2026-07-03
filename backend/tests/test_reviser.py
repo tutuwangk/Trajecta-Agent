@@ -80,6 +80,19 @@ def test_revise_itinerary_trims_low_intensity_days_by_total_time():
     assert revised["days"][0]["removed_pois"]
 
 
+def test_revise_itinerary_normalizes_llm_risk_objects_before_merging_verification_issues():
+    itinerary = {
+        "days": [],
+        "global_risks": [{"message": "热门地点可能需要排队"}, "热门地点可能需要排队"],
+        "revision_notes": [],
+    }
+    verification = {"issues": [{"message": "当天总耗时偏长", "suggestion": "减少当天总耗时"}]}
+
+    revised = revise_itinerary(itinerary, verification, {"constraints": {}})
+
+    assert revised["global_risks"] == ["热门地点可能需要排队", "当天总耗时偏长"]
+
+
 def test_revise_from_user_instruction_deletes_named_poi_without_llm_call():
     class FailingLLM:
         def json_chat(self, *args, **kwargs):
@@ -115,3 +128,28 @@ def test_revise_from_user_instruction_deletes_named_poi_without_llm_call():
 
     assert [item["name"] for item in revised["days"][0]["items"]] == ["IFS"]
     assert any(poi["name"] == "建设路" for poi in revised["days"][0]["removed_pois"])
+
+
+def test_revise_itinerary_adds_summary_and_attention_sections():
+    itinerary = {
+        "destination": "成都",
+        "days": [
+            {
+                "day": 1,
+                "summary": "围绕春熙路安排",
+                "items": [{"poi_id": "p1", "name": "IFS"}],
+                "removed_pois": [{"name": "都江堰", "reason": "距离较远"}],
+            }
+        ],
+        "uncertain_pois": [{"poi_id": "p2", "standard_name": "晓市集", "decision_reason": "地点匹配不确定"}],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+
+    revised = revise_itinerary(itinerary, {"issues": []}, {"days": 1, "preferences": {"food": 5}, "constraints": {}})
+
+    assert revised["route_summary"]["scheduled_places_count"] == 1
+    assert revised["route_summary"]["unscheduled_places_count"] == 1
+    assert revised["route_summary"]["attention_required_count"] == 1
+    assert revised["unscheduled_places"] == [{"name": "都江堰", "reason": "距离较远"}]
+    assert revised["attention_places"][0]["name"] == "晓市集"

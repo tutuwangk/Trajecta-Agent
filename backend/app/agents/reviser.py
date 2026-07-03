@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import re
 
 from app.agents.intensity import daily_time_limit_minutes, daily_time_minutes
@@ -14,7 +15,7 @@ def revise_itinerary(
     instruction: str | None = None,
 ) -> dict:
     final = deepcopy(draft_itinerary)
-    notes = list(final.get("revision_notes", []))
+    notes = _text_list(final.get("revision_notes", []))
     runtime_by_id = {poi.get("poi_id"): poi for poi in runtime_pois or []}
     removed_any = False
     if runtime_pois is not None:
@@ -33,7 +34,11 @@ def revise_itinerary(
     if removed_any:
         notes.append("已将不适合直接执行的地点移入未安排地点。")
     final["revision_notes"] = [note for note in notes if note]
-    final["global_risks"] = list(dict.fromkeys(final.get("global_risks", []) + [issue["message"] for issue in verification.get("issues", []) if issue.get("message")]))
+    final["global_risks"] = _unique_texts(
+        _text_list(final.get("global_risks", []))
+        + _text_list([issue.get("message") for issue in verification.get("issues", []) if issue.get("message")])
+    )
+    _ensure_display_sections(final, user_profile)
     return final
 
 
@@ -77,8 +82,8 @@ def _remove_unconfirmed_items(itinerary: dict, runtime_by_id: dict) -> bool:
         removed_pois = list(day.get("removed_pois", []))
         for item in day.get("items", []):
             poi = runtime_by_id.get(item.get("poi_id"))
-            if not poi or poi.get("match_status") != "matched":
-                removed_pois.append({"name": item.get("name", ""), "reason": "地点还需要确认，已移入待确认。"})
+            if not poi or poi.get("match_status") != "matched" or poi.get("final_decision") in {"exclude", "unresolved"}:
+                removed_pois.append({"name": item.get("name", ""), "reason": _removed_reason(poi)})
                 removed = True
                 continue
             kept.append(item)
@@ -198,3 +203,109 @@ def _mentions_rain(instruction: str) -> bool:
 def _can_handle_without_llm(instruction: str) -> bool:
     deterministic_tokens = ["删掉", "删除", "不要去", "避开", "太累", "轻松", "休闲", "慢一点", "松弛", "下雨", "雨天"]
     return any(token in instruction for token in deterministic_tokens)
+
+
+def _text_list(value) -> list[str]:
+    values = value if isinstance(value, list) else [value]
+    return [text for item in values if (text := _text_value(item))]
+
+
+def _text_value(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        for key in ("message", "suggestion", "reason", "summary", "name"):
+            text = value.get(key)
+            if isinstance(text, str) and text.strip():
+                return text.strip()
+        return json.dumps(value, ensure_ascii=False)
+    return str(value).strip()
+
+
+def _unique_texts(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value and value not in seen:
+            unique.append(value)
+            seen.add(value)
+    return unique
+
+
+def _ensure_display_sections(itinerary: dict, user_profile: dict) -> None:
+    unscheduled = _collect_unscheduled(itinerary)
+    attention = _collect_attention(itinerary)
+    scheduled_count = sum(len(day.get("items", [])) for day in itinerary.get("days", []))
+    itinerary["unscheduled_places"] = unscheduled
+    itinerary["attention_places"] = attention
+    summary = itinerary.get("route_summary") if isinstance(itinerary.get("route_summary"), dict) else {}
+    summary.setdefault("main_message", _main_message(itinerary, user_profile))
+    summary["scheduled_places_count"] = scheduled_count
+    summary["unscheduled_places_count"] = len(unscheduled)
+    summary["attention_required_count"] = len(attention)
+    itinerary["route_summary"] = summary
+
+
+def _collect_unscheduled(itinerary: dict) -> list[dict]:
+    items: list[dict] = []
+    for day in itinerary.get("days", []):
+        for item in day.get("removed_pois", []):
+            if isinstance(item, dict):
+                items.append({"name": item.get("name", "未安排地点"), "reason": _short_reason(item.get("reason", ""))})
+            else:
+                items.append({"name": str(item), "reason": "本次未安排"})
+    return items
+
+
+def _collect_attention(itinerary: dict) -> list[dict]:
+    attention: list[dict] = []
+    for poi in itinerary.get("uncertain_pois", []) or []:
+        if not isinstance(poi, dict):
+            continue
+        attention.append(
+            {
+                "name": poi.get("standard_name") or poi.get("raw_name") or poi.get("name") or "待确认地点",
+                "reason": _short_reason(poi.get("decision_reason") or "地点还需要确认"),
+            }
+        )
+    return attention
+
+
+def _main_message(itinerary: dict, user_profile: dict) -> str:
+    days = user_profile.get("days") or len(itinerary.get("days", [])) or 1
+    preferences = user_profile.get("preferences", {})
+    preference_labels = []
+    if preferences.get("food", 0) >= 5:
+        preference_labels.append("美食")
+    if preferences.get("photo", 0) >= 5:
+        preference_labels.append("拍照")
+    if preferences.get("citywalk", 0) >= 5:
+        preference_labels.append("城市漫步")
+    goal = "、".join(preference_labels[:3]) or _route_goal_label(user_profile.get("route_goal", "balanced"))
+    return f"已为你整理出 {days} 天路线，优先满足{goal}。"
+
+
+def _route_goal_label(route_goal: str) -> str:
+    return {
+        "food_first": "美食",
+        "photo_first": "拍照",
+    }.get(route_goal, "整体体验")
+
+
+def _removed_reason(poi: dict | None) -> str:
+    if not poi:
+        return "地点不在可用清单中"
+    if poi.get("final_decision") == "exclude":
+        return "已从本次路线移除"
+    if poi.get("final_decision") == "unresolved":
+        return "匹配不确定"
+    return "地点还需要确认"
+
+
+def _short_reason(reason: str) -> str:
+    for token in ["距离较远", "时间不足", "匹配不确定", "不顺路", "类型重复", "单独安排", "已移除"]:
+        if token in reason:
+            return token
+    return reason or "本次未安排"

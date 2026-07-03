@@ -9,9 +9,12 @@ export type UserProfile = {
   destination: string;
   days: number;
   nights: number;
+  hotel_name?: string | null;
   hotel_area?: string | null;
   travelers: { count: number; type: string };
   budget_level: "low" | "medium" | "high";
+  transport_preference: string[];
+  route_goal?: string;
   preferences: Record<string, number>;
   constraints: {
     avoid_too_tired: boolean;
@@ -25,8 +28,24 @@ export type PoiRow = {
   id: number;
   raw_poi: Record<string, unknown>;
   grounded_poi: GroundedPoi;
-  decision: "keep" | "delete" | "must_visit" | "optional";
+  decision: "keep" | "delete" | "must_visit" | "optional" | "arrange_nearby";
+  system_decision: "include" | "optional" | "needs_confirmation" | "exclude";
+  user_override: "must_include" | "optional" | "remove" | "rename_confirm" | "arrange_nearby" | "none";
+  final_decision: "include" | "optional" | "exclude" | "unresolved";
+  inferred_role: "visit" | "meal" | "hotel" | "start" | "end" | "transport" | "backup";
+  decision_reason: string;
+  place_pool_item: PlacePoolItem;
   manual_name?: string | null;
+};
+
+export type PlacePoolItem = {
+  id: string;
+  display_name: string;
+  type_label: string;
+  status_label: "已识别" | "需确认" | "未匹配";
+  decision_label: "已纳入" | "待定" | "需确认" | "未纳入";
+  primary_actions: string[];
+  needs_attention: boolean;
 };
 
 export type GroundedPoi = {
@@ -41,6 +60,9 @@ export type GroundedPoi = {
   category_normalized: string;
   match_confidence: number;
   match_status: "matched" | "ambiguous" | "unmatched";
+  is_chain?: boolean;
+  selection_mode?: string;
+  candidate_options?: Array<Record<string, unknown>>;
   contexts?: string[];
   experience_tags?: string[];
 };
@@ -67,13 +89,22 @@ export type RuntimePoi = {
   standard_name: string;
   location: { lng?: number | null; lat?: number | null };
   match_status: string;
+  final_decision?: string;
 };
 
 export type Itinerary = {
   destination: string;
+  route_summary?: {
+    main_message?: string;
+    scheduled_places_count?: number;
+    unscheduled_places_count?: number;
+    attention_required_count?: number;
+  };
   days: DayRoute[];
   global_risks: string[];
   uncertain_pois: Array<Record<string, unknown>>;
+  unscheduled_places?: Array<{ name: string; reason: string }>;
+  attention_places?: Array<{ name: string; reason: string }>;
   revision_notes: string[];
 };
 

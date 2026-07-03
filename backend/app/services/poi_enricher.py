@@ -26,6 +26,11 @@ def enrich_pois(grounded_pois: list[dict], ugc_items: list[dict]) -> list[dict]:
                 "physical_intensity": "low" if category in {"restaurant", "shopping_mall"} else "medium",
                 "confidence": poi.get("match_confidence", 0),
                 "uncertainty_notes": _uncertainty_notes(poi),
+                "system_decision": poi.get("system_decision", "include"),
+                "user_override": poi.get("user_override", "none"),
+                "final_decision": poi.get("final_decision", "include"),
+                "inferred_role": poi.get("inferred_role", "visit"),
+                "decision_reason": poi.get("decision_reason", ""),
             }
         )
     return enriched

@@ -1,6 +1,8 @@
 .DS_Store
 .env
 *.log
+*.mov
+.codex_tmp_frames/
 data/*.sqlite3
 data/*.sqlite3-*
 backend/data/*.sqlite3

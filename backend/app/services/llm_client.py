@@ -36,10 +36,34 @@ class LLMClient:
             raise AppError("LLM 服务调用失败，请检查 Key、模型名称或网络连接。", code="llm_request_failed", step=step)
         content = response.json()["choices"][0]["message"]["content"]
         try:
-            return json.loads(content)
+            return parse_json_content(content)
         except json.JSONDecodeError as exc:
             raise AppError("LLM 返回内容不是有效 JSON。", code="llm_invalid_json", step=step) from exc
 
 
 def default_llm_client() -> LLMClient:
     return LLMClient()
+
+
+def parse_json_content(content: str) -> Any:
+    text = content.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        candidate = _extract_json_candidate(text)
+        if candidate is None:
+            raise
+        return json.loads(candidate)
+
+
+def _extract_json_candidate(text: str) -> str | None:
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(text):
+        if character not in "{[":
+            continue
+        try:
+            _, end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        return text[index : index + end]
+    return None

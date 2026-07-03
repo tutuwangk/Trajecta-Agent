@@ -3,15 +3,11 @@
 import { useState } from "react";
 
 const quickActions = [
-  "更松弛一点",
   "多安排美食",
-  "少一点拍照点",
-  "加一个夜景",
-  "少排队",
-  "预算低一点",
+  "增加夜景",
   "删掉某个地点",
-  "换了酒店区域",
-  "按雨天调整"
+  "换酒店名",
+  "下雨方案"
 ];
 
 export function RevisionPanel({ onRevise, disabled }: { onRevise: (instruction: string, quick?: string) => Promise<void>; disabled?: boolean }) {
@@ -21,7 +17,6 @@ export function RevisionPanel({ onRevise, disabled }: { onRevise: (instruction: 
     <section className="panel space-y-4">
       <div>
         <h2 className="text-2xl font-semibold tracking-[-0.02em]">调整路线</h2>
-        <p className="subtle mt-1">直接说你想怎么改。</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {quickActions.map((action) => (
@@ -35,7 +30,7 @@ export function RevisionPanel({ onRevise, disabled }: { onRevise: (instruction: 
           className="field"
           value={instruction}
           onChange={(event) => setInstruction(event.target.value)}
-          placeholder="例如：删掉建设路，或者住到宽窄巷子附近"
+          placeholder="告诉我你想怎么改"
         />
         <button
           className="btn-primary shrink-0"
