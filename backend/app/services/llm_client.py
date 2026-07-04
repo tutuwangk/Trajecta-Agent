@@ -10,10 +10,17 @@ from app.core import AppError, MissingConfigurationError
 
 
 class LLMClient:
-    def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str | None = None,
+        base_url: str | None = None,
+        trust_env: bool | None = None,
+    ):
         self.api_key = api_key or os.getenv("LLM_API_KEY")
         self.model = model or os.getenv("LLM_MODEL", "deepseek-chat")
         self.base_url = (base_url or os.getenv("LLM_BASE_URL", "https://api.deepseek.com")).rstrip("/")
+        self.trust_env = _trust_env() if trust_env is None else trust_env
 
     def require_configured(self, step: str) -> None:
         if not self.api_key:
@@ -32,7 +39,7 @@ class LLMClient:
                     "response_format": {"type": "json_object"},
                 },
                 timeout=60,
-                trust_env=False,
+                trust_env=self.trust_env,
             )
         except httpx.HTTPError as exc:
             raise AppError("LLM 服务调用失败，请检查 Key、模型名称或网络连接。", code="llm_request_failed", step=step) from exc
@@ -47,6 +54,11 @@ class LLMClient:
 
 def default_llm_client() -> LLMClient:
     return LLMClient()
+
+
+def _trust_env() -> bool:
+    value = os.getenv("LLM_TRUST_ENV", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
 
 
 def parse_json_content(content: str) -> Any:

@@ -35,7 +35,7 @@ class FakeResponse:
         return self.payload
 
 
-def test_llm_client_disables_env_proxy(monkeypatch):
+def test_llm_client_respects_env_proxy_by_default(monkeypatch):
     captured = {}
 
     def fake_post(*args, **kwargs):
@@ -43,6 +43,25 @@ def test_llm_client_disables_env_proxy(monkeypatch):
         return FakeResponse({"choices": [{"message": {"content": '{"ok": true}'}}]})
 
     monkeypatch.setattr("app.services.llm_client.httpx.post", fake_post)
+    monkeypatch.delenv("LLM_TRUST_ENV", raising=False)
+
+    client = LLMClient(api_key="test-key", model="test-model", base_url="https://example.com")
+
+    payload = client.json_chat([{"role": "user", "content": "ping"}], step="extract_ugc")
+
+    assert payload == {"ok": True}
+    assert captured["trust_env"] is True
+
+
+def test_llm_client_can_disable_env_proxy(monkeypatch):
+    captured = {}
+
+    def fake_post(*args, **kwargs):
+        captured.update(kwargs)
+        return FakeResponse({"choices": [{"message": {"content": '{"ok": true}'}}]})
+
+    monkeypatch.setattr("app.services.llm_client.httpx.post", fake_post)
+    monkeypatch.setenv("LLM_TRUST_ENV", "false")
 
     client = LLMClient(api_key="test-key", model="test-model", base_url="https://example.com")
 

@@ -80,6 +80,70 @@ def test_revise_itinerary_trims_low_intensity_days_by_total_time():
     assert revised["days"][0]["removed_pois"]
 
 
+def test_revise_itinerary_keeps_user_marked_must_include_places_when_low_intensity_overflows():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [
+                    {"poi_id": "p1", "name": "景山公园", "duration_min": 120, "transport_to_next": {"duration_min": 30}},
+                    {"poi_id": "p2", "name": "故宫博物院", "duration_min": 180, "transport_to_next": {"duration_min": 30}},
+                    {"poi_id": "p3", "name": "天安门广场", "duration_min": 90, "transport_to_next": {"duration_min": 20}},
+                    {"poi_id": "p4", "name": "慕田峪长城", "duration_min": 180},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "景山公园",
+            "match_status": "matched",
+            "confidence": 0.9,
+            "user_override": "must_include",
+            "final_decision": "include",
+        },
+        {
+            "poi_id": "p2",
+            "standard_name": "故宫博物院",
+            "match_status": "matched",
+            "confidence": 0.9,
+            "user_override": "must_include",
+            "final_decision": "include",
+        },
+        {
+            "poi_id": "p3",
+            "standard_name": "天安门广场",
+            "match_status": "matched",
+            "confidence": 0.9,
+            "user_override": "must_include",
+            "final_decision": "include",
+        },
+        {
+            "poi_id": "p4",
+            "standard_name": "慕田峪长城",
+            "match_status": "matched",
+            "confidence": 0.9,
+            "user_override": "must_include",
+            "final_decision": "include",
+        },
+    ]
+
+    revised = revise_itinerary(
+        itinerary,
+        {"issues": [{"type": "daily_time_over_intensity_limit", "suggestion": "减少当天总耗时"}]},
+        {"constraints": {"physical_intensity": "low"}},
+        runtime_pois=runtime_pois,
+    )
+
+    assert [item["name"] for item in revised["days"][0]["items"]] == ["景山公园", "故宫博物院", "天安门广场", "慕田峪长城"]
+    assert revised["days"][0]["removed_pois"] == []
+    assert "必去地点较多" in revised["global_risks"][0]
+
+
 def test_revise_itinerary_normalizes_llm_risk_objects_before_merging_verification_issues():
     itinerary = {
         "days": [],

@@ -136,6 +136,10 @@ def _trim_days_by_time(itinerary: dict, runtime_by_id: dict, must_visit: list[st
         removed_pois = list(day.get("removed_pois", []))
         while day.get("items", []) and daily_time_minutes(day) > limit_minutes:
             index = _least_important_item_index(day["items"], runtime_by_id, must_visit)
+            if index is None:
+                risks = itinerary.setdefault("global_risks", [])
+                risks.append("必去地点较多，当前路线会超过所选行程强度，建议当天放慢节奏或拆分到其他天。")
+                break
             item = day["items"].pop(index)
             removed_pois.append({"name": item.get("name", ""), "reason": "为控制当天总耗时，已从路线中后置。"})
             removed = True
@@ -143,13 +147,22 @@ def _trim_days_by_time(itinerary: dict, runtime_by_id: dict, must_visit: list[st
     return removed
 
 
-def _least_important_item_index(items: list[dict], runtime_by_id: dict, must_visit: list[str]) -> int:
+def _least_important_item_index(items: list[dict], runtime_by_id: dict, must_visit: list[str]) -> int | None:
     candidates = []
     for index, item in enumerate(items):
         poi = runtime_by_id.get(item.get("poi_id"), {})
-        is_must = any(name and name in item.get("name", "") for name in must_visit)
-        candidates.append((1 if is_must else 0, float(poi.get("confidence") or 0), -index, index))
+        if _is_must_keep_item(item, poi, must_visit):
+            continue
+        candidates.append((float(poi.get("confidence") or 0), -index, index))
+    if not candidates:
+        return None
     return min(candidates)[-1]
+
+
+def _is_must_keep_item(item: dict, poi: dict, must_visit: list[str]) -> bool:
+    if poi.get("user_override") == "must_include":
+        return True
+    return any(name and name in item.get("name", "") for name in must_visit)
 
 
 def _names_to_delete(instruction: str, runtime_by_id: dict) -> list[str]:
