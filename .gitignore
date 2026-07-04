@@ -15,5 +15,6 @@ backend/.venv/
 .venv/
 frontend/.next/
 frontend/node_modules/
+/.pnpm-store/
 frontend/out/
 frontend/tsconfig.tsbuildinfo
