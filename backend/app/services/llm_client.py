@@ -21,17 +21,21 @@ class LLMClient:
 
     def json_chat(self, messages: list[dict[str, str]], step: str, temperature: float = 0.2) -> Any:
         self.require_configured(step)
-        response = httpx.post(
-            f"{self.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            json={
-                "model": self.model,
-                "messages": messages,
-                "temperature": temperature,
-                "response_format": {"type": "json_object"},
-            },
-            timeout=60,
-        )
+        try:
+            response = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "response_format": {"type": "json_object"},
+                },
+                timeout=60,
+                trust_env=False,
+            )
+        except httpx.HTTPError as exc:
+            raise AppError("LLM 服务调用失败，请检查 Key、模型名称或网络连接。", code="llm_request_failed", step=step) from exc
         if response.status_code >= 400:
             raise AppError("LLM 服务调用失败，请检查 Key、模型名称或网络连接。", code="llm_request_failed", step=step)
         content = response.json()["choices"][0]["message"]["content"]
