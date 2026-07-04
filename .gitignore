@@ -4,6 +4,7 @@
 *.log
 *.mov
 *.mp4
+!demo/*.mp4
 .codex_tmp_frames/
 .pytest_cache/
 backend/.pytest_cache/
