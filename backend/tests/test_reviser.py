@@ -46,15 +46,15 @@ def test_revise_itinerary_removes_unconfirmed_pois_and_trims_relaxed_days():
     assert any(poi["name"] == "晓市集" for poi in revised["days"][0]["removed_pois"])
 
 
-def test_revise_itinerary_trims_low_intensity_days_by_total_time():
+def test_revise_itinerary_trims_relaxed_days_by_total_time():
     itinerary = {
         "days": [
             {
                 "day": 1,
                 "items": [
-                    {"poi_id": "p1", "name": "IFS", "duration_min": 150, "transport_to_next": {"duration_min": 40}},
-                    {"poi_id": "p2", "name": "太古里", "duration_min": 150, "transport_to_next": {"duration_min": 40}},
-                    {"poi_id": "p3", "name": "人民公园", "duration_min": 120},
+                    {"poi_id": "p1", "name": "IFS", "duration_min": 210, "transport_to_next": {"duration_min": 40}},
+                    {"poi_id": "p2", "name": "太古里", "duration_min": 210, "transport_to_next": {"duration_min": 40}},
+                    {"poi_id": "p3", "name": "人民公园", "duration_min": 180},
                 ],
                 "removed_pois": [],
             }
@@ -76,8 +76,38 @@ def test_revise_itinerary_trims_low_intensity_days_by_total_time():
     )
 
     total_minutes = sum((item.get("duration_min") or 0) + (item.get("transport_to_next") or {}).get("duration_min", 0) for item in revised["days"][0]["items"])
-    assert total_minutes <= 300
+    assert total_minutes <= 540
     assert revised["days"][0]["removed_pois"]
+
+
+def test_revise_itinerary_keeps_user_confirmed_ambiguous_map_candidate():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [{"poi_id": "p1", "name": "晓市集", "duration_min": 90}],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "晓市集",
+            "match_status": "ambiguous",
+            "amap_id": "B004",
+            "location": {"lng": 104.1, "lat": 30.6},
+            "user_override": "must_include",
+            "final_decision": "include",
+        },
+    ]
+
+    revised = revise_itinerary(itinerary, {"issues": []}, {"constraints": {"physical_intensity": "medium"}}, runtime_pois=runtime_pois)
+
+    assert [item["poi_id"] for item in revised["days"][0]["items"]] == ["p1"]
+    assert revised["days"][0]["removed_pois"] == []
 
 
 def test_revise_itinerary_keeps_user_marked_must_include_places_when_low_intensity_overflows():
@@ -144,6 +174,43 @@ def test_revise_itinerary_keeps_user_marked_must_include_places_when_low_intensi
     assert "必去地点较多" in revised["global_risks"][0]
 
 
+def test_revise_itinerary_keeps_single_large_place_when_low_intensity_overflows():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [
+                    {"poi_id": "p1", "name": "北京环球影城", "duration_min": 600},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "北京环球影城",
+            "match_status": "matched",
+            "confidence": 0.9,
+            "estimated_duration_min": 600,
+            "final_decision": "include",
+        },
+    ]
+
+    revised = revise_itinerary(
+        itinerary,
+        {"issues": [{"type": "daily_time_over_intensity_limit", "suggestion": "减少当天总耗时"}]},
+        {"constraints": {"physical_intensity": "low"}},
+        runtime_pois=runtime_pois,
+    )
+
+    assert [item["name"] for item in revised["days"][0]["items"]] == ["北京环球影城"]
+    assert revised["days"][0]["removed_pois"] == []
+    assert any("本身需要较长时间" in risk for risk in revised["global_risks"])
+
+
 def test_revise_itinerary_normalizes_llm_risk_objects_before_merging_verification_issues():
     itinerary = {
         "days": [],
@@ -155,6 +222,37 @@ def test_revise_itinerary_normalizes_llm_risk_objects_before_merging_verificatio
     revised = revise_itinerary(itinerary, verification, {"constraints": {}})
 
     assert revised["global_risks"] == ["热门地点可能需要排队", "当天总耗时偏长"]
+
+
+def test_revise_itinerary_removes_internal_fields_from_user_visible_text():
+    itinerary = {
+        "route_summary": {"main_message": "include，已安排"},
+        "days": [
+            {
+                "day": 1,
+                "summary": "optional，围绕中轴线安排",
+                "items": [
+                    {
+                        "poi_id": "p1",
+                        "name": "景山公园",
+                        "reason": "must_include，地标拍照点。",
+                        "risk_notes": ["final_decision include，可能排队"],
+                    }
+                ],
+                "removed_pois": [{"name": "前门", "reason": "unresolved，匹配不确定"}],
+            }
+        ],
+        "global_risks": ["system_decision include，热门地点可能需要排队"],
+        "revision_notes": [],
+    }
+
+    revised = revise_itinerary(itinerary, {"issues": []}, {"constraints": {}})
+
+    assert revised["route_summary"]["main_message"] == "已安排"
+    assert revised["days"][0]["summary"] == "围绕中轴线安排"
+    assert revised["days"][0]["items"][0]["reason"] == "地标拍照点。"
+    assert revised["days"][0]["items"][0]["risk_notes"] == ["可能排队"]
+    assert revised["global_risks"] == ["热门地点可能需要排队"]
 
 
 def test_revise_from_user_instruction_deletes_named_poi_without_llm_call():

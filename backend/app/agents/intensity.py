@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 DAILY_TIME_LIMITS = {
-    "low": 300,
+    "low": 540,
     "medium": 540,
     "high": 840,
 }
@@ -11,7 +11,7 @@ DAILY_TIME_LIMITS = {
 def normalize_physical_intensity(value: str | None, avoid_too_tired: bool = False) -> str:
     if value in DAILY_TIME_LIMITS:
         return value
-    return "low" if avoid_too_tired else "medium"
+    return "medium" if avoid_too_tired else "medium"
 
 
 def daily_time_limit_minutes(user_profile: dict) -> int:
@@ -29,16 +29,26 @@ def daily_time_minutes(day_or_items: dict | list[dict]) -> int:
             day_or_items,
             ["total_outing_min", "total_outing_minutes", "outing_duration_min", "outing_duration_minutes"],
         )
+        component_total = component_time_minutes(day_or_items)
         if explicit is not None:
-            return explicit
-
-        total = _first_int(day_or_items, ["hotel_departure_transport_min", "hotel_to_first_transport_min"]) or 0
-        total += _first_int(day_or_items, ["hotel_return_transport_min", "last_to_hotel_transport_min"]) or 0
-        for meal in day_or_items.get("meal_breaks") or []:
-            total += int(meal.get("duration_min") or meal.get("duration_minutes") or 0)
-        total += _items_time_minutes(day_or_items.get("items") or [])
-        return total
+            return max(explicit, component_total)
+        return component_total
     return _items_time_minutes(day_or_items)
+
+
+def sync_day_total_time(day: dict) -> None:
+    day["total_outing_min"] = component_time_minutes(day)
+
+
+def component_time_minutes(day: dict) -> int:
+    total = _first_int(day, ["hotel_departure_transport_min", "hotel_to_first_transport_min"]) or 0
+    total += _first_int(day, ["hotel_return_transport_min", "last_to_hotel_transport_min"]) or 0
+    for meal in day.get("meal_breaks") or []:
+        if meal.get("included_in_item_duration"):
+            continue
+        total += int(meal.get("duration_min") or meal.get("duration_minutes") or 0)
+    total += _items_time_minutes(day.get("items") or [])
+    return total
 
 
 def _items_time_minutes(items: list[dict]) -> int:

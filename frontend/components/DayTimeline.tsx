@@ -1,7 +1,5 @@
 import type { DayRoute, ItineraryItem } from "@/lib/types";
 
-const FLEX_BUFFER_MIN = 5;
-
 type TimelineEntry =
   | {
       kind: "start";
@@ -21,6 +19,12 @@ type TimelineEntry =
       time: string;
       title: string;
       detail: string;
+    }
+  | {
+      kind: "break";
+      time: string;
+      title: string;
+      detail: string;
     };
 
 export function DayTimeline({ day }: { day: DayRoute }) {
@@ -32,7 +36,7 @@ export function DayTimeline({ day }: { day: DayRoute }) {
       <div className="mb-4 flex flex-wrap items-end justify-between gap-2">
         <div>
           <h4 className="text-base font-semibold tracking-[-0.01em] text-ink">今日时间线</h4>
-          <p className="mt-1 text-xs leading-5 text-muted">时间为预估，已按 5 分钟留出余量。</p>
+          <p className="mt-1 text-xs leading-5 text-muted">时间为预估，按当天路线顺序推算。</p>
         </div>
         <span className="rounded-full bg-white/80 px-3 py-1 text-xs font-medium text-sky-700">
           {day.items.length} 站
@@ -68,6 +72,8 @@ function buildTimelineEntries(day: DayRoute): TimelineEntry[] {
   if (!day.items.length) return [];
 
   const entries: TimelineEntry[] = [];
+  const meals = [...(day.meal_breaks || [])].sort((a, b) => (parseClockTime(a.start_time) ?? 9999) - (parseClockTime(b.start_time) ?? 9999));
+  const usedMeals = new Set<number>();
   const firstArrival = roundedArrival(day.items[0]);
   const departureTransport = firstNumber(day.hotel_departure_transport_min, day.hotel_to_first_transport_min);
   let currentTime = firstArrival;
@@ -90,10 +96,11 @@ function buildTimelineEntries(day: DayRoute): TimelineEntry[] {
   }
 
   day.items.forEach((item, index) => {
-    const explicitArrival = roundedArrival(item);
+    const explicitArrival = index === 0 ? roundedArrival(item) : null;
     const arrival = explicitArrival ?? currentTime;
     const stayMinutes = displayStayMinutes(item.duration_min);
-    const leaveTime = arrival === null ? undefined : formatTime(arrival + stayMinutes);
+    const departureTime = arrival === null ? null : arrival + stayMinutes;
+    const leaveTime = departureTime === null ? undefined : formatTime(departureTime);
 
     entries.push({
       kind: "place",
@@ -102,23 +109,93 @@ function buildTimelineEntries(day: DayRoute): TimelineEntry[] {
       detail: `停留约 ${stayMinutes} 分钟。`,
       leaveTime,
     });
+    addIncludedMeals(entries, meals, usedMeals, item);
 
-    const transferMinutes = item.transport_to_next?.duration_min;
-    if (transferMinutes && index < day.items.length - 1) {
-      const displayMinutes = displayTransferMinutes(transferMinutes);
-      entries.push({
-        kind: "transfer",
-        time: "路上",
-        title: `前往 ${day.items[index + 1].name}`,
-        detail: `交通预留约 ${displayMinutes} 分钟。`,
-      });
-      currentTime = arrival === null ? null : arrival + stayMinutes + displayMinutes;
+    if (index < day.items.length - 1) {
+      const nextItem = day.items[index + 1];
+      const transferMinutes = item.transport_to_next?.duration_min;
+      let nextComputedTime = addExternalMeals(entries, meals, usedMeals, departureTime);
+      if (transferMinutes) {
+        const displayMinutes = displayTransferMinutes(transferMinutes);
+        entries.push({
+          kind: "transfer",
+          time: nextComputedTime === null ? "路上" : formatTime(nextComputedTime),
+          title: `前往 ${nextItem.name}`,
+          detail: `交通预留约 ${displayMinutes} 分钟。`,
+        });
+        nextComputedTime = nextComputedTime === null ? null : nextComputedTime + displayMinutes;
+      }
+
+      currentTime = nextComputedTime;
     } else {
-      currentTime = arrival === null ? null : arrival + stayMinutes;
+      currentTime = addExternalMeals(entries, meals, usedMeals, departureTime);
     }
   });
 
+  const returnTransport = firstNumber(day.hotel_return_transport_min, day.last_to_hotel_transport_min);
+  if (returnTransport !== null) {
+    const displayMinutes = displayTransferMinutes(returnTransport);
+    const arrivalText = currentTime === null ? "" : `，预计 ${formatTime(currentTime + displayMinutes)} 回到酒店`;
+    entries.push({
+      kind: "transfer",
+      time: currentTime === null ? "返程" : formatTime(currentTime),
+      title: "返回酒店",
+      detail: `交通预留约 ${displayMinutes} 分钟${arrivalText}。`,
+    });
+  } else {
+    entries.push({
+      kind: "transfer",
+      time: currentTime === null ? "返程" : formatTime(currentTime),
+      title: "返回酒店",
+      detail: "返程时间会根据最后一站结束时间和当天交通情况调整。",
+    });
+  }
+
   return entries;
+}
+
+function addIncludedMeals(
+  entries: TimelineEntry[],
+  meals: NonNullable<DayRoute["meal_breaks"]>,
+  usedMeals: Set<number>,
+  item: ItineraryItem,
+) {
+  meals.forEach((meal, index) => {
+    if (usedMeals.has(index) || !meal.included_in_item_duration || meal.within_poi_id !== item.poi_id) return;
+    const start = parseClockTime(meal.start_time);
+    entries.push({
+      kind: "break",
+      time: start === null ? meal.label || "用餐" : formatTime(start),
+      title: meal.label || "用餐",
+      detail: `在 ${item.name} 内预留约 ${displayStayMinutes(meal.duration_min || meal.duration_minutes || 60)} 分钟。`,
+    });
+    usedMeals.add(index);
+  });
+}
+
+function addExternalMeals(
+  entries: TimelineEntry[],
+  meals: NonNullable<DayRoute["meal_breaks"]>,
+  usedMeals: Set<number>,
+  currentTime: number | null,
+) {
+  let nextTime = currentTime;
+  meals.forEach((meal, index) => {
+    if (usedMeals.has(index) || meal.included_in_item_duration) return;
+    const start = parseClockTime(meal.start_time);
+    if (nextTime === null || start === null || start > nextTime) return;
+    const displayStart = Math.max(nextTime, start);
+    const duration = displayStayMinutes(meal.duration_min || meal.duration_minutes || 60);
+    entries.push({
+      kind: "break",
+      time: formatTime(displayStart),
+      title: meal.label || "用餐和休息",
+      detail: `就近预留约 ${duration} 分钟。`,
+    });
+    nextTime = displayStart + duration;
+    usedMeals.add(index);
+  });
+  return nextTime;
 }
 
 function roundedArrival(item: ItineraryItem) {
@@ -131,7 +208,7 @@ function displayStayMinutes(minutes: number) {
 }
 
 function displayTransferMinutes(minutes: number) {
-  return roundUpToFive((minutes || 0) + FLEX_BUFFER_MIN);
+  return roundUpToFive(minutes || 0);
 }
 
 function parseClockTime(value?: string) {
@@ -165,11 +242,13 @@ function firstNumber(...values: Array<number | undefined>) {
 function dotClass(kind: TimelineEntry["kind"]) {
   if (kind === "start") return "bg-sky-500 ring-sky-100";
   if (kind === "transfer") return "bg-amber-400 ring-amber-100";
+  if (kind === "break") return "bg-orange-400 ring-orange-100";
   return "bg-emerald-500 ring-emerald-100";
 }
 
 function cardClass(kind: TimelineEntry["kind"]) {
   if (kind === "start") return "border-sky-100";
   if (kind === "transfer") return "border-amber-100";
+  if (kind === "break") return "border-orange-100";
   return "border-emerald-100";
 }

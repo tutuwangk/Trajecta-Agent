@@ -38,6 +38,7 @@ def revise_itinerary(
         _text_list(final.get("global_risks", []))
         + _text_list([issue.get("message") for issue in verification.get("issues", []) if issue.get("message")])
     )
+    _sanitize_itinerary_text(final)
     _ensure_display_sections(final, user_profile)
     return final
 
@@ -59,7 +60,7 @@ def revise_from_user_instruction(current_itinerary: dict, instruction: str, user
             {"role": "system", "content": "你是旅行路线修改助手。只能基于已有地点和路线调整，不得虚构地点。"},
             {
                 "role": "user",
-                "content": f"""请根据用户要求调整路线，保留 JSON 结构。
+                "content": f"""请根据用户要求调整路线，保留 JSON 结构。user_override、final_decision、system_decision、must_include、optional、include、exclude、unresolved 等内部字段只用于判断，不得出现在 reason、summary、risk_notes、revision_notes 等用户可见文案中。
 用户要求：{instruction}
 用户需求：{user_profile}
 当前路线：{current_itinerary}
@@ -82,7 +83,7 @@ def _remove_unconfirmed_items(itinerary: dict, runtime_by_id: dict) -> bool:
         removed_pois = list(day.get("removed_pois", []))
         for item in day.get("items", []):
             poi = runtime_by_id.get(item.get("poi_id"))
-            if not poi or poi.get("match_status") != "matched" or poi.get("final_decision") in {"exclude", "unresolved"}:
+            if not poi or not _is_plannable_poi(poi) or poi.get("final_decision") in {"exclude", "unresolved"}:
                 removed_pois.append({"name": item.get("name", ""), "reason": _removed_reason(poi)})
                 removed = True
                 continue
@@ -135,6 +136,11 @@ def _trim_days_by_time(itinerary: dict, runtime_by_id: dict, must_visit: list[st
     for day in itinerary.get("days", []):
         removed_pois = list(day.get("removed_pois", []))
         while day.get("items", []) and daily_time_minutes(day) > limit_minutes:
+            if len(day["items"]) <= 1:
+                item = day["items"][0]
+                risks = itinerary.setdefault("global_risks", [])
+                risks.append(f"{item.get('name', '这个地点')}本身需要较长时间，当前路线会超过所选行程强度，建议当天少安排其他项目。")
+                break
             index = _least_important_item_index(day["items"], runtime_by_id, must_visit)
             if index is None:
                 risks = itinerary.setdefault("global_risks", [])
@@ -247,6 +253,38 @@ def _unique_texts(values: list[str]) -> list[str]:
     return unique
 
 
+def _sanitize_itinerary_text(itinerary: dict) -> None:
+    summary = itinerary.get("route_summary")
+    if isinstance(summary, dict) and "main_message" in summary:
+        summary["main_message"] = _sanitize_user_text(summary.get("main_message", ""))
+    itinerary["global_risks"] = [_sanitize_user_text(text) for text in _text_list(itinerary.get("global_risks", []))]
+    itinerary["revision_notes"] = [_sanitize_user_text(text) for text in _text_list(itinerary.get("revision_notes", []))]
+    for day in itinerary.get("days", []):
+        if "summary" in day:
+            day["summary"] = _sanitize_user_text(day.get("summary", ""))
+        for item in day.get("items", []):
+            if "reason" in item:
+                item["reason"] = _sanitize_user_text(item.get("reason", ""))
+            if "risk_notes" in item:
+                item["risk_notes"] = [_sanitize_user_text(text) for text in _text_list(item.get("risk_notes", []))]
+        for item in day.get("removed_pois", []):
+            if isinstance(item, dict):
+                item["reason"] = _sanitize_user_text(item.get("reason", ""))
+
+
+def _sanitize_user_text(text: str) -> str:
+    value = str(text or "")
+    value = re.sub(
+        r"\b(?:must_include|must_visit|user_override|final_decision|system_decision|arrange_nearby|needs_confirmation|unresolved|exclude|optional|include)\b\s*[，,、。；;:：]?\s*",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+    value = re.sub(r"^[\s，,、。；;:：]+", "", value)
+    value = re.sub(r"\s{2,}", " ", value)
+    return value.strip()
+
+
 def _ensure_display_sections(itinerary: dict, user_profile: dict) -> None:
     unscheduled = _collect_unscheduled(itinerary)
     attention = _collect_attention(itinerary)
@@ -315,6 +353,19 @@ def _removed_reason(poi: dict | None) -> str:
     if poi.get("final_decision") == "unresolved":
         return "匹配不确定"
     return "地点还需要确认"
+
+
+def _is_plannable_poi(poi: dict) -> bool:
+    if poi.get("match_status") == "matched":
+        return True
+    location = poi.get("location") or {}
+    return (
+        poi.get("user_override") == "must_include"
+        and poi.get("match_status") == "ambiguous"
+        and bool(poi.get("amap_id"))
+        and location.get("lng") is not None
+        and location.get("lat") is not None
+    )
 
 
 def _short_reason(reason: str) -> str:

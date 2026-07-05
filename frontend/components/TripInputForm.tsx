@@ -9,9 +9,8 @@ import type { PoiRow, UserProfile } from "@/lib/types";
 
 const preferenceOptions = ["美食", "拍照", "城市漫步", "购物", "历史文化", "休闲"];
 const intensityOptions = [
+  { label: "轻松", value: "轻松" },
   { label: "特种兵", value: "特种兵" },
-  { label: "常规", value: "常规" },
-  { label: "躺平式旅游", value: "躺平式旅游" }
 ];
 const transportOptions = ["步行", "打车", "地铁公交"];
 const routeGoalOptions = ["均衡安排", "美食优先", "拍照优先"];
@@ -316,7 +315,7 @@ function buildUserProfile({
     route_goal: routeGoalValue(routeGoal),
     preferences: preferenceWeights(preferences),
     constraints: {
-      avoid_too_tired: physicalIntensity === "躺平式旅游",
+      avoid_too_tired: physicalIntensity === "轻松",
       physical_intensity: intensityValue(physicalIntensity),
       must_visit: [],
       avoid_visit: [],
@@ -351,7 +350,6 @@ function routeGoalValue(value: string) {
 
 function intensityValue(value: string): NonNullable<UserProfile["constraints"]["physical_intensity"]> {
   if (value === "特种兵") return "high";
-  if (value === "躺平式旅游") return "low";
   return "medium";
 }
 

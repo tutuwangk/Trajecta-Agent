@@ -1,12 +1,12 @@
 import type { DayRoute } from "@/lib/types";
+import { cleanUserFacingText } from "@/lib/displayText";
 import { DayTimeline } from "./DayTimeline";
 import { POICard } from "./POICard";
 
 export function DayRouteCard({ day }: { day: DayRoute }) {
-  const playMinutes = day.items.reduce((sum, item) => sum + (item.duration_min || 0), 0);
-  const transferMinutes = day.items.reduce((sum, item) => sum + (item.transport_to_next?.duration_min || 0), 0);
+  const transferMinutes = transferTimeMinutes(day);
   const outingMinutes = outingTimeMinutes(day);
-  const intensity = outingMinutes <= 300 ? "躺平" : outingMinutes <= 540 ? "常规" : "特种兵";
+  const intensity = intensityLabel(day, outingMinutes);
 
   return (
     <section className="panel">
@@ -44,7 +44,7 @@ export function DayRouteCard({ day }: { day: DayRoute }) {
           <summary className="cursor-pointer font-semibold text-ink">没放进路线的地点</summary>
           <ul className="mt-2 space-y-1 text-muted">
             {day.removed_pois?.map((poi) => (
-              <li key={poi.name}>{poi.name}：{poi.reason}</li>
+              <li key={poi.name}>{poi.name}：{cleanUserFacingText(poi.reason)}</li>
             ))}
           </ul>
         </details>
@@ -56,10 +56,23 @@ export function DayRouteCard({ day }: { day: DayRoute }) {
 function outingTimeMinutes(day: DayRoute) {
   const explicit = day.total_outing_min ?? day.total_outing_minutes ?? day.outing_duration_min ?? day.outing_duration_minutes;
   if (explicit) return explicit;
-  const itemMinutes = day.items.reduce((sum, item) => sum + (item.duration_min || 0) + (item.transport_to_next?.duration_min || 0), 0);
+  const itemMinutes = day.items.reduce((sum, item) => sum + (item.duration_min || 0), 0);
+  const mealMinutes = (day.meal_breaks || []).reduce(
+    (sum, meal) => sum + (meal.included_in_item_duration ? 0 : meal.duration_min || meal.duration_minutes || 0),
+    0
+  );
+  return itemMinutes + transferTimeMinutes(day) + mealMinutes;
+}
+
+function transferTimeMinutes(day: DayRoute) {
+  const betweenPlaces = day.items.reduce((sum, item) => sum + (item.transport_to_next?.duration_min || 0), 0);
   const hotelTransport =
     (day.hotel_departure_transport_min || day.hotel_to_first_transport_min || 0) +
     (day.hotel_return_transport_min || day.last_to_hotel_transport_min || 0);
-  const mealMinutes = (day.meal_breaks || []).reduce((sum, meal) => sum + (meal.duration_min || meal.duration_minutes || 0), 0);
-  return itemMinutes + hotelTransport + mealMinutes;
+  return betweenPlaces + hotelTransport;
+}
+
+function intensityLabel(day: DayRoute, outingMinutes: number) {
+  if (outingMinutes <= 540) return "轻松";
+  return "特种兵";
 }

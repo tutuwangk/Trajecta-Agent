@@ -7,9 +7,9 @@ def test_verify_itinerary_flags_unmatched_and_daily_time_over_low_intensity_limi
             {
                 "day": 1,
                 "items": [
-                    {"poi_id": "p1", "name": "A", "duration_min": 140, "transport_to_next": {"duration_min": 25}},
-                    {"poi_id": "p2", "name": "B", "duration_min": 120, "transport_to_next": {"duration_min": 25}},
-                    {"poi_id": "p3", "name": "C", "duration_min": 60},
+                    {"poi_id": "p1", "name": "A", "duration_min": 220, "transport_to_next": {"duration_min": 25}},
+                    {"poi_id": "p2", "name": "B", "duration_min": 190, "transport_to_next": {"duration_min": 25}},
+                    {"poi_id": "p3", "name": "C", "duration_min": 120},
                     {"poi_id": "p5", "name": "E", "duration_min": 10},
                 ],
             }
@@ -34,15 +34,15 @@ def test_verify_itinerary_flags_unmatched_and_daily_time_over_low_intensity_limi
     assert "must_visit_missing" in issue_types
 
 
-def test_verify_itinerary_flags_daily_time_over_intensity_limit():
+def test_verify_itinerary_flags_daily_time_over_relaxed_limit():
     itinerary = {
         "days": [
             {
                 "day": 1,
                 "items": [
-                    {"poi_id": "p1", "name": "A", "duration_min": 180, "transport_to_next": {"duration_min": 40}},
-                    {"poi_id": "p2", "name": "B", "duration_min": 180, "transport_to_next": {"duration_min": 40}},
-                    {"poi_id": "p3", "name": "C", "duration_min": 90},
+                        {"poi_id": "p1", "name": "A", "duration_min": 220, "transport_to_next": {"duration_min": 40}},
+                        {"poi_id": "p2", "name": "B", "duration_min": 220, "transport_to_next": {"duration_min": 40}},
+                        {"poi_id": "p3", "name": "C", "duration_min": 90},
                 ],
             }
         ]
@@ -53,21 +53,21 @@ def test_verify_itinerary_flags_daily_time_over_intensity_limit():
         {"poi_id": "p3", "standard_name": "C", "match_status": "matched"},
     ]
 
-    low_result = verify_itinerary(
-        itinerary,
-        {"constraints": {"physical_intensity": "low"}},
-        [],
-        runtime_pois,
-    )
-    medium_result = verify_itinerary(
+    relaxed_result = verify_itinerary(
         itinerary,
         {"constraints": {"physical_intensity": "medium"}},
         [],
         runtime_pois,
     )
+    high_result = verify_itinerary(
+        itinerary,
+        {"constraints": {"physical_intensity": "high"}},
+        [],
+        runtime_pois,
+    )
 
-    assert "daily_time_over_intensity_limit" in {issue["type"] for issue in low_result["issues"]}
-    assert "daily_time_over_intensity_limit" not in {issue["type"] for issue in medium_result["issues"]}
+    assert "daily_time_over_intensity_limit" in {issue["type"] for issue in relaxed_result["issues"]}
+    assert "daily_time_over_intensity_limit" not in {issue["type"] for issue in high_result["issues"]}
 
 
 def test_verify_itinerary_counts_hotel_transport_and_meals_as_outing_time():
@@ -79,8 +79,8 @@ def test_verify_itinerary_counts_hotel_transport_and_meals_as_outing_time():
                 "hotel_return_transport_min": 30,
                 "meal_breaks": [{"duration_min": 60}],
                 "items": [
-                    {"poi_id": "p1", "name": "A", "duration_min": 160, "transport_to_next": {"duration_min": 30}},
-                    {"poi_id": "p2", "name": "B", "duration_min": 30},
+                    {"poi_id": "p1", "name": "A", "duration_min": 320, "transport_to_next": {"duration_min": 30}},
+                    {"poi_id": "p2", "name": "B", "duration_min": 120},
                 ],
             }
         ]
@@ -93,6 +93,54 @@ def test_verify_itinerary_counts_hotel_transport_and_meals_as_outing_time():
     result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "low"}}, [], runtime_pois)
 
     assert "daily_time_over_intensity_limit" in {issue["type"] for issue in result["issues"]}
+
+
+def test_verify_itinerary_allows_relaxed_day_to_exceed_limit_for_must_places():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [
+                    {"poi_id": "p1", "name": "故宫博物院", "duration_min": 260, "transport_to_next": {"duration_min": 40}},
+                    {"poi_id": "p2", "name": "颐和园", "duration_min": 260},
+                ],
+            }
+        ]
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "故宫博物院", "match_status": "matched", "user_override": "must_include"},
+        {"poi_id": "p2", "standard_name": "颐和园", "match_status": "matched", "user_override": "must_include"},
+    ]
+
+    result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, [], runtime_pois)
+
+    assert "daily_time_over_intensity_limit" not in {issue["type"] for issue in result["issues"]}
+
+
+def test_verify_itinerary_allows_user_confirmed_ambiguous_map_candidate():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [{"poi_id": "p1", "name": "晓市集", "duration_min": 90}],
+            }
+        ]
+    }
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "晓市集",
+            "match_status": "ambiguous",
+            "amap_id": "B004",
+            "location": {"lng": 104.1, "lat": 30.6},
+            "user_override": "must_include",
+            "final_decision": "include",
+        },
+    ]
+
+    result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, [], runtime_pois)
+
+    assert "unmatched_poi_scheduled" not in {issue["type"] for issue in result["issues"]}
 
 
 def test_verify_itinerary_only_flags_long_transfer_for_adjacent_items():

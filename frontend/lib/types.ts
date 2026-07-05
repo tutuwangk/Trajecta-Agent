@@ -120,7 +120,14 @@ export type DayRoute = {
   hotel_return_transport_min?: number;
   hotel_to_first_transport_min?: number;
   last_to_hotel_transport_min?: number;
-  meal_breaks?: Array<{ duration_min?: number; duration_minutes?: number }>;
+  meal_breaks?: Array<{
+    label?: string;
+    start_time?: string;
+    duration_min?: number;
+    duration_minutes?: number;
+    within_poi_id?: string;
+    included_in_item_duration?: boolean;
+  }>;
   items: ItineraryItem[];
   removed_pois?: Array<{ name: string; reason: string }>;
   alternatives?: Array<Record<string, unknown> | string>;
@@ -133,7 +140,7 @@ export type ItineraryItem = {
   arrival_time?: string;
   duration_min: number;
   reason: string;
-  transport_to_next?: { mode: string; duration_min?: number; distance_m?: number; amap_navigation_link?: string };
+  transport_to_next?: { mode: "walking" | "taxi" | "public_transport" | "driving" | "transit" | "unknown" | string; duration_min?: number; distance_m?: number; amap_navigation_link?: string };
   risk_notes?: string[];
   amap_link?: string;
 };

@@ -1,7 +1,11 @@
 import type { ItineraryItem } from "@/lib/types";
+import { cleanUserFacingText } from "@/lib/displayText";
 import { AmapLinkButton } from "./AmapLinkButton";
 
 export function POICard({ item }: { item: ItineraryItem }) {
+  const reason = cleanUserFacingText(item.reason);
+  const riskNotes = item.risk_notes?.map(cleanUserFacingText).filter(Boolean);
+
   return (
     <div className="rounded-3xl border border-line bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -16,7 +20,7 @@ export function POICard({ item }: { item: ItineraryItem }) {
           <AmapLinkButton href={item.transport_to_next?.amap_navigation_link} label="去下一站" />
         </div>
       </div>
-      <p className="mt-3 text-sm leading-6 text-ink/80">停留约 {item.duration_min} 分钟。{item.reason}</p>
+      <p className="mt-3 text-sm leading-6 text-ink/80">停留约 {item.duration_min} 分钟。{reason}</p>
       {item.transport_to_next && (
         <p className="mt-3 rounded-2xl bg-surface px-3 py-2 text-xs text-muted">
           前往下一站：{transportMode(item.transport_to_next.mode)}
@@ -24,13 +28,13 @@ export function POICard({ item }: { item: ItineraryItem }) {
           {item.transport_to_next.distance_m ? `，${item.transport_to_next.distance_m} 米` : ""}
         </p>
       )}
-      {Boolean(item.risk_notes?.length) && (
-        <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">提醒：{item.risk_notes?.join("；")}</div>
+      {Boolean(riskNotes?.length) && (
+        <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">提醒：{riskNotes?.join("；")}</div>
       )}
     </div>
   );
 }
 
 function transportMode(mode: string) {
-  return { walking: "步行", driving: "打车/驾车", transit: "公交" }[mode] || mode;
+  return { walking: "步行", taxi: "打车", driving: "打车", public_transport: "地铁/公交", transit: "地铁/公交" }[mode] || mode;
 }

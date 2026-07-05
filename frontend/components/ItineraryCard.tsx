@@ -1,4 +1,5 @@
 import type { Itinerary } from "@/lib/types";
+import { cleanUserFacingText } from "@/lib/displayText";
 import { DayRouteCard } from "./DayRouteCard";
 import { RiskNotice } from "./RiskNotice";
 
@@ -11,7 +12,7 @@ export function ItineraryCard({ itinerary }: { itinerary?: Itinerary | null }) {
     <div className="space-y-4">
       <section className="panel">
         <h2 className="text-2xl font-semibold tracking-[-0.02em]">路线概览</h2>
-        <p className="subtle mt-2">{summary?.main_message || "已为你整理出可执行路线。"}</p>
+        <p className="subtle mt-2">{cleanUserFacingText(summary?.main_message) || "已为你整理出可执行路线。"}</p>
         <div className="mt-4 grid grid-cols-3 gap-2">
           <div className="metric">
             <div className="text-xs text-muted">已安排</div>
@@ -46,7 +47,7 @@ function PlaceDetails({ title, items }: { title: string; items: Array<{ name: st
         {items.map((item, index) => (
           <li key={`${item.name}-${index}`} className="rounded-2xl bg-surface px-3 py-2">
             {item.name}
-            {item.reason ? `：${item.reason}` : ""}
+            {item.reason ? `：${cleanUserFacingText(item.reason)}` : ""}
           </li>
         ))}
       </ul>
