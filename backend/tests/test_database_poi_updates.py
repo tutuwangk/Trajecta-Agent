@@ -47,7 +47,7 @@ def test_update_poi_decisions_rematches_manual_name(tmp_path):
     assert row["grounded_poi"]["amap_id"] == "B001"
     assert row["system_decision"] == "include"
     assert row["user_override"] == "rename_confirm"
-    assert row["final_decision"] == "include"
+    assert row["final_decision"] == "optional"
     assert row["place_pool_item"]["status_label"] == "已识别"
 
 

@@ -19,7 +19,7 @@ def verify_itinerary(
         districts: set[str] = set()
         total_minutes = daily_time_minutes(day)
         limit_minutes = daily_time_limit_minutes(user_profile)
-        if total_minutes > limit_minutes:
+        if total_minutes > limit_minutes and _has_removable_item(items, runtime_by_id, user_profile):
             issues.append(
                 {
                     "type": "daily_time_over_intensity_limit",
@@ -43,7 +43,7 @@ def verify_itinerary(
                 continue
             if poi.get("district"):
                 districts.add(poi["district"])
-            if poi.get("match_status") != "matched":
+            if not _is_plannable_poi(poi):
                 issues.append(
                     {
                         "type": "unmatched_poi_scheduled",
@@ -149,3 +149,27 @@ def _has_meal_stop(items: list[dict], runtime_by_id: dict) -> bool:
         if poi.get("category") == "restaurant" or any(token in text for token in ["午餐", "晚餐", "餐", "小吃", "咖啡"]):
             return True
     return False
+
+
+def _has_removable_item(items: list[dict], runtime_by_id: dict, user_profile: dict) -> bool:
+    must_visit = user_profile.get("constraints", {}).get("must_visit", [])
+    return any(not _is_must_item(item, runtime_by_id.get(item.get("poi_id"), {}), must_visit) for item in items)
+
+
+def _is_must_item(item: dict, poi: dict, must_visit: list[str]) -> bool:
+    if poi.get("user_override") == "must_include":
+        return True
+    return any(name and name in item.get("name", "") for name in must_visit)
+
+
+def _is_plannable_poi(poi: dict) -> bool:
+    if poi.get("match_status") == "matched":
+        return True
+    location = poi.get("location") or {}
+    return (
+        poi.get("user_override") == "must_include"
+        and poi.get("match_status") == "ambiguous"
+        and bool(poi.get("amap_id"))
+        and location.get("lng") is not None
+        and location.get("lat") is not None
+    )

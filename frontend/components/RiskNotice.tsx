@@ -1,5 +1,7 @@
+import { cleanUserFacingText } from "@/lib/displayText";
+
 export function RiskNotice({ risks, notes }: { risks?: string[]; notes?: string[] }) {
-  const items = [...(risks || []), ...(notes || [])].filter(Boolean);
+  const items = [...(risks || []), ...(notes || [])].map(cleanUserFacingText).filter(Boolean);
   if (!items.length) return null;
   return (
     <details className="panel border-amber-100 bg-amber-50/80 shadow-none">

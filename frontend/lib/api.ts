@@ -21,15 +21,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
       step_status: {}
     };
   }
+  const payload = (await response.json().catch(() => null)) as ApiResponse<T> | null;
   if (!response.ok) {
     return {
       ok: false,
-      data: null,
-      error: { code: String(response.status), message: "请求失败，请稍后再试。" },
-      step_status: {}
+      data: payload?.data ?? null,
+      error: payload?.error ?? { code: String(response.status), message: "请求失败，请稍后再试。" },
+      step_status: payload?.step_status ?? {}
     };
   }
-  return response.json();
+  return payload ?? {
+    ok: false,
+    data: null,
+    error: { code: "invalid_response", message: "服务返回了无法识别的结果。" },
+    step_status: {}
+  };
 }
 
 export function createSession(payload: { raw_input: string; notes: string; user_profile?: UserProfile }) {

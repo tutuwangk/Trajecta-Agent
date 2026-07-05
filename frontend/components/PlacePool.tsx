@@ -12,13 +12,15 @@ export function PlacePool({
   onChange,
   onGenerateRoute,
   generateLoading,
-  generateDisabled
+  generateDisabled,
+  generateError
 }: {
   pois: PoiRow[];
   onChange?: (decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) => void | Promise<void>;
   onGenerateRoute?: () => void | Promise<void>;
   generateLoading?: boolean;
   generateDisabled?: boolean;
+  generateError?: string;
 }) {
   const [editingId, setEditingId] = useState<string>("");
   const [manualNames, setManualNames] = useState<Record<string, string>>({});
@@ -31,9 +33,12 @@ export function PlacePool({
         <h2 className="text-2xl font-semibold tracking-[-0.02em]">识别出的地点</h2>
         <div className="mt-4 rounded-3xl border border-line bg-white/70 p-4 font-medium text-ink">识别出的地点会显示在这里。</div>
         {onGenerateRoute && (
-          <button className="btn-primary mt-4 w-full gap-2" onClick={onGenerateRoute} disabled={generateDisabled}>
-            <GenerateButtonLabel loading={Boolean(generateLoading)} />
-          </button>
+          <>
+            <button className="btn-primary mt-4 w-full gap-2" onClick={onGenerateRoute} disabled={generateDisabled}>
+              <GenerateButtonLabel loading={Boolean(generateLoading)} />
+            </button>
+            <GenerateError message={generateError} />
+          </>
         )}
       </section>
     );
@@ -136,9 +141,12 @@ export function PlacePool({
         })}
       </div>
       {onGenerateRoute && (
-        <button className="btn-primary mt-4 w-full gap-2" onClick={onGenerateRoute} disabled={generateDisabled}>
-          <GenerateButtonLabel loading={Boolean(generateLoading)} />
-        </button>
+        <>
+          <button className="btn-primary mt-4 w-full gap-2" onClick={onGenerateRoute} disabled={generateDisabled}>
+            <GenerateButtonLabel loading={Boolean(generateLoading)} />
+          </button>
+          <GenerateError message={generateError} />
+        </>
       )}
     </section>
   );
@@ -151,6 +159,11 @@ function GenerateButtonLabel({ loading }: { loading: boolean }) {
       {loading ? "正在生成" : "生成路线"}
     </>
   );
+}
+
+function GenerateError({ message }: { message?: string }) {
+  if (!message) return null;
+  return <div className="mt-3 rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink">{message}</div>;
 }
 
 function loadingTextFor(decision: string, manualName?: string) {

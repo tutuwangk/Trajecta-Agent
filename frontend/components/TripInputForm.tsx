@@ -9,9 +9,8 @@ import type { PoiRow, UserProfile } from "@/lib/types";
 
 const preferenceOptions = ["美食", "拍照", "城市漫步", "购物", "历史文化", "休闲"];
 const intensityOptions = [
+  { label: "轻松", value: "轻松" },
   { label: "特种兵", value: "特种兵" },
-  { label: "常规", value: "常规" },
-  { label: "躺平式旅游", value: "躺平式旅游" }
 ];
 const transportOptions = ["步行", "打车", "地铁公交"];
 const routeGoalOptions = ["均衡安排", "美食优先", "拍照优先"];
@@ -30,6 +29,7 @@ export function TripInputForm() {
   const [notes, setNotes] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [routeError, setRouteError] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [pois, setPois] = useState<PoiRow[]>([]);
   const recognizing = status === "正在识别地点" || status === "正在确认位置";
@@ -37,6 +37,7 @@ export function TripInputForm() {
 
   async function recognize() {
     setError("");
+    setRouteError("");
     setStatus("正在识别地点");
     const rawInput = [
       destination ? `目的地：${destination}` : "",
@@ -87,6 +88,8 @@ export function TripInputForm() {
 
   async function handlePlaceChange(decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
     if (!sessionId) return;
+    setError("");
+    setRouteError("");
     setStatus("正在保存地点调整");
     const result = await updatePlaceOverrides(sessionId, decisions);
     if (!result.ok || !result.data) {
@@ -100,10 +103,12 @@ export function TripInputForm() {
 
   async function generateRoute() {
     if (!sessionId) return;
+    setRouteError("");
+    setError("");
     setStatus("正在整理路线");
     const result = await planTrip(sessionId);
     if (!result.ok) {
-      setError(result.error?.message || "路线生成失败");
+      setRouteError(result.error?.message || "路线生成失败");
       setStatus("");
       return;
     }
@@ -114,7 +119,7 @@ export function TripInputForm() {
     <div className="space-y-6">
       <section className="px-1 pt-4 sm:pt-8">
         <p className="eyebrow">Trajecta-Agent</p>
-        <h1 className="mt-4 max-w-3xl text-4xl font-semibold tracking-[-0.03em] text-ink sm:text-5xl">
+        <h1 className="mt-4 max-w-none text-4xl font-semibold tracking-[-0.03em] text-ink sm:text-5xl">
           你的J人旅行搭子：AI定制化旅游攻略
         </h1>
       </section>
@@ -228,11 +233,13 @@ export function TripInputForm() {
 
         <section className="panel flex min-h-[560px] flex-col">
           <div className="mb-3 flex items-start justify-between gap-4">
-            <div>
+            <div className="min-w-0">
               <h2 className="text-xl font-semibold tracking-[-0.02em]">资料与地点</h2>
-              <p className="subtle mt-1">支持：攻略、地点清单、餐厅推荐、酒店/交通信息、自由描述</p>
+              <p className="subtle mt-1">攻略、地点清单、餐厅推荐、酒店/交通信息、自由描述</p>
             </div>
-            <span className="rounded-full bg-surface px-3 py-1 text-xs text-muted">{notes.length} 字</span>
+            <span className="shrink-0 whitespace-nowrap rounded-full bg-surface px-3 py-1 text-center text-xs leading-none text-muted">
+              {notes.length} 字
+            </span>
           </div>
           <textarea
             className="field min-h-[420px] flex-1 resize-none leading-6"
@@ -264,6 +271,7 @@ export function TripInputForm() {
           onGenerateRoute={generateRoute}
           generateLoading={generatingRoute}
           generateDisabled={!pois.length || Boolean(status)}
+          generateError={routeError}
         />
       )}
     </div>
@@ -307,7 +315,7 @@ function buildUserProfile({
     route_goal: routeGoalValue(routeGoal),
     preferences: preferenceWeights(preferences),
     constraints: {
-      avoid_too_tired: physicalIntensity === "躺平式旅游",
+      avoid_too_tired: physicalIntensity === "轻松",
       physical_intensity: intensityValue(physicalIntensity),
       must_visit: [],
       avoid_visit: [],
@@ -342,7 +350,6 @@ function routeGoalValue(value: string) {
 
 function intensityValue(value: string): NonNullable<UserProfile["constraints"]["physical_intensity"]> {
   if (value === "特种兵") return "high";
-  if (value === "躺平式旅游") return "low";
   return "medium";
 }
 

@@ -110,7 +110,7 @@ def _final_decision(system_decision: str, user_override: str) -> FinalDecision:
     if user_override == "arrange_nearby" and system_decision in {"include", "optional"}:
         return "include"
     if system_decision == "include":
-        return "include"
+        return "optional"
     if system_decision == "optional":
         return "optional"
     if system_decision == "exclude":
