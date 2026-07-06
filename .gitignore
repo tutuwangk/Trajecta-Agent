@@ -18,3 +18,9 @@ frontend/node_modules/
 /.pnpm-store/
 frontend/out/
 frontend/tsconfig.tsbuildinfo
+AGENTS.md
+docs/ARCHITECTURE.md
+docs/HANDOFF.md
+docs/superpowers/
+产品设计基本思路_新版.md
+前台旅行Agent执行目标和计划.md
