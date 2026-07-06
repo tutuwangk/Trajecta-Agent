@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { PoiRow } from "@/lib/types";
+import type { PoiDecisionInput, PoiRow } from "@/lib/types";
 
 function placeId(row: PoiRow) {
   return row.place_pool_item?.id || (row.grounded_poi.amap_id ? `amap_${row.grounded_poi.amap_id}` : `raw_${row.grounded_poi.raw_name}`);
@@ -9,6 +9,7 @@ function placeId(row: PoiRow) {
 
 export function PlacePool({
   pois,
+  hotelName,
   onChange,
   onGenerateRoute,
   generateLoading,
@@ -16,14 +17,17 @@ export function PlacePool({
   generateError
 }: {
   pois: PoiRow[];
-  onChange?: (decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) => void | Promise<void>;
+  hotelName?: string;
+  onChange?: (decisions: PoiDecisionInput[]) => void | Promise<void>;
   onGenerateRoute?: () => void | Promise<void>;
   generateLoading?: boolean;
   generateDisabled?: boolean;
   generateError?: string;
 }) {
   const [editingId, setEditingId] = useState<string>("");
+  const [arrangingId, setArrangingId] = useState<string>("");
   const [manualNames, setManualNames] = useState<Record<string, string>>({});
+  const [selectedAnchors, setSelectedAnchors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState<Record<string, string>>({});
   const visiblePois = pois.filter((row) => row.final_decision !== "exclude");
 
@@ -44,13 +48,14 @@ export function PlacePool({
     );
   }
 
-  async function update(row: PoiRow, decision: string, manual_name?: string) {
+  async function update(row: PoiRow, decision: string, manual_name?: string, anchor_poi_id?: string) {
     if (!onChange) return;
     const id = placeId(row);
-    setLoading((current) => ({ ...current, [id]: loadingTextFor(decision, manual_name) }));
+    setLoading((current) => ({ ...current, [id]: loadingTextFor(decision, manual_name, anchor_poi_id) }));
     try {
-      await onChange([{ poi_id: id, decision, manual_name }]);
+      await onChange([{ poi_id: id, decision, manual_name, anchor_poi_id }]);
       setEditingId("");
+      setArrangingId("");
     } finally {
       setLoading((current) => {
         const next = { ...current };
@@ -73,15 +78,19 @@ export function PlacePool({
           const item = row.place_pool_item;
           const id = placeId(row);
           const value = manualNames[id] ?? row.manual_name ?? item.display_name;
+          const arrangeValue = selectedAnchors[id] ?? "";
           const loadingText = loading[id];
           const isMust = row.user_override === "must_include";
           const isOptional = row.user_override === "optional" || row.final_decision === "optional";
-          const isArrangeNearby = row.user_override === "arrange_nearby";
-          const canArrangeNearby = item.primary_actions.includes("顺路安排");
+          const canArrangeNearby =
+            item.primary_actions.includes("顺路规划") ||
+            item.primary_actions.includes("顺路安排") ||
+            (row.grounded_poi.is_chain === true && row.grounded_poi.chain_status !== "resolved" && row.final_decision === "unresolved");
           const canMarkMust = item.primary_actions.includes("必去");
           const canMarkOptional = item.primary_actions.includes("待定");
           const canRemove = item.primary_actions.includes("移除");
           const canRename = item.primary_actions.includes("改名");
+          const anchorOptions = buildAnchorOptions(visiblePois, row, hotelName);
           return (
             <article key={row.id} className={`rounded-3xl bg-white/70 p-4 ${cardClass(isMust, isOptional)}`}>
               <div className="flex items-start justify-between gap-3">
@@ -110,10 +119,43 @@ export function PlacePool({
                   </button>
                 </div>
               )}
+              {arrangingId === id && (
+                <div className="mt-3 space-y-2 rounded-2xl border border-line bg-surface/70 p-3">
+                  <div className="text-sm text-ink">选择一个参考地点，系统会匹配离它最近的门店。</div>
+                  <select
+                    className="field py-2"
+                    value={arrangeValue}
+                    onChange={(event) => setSelectedAnchors((current) => ({ ...current, [id]: event.target.value }))}
+                  >
+                    <option value="">请选择参考地点</option>
+                    {anchorOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="btn-primary px-3 py-1.5"
+                      disabled={Boolean(loadingText) || !arrangeValue}
+                      onClick={() => update(row, "confirm_arrange_nearby", undefined, arrangeValue)}
+                    >
+                      确认顺路规划
+                    </button>
+                    <button className="btn-secondary px-3 py-1.5" disabled={Boolean(loadingText)} onClick={() => setArrangingId("")}>
+                      取消
+                    </button>
+                  </div>
+                </div>
+              )}
               <div className="mt-4 flex flex-wrap gap-2">
                 {canArrangeNearby && (
-                  <button className="btn-primary px-3 py-1.5" disabled={Boolean(loadingText)} onClick={() => update(row, "arrange_nearby")}>
-                    顺路安排
+                  <button
+                    className="btn-primary px-3 py-1.5"
+                    disabled={Boolean(loadingText)}
+                    onClick={() => setArrangingId(arrangingId === id ? "" : id)}
+                  >
+                    顺路规划
                   </button>
                 )}
                 {canMarkMust && (
@@ -137,7 +179,10 @@ export function PlacePool({
                   </button>
                 )}
               </div>
-              {isArrangeNearby && <div className="mt-3 text-sm text-muted">已按顺路候选处理</div>}
+              {row.grounded_poi.chain_status !== "resolved" && row.grounded_poi.is_chain && <div className="mt-3 text-sm text-muted">还没有确定具体门店</div>}
+              {row.grounded_poi.chain_status === "resolved" && row.grounded_poi.resolved_from_anchor_name && (
+                <div className="mt-3 text-sm text-muted">按“{row.grounded_poi.resolved_from_anchor_name}”顺路匹配</div>
+              )}
             </article>
           );
         })}
@@ -168,9 +213,22 @@ function GenerateError({ message }: { message?: string }) {
   return <div className="mt-3 rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink">{message}</div>;
 }
 
-function loadingTextFor(decision: string, manualName?: string) {
+function buildAnchorOptions(pois: PoiRow[], currentRow: PoiRow, hotelName?: string) {
+  const options = pois
+    .filter((row) => row.id !== currentRow.id)
+    .filter((row) => row.final_decision !== "exclude")
+    .filter((row) => row.grounded_poi.match_status === "matched")
+    .filter((row) => !row.grounded_poi.is_chain)
+    .map((row) => ({ value: placeId(row), label: row.place_pool_item.display_name }));
+  if (hotelName) {
+    options.unshift({ value: "hotel_anchor", label: `酒店：${hotelName}` });
+  }
+  return options;
+}
+
+function loadingTextFor(decision: string, manualName?: string, anchorPoiId?: string) {
   if (manualName) return "正在重新搜索";
-  if (decision === "arrange_nearby") return "正在记录顺路候选";
+  if (decision === "confirm_arrange_nearby" && anchorPoiId) return "正在匹配顺路门店";
   return "正在确认";
 }
 

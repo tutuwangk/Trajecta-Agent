@@ -33,6 +33,7 @@ def ground_single_poi(raw_poi: dict, user_profile: dict, amap_client, llm_client
             "candidate_count": len(candidates),
             "candidate_options": candidate_options,
             "is_chain": True,
+            "chain_status": "unresolved",
             "selection_mode": "chain_needs_choice",
             "search_keyword": search_keyword,
             "source": "amap",

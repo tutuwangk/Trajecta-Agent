@@ -7,6 +7,41 @@ QUICK_STOP_DURATION_MIN = 15
 MEAL_STOP_DURATION_MIN = 60
 
 
+def arrange_chain_to_anchor(chain_poi: dict, anchor_poi: dict, amap_client) -> dict:
+    if not chain_poi.get("is_chain"):
+        raise AppError("这个地点不是连锁店，不能使用顺路规划。", code="not_chain_place", step="arrange_nearby")
+    if not _has_location(anchor_poi):
+        raise AppError("缺少顺路参照点坐标，暂时无法匹配门店。", code="route_context_missing", step="arrange_nearby")
+    candidates = [candidate for candidate in chain_poi.get("candidate_options", []) if _has_location(candidate)]
+    if not candidates:
+        raise AppError("这个连锁店没有可用门店候选。", code="chain_candidate_missing", step="arrange_nearby")
+
+    scored = [(_travel_minutes(anchor_poi, candidate, amap_client), candidate) for candidate in candidates]
+    detour_minutes, selected = sorted(scored, key=lambda item: item[0])[0]
+    return {
+        **chain_poi,
+        "standard_name": selected.get("name", ""),
+        "amap_id": selected.get("id", ""),
+        "address": selected.get("address", ""),
+        "location": selected.get("location", {}),
+        "city": selected.get("city", ""),
+        "district": selected.get("district", ""),
+        "category_raw": selected.get("category_raw", ""),
+        "category_normalized": selected.get("category_normalized") or _normalize_category(selected.get("category_raw", "")),
+        "match_confidence": 0.9,
+        "match_status": "matched",
+        "is_chain": True,
+        "chain_status": "resolved",
+        "selection_mode": "chain_needs_choice",
+        "resolved_branch_id": selected.get("id", ""),
+        "resolved_branch_name": selected.get("name", ""),
+        "resolved_from_anchor_poi_id": str(anchor_poi.get("poi_id") or "").strip(),
+        "resolved_from_anchor_name": anchor_poi.get("standard_name", ""),
+        "resolved_by": "nearby_anchor",
+        "detour_minutes": detour_minutes,
+    }
+
+
 def arrange_chain_near_route(chain_poi: dict, context: dict, amap_client) -> dict:
     if not chain_poi.get("is_chain"):
         raise AppError("这个地点不是连锁店，不能使用顺路安排。", code="not_chain_place", step="arrange_nearby")

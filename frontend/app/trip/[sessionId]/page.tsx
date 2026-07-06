@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { getSession, planTrip, recognizePlaces, reviseTrip, updatePlaceOverrides } from "@/lib/api";
-import type { SessionData } from "@/lib/types";
+import type { PoiDecisionInput, SessionData } from "@/lib/types";
 import { ItineraryCard } from "@/components/ItineraryCard";
 import { PlacePool } from "@/components/PlacePool";
 import { RevisionPanel } from "@/components/RevisionPanel";
@@ -32,7 +32,7 @@ export default function TripPage() {
     void load();
   }, [sessionId]);
 
-  async function handlePoiChange(decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
+  async function handlePoiChange(decisions: PoiDecisionInput[]) {
     const hadItinerary = Boolean(session?.itinerary_state?.itinerary);
     setStatus("正在保存地点选择");
     const result = await updatePlaceOverrides(sessionId, decisions);
@@ -133,11 +133,11 @@ export default function TripPage() {
       {hasItinerary ? (
         <>
           <ItineraryCard itinerary={session.itinerary_state?.itinerary} />
-          <PlacePool pois={session.pois} onChange={handlePoiChange} />
+          <PlacePool pois={session.pois} hotelName={session.user_profile.hotel_name || session.user_profile.hotel_area || ""} onChange={handlePoiChange} />
         </>
       ) : (
         <>
-          <PlacePool pois={session.pois} onChange={handlePoiChange} />
+          <PlacePool pois={session.pois} hotelName={session.user_profile.hotel_name || session.user_profile.hotel_area || ""} onChange={handlePoiChange} />
           <ItineraryCard itinerary={session.itinerary_state?.itinerary} />
         </>
       )}

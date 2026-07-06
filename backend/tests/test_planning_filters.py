@@ -63,7 +63,7 @@ def test_planning_grounded_pois_includes_user_confirmed_ambiguous_candidate():
     assert [poi["raw_name"] for poi in accepted] == ["晓市集"]
 
 
-def test_planning_grounded_pois_includes_route_dependent_chain_choice_before_branch_resolution():
+def test_planning_grounded_pois_excludes_unresolved_chain_before_branch_selection():
     rows = [
         {
             "final_decision": "include",
@@ -72,6 +72,7 @@ def test_planning_grounded_pois_includes_route_dependent_chain_choice_before_bra
                 "raw_name": "星巴克",
                 "standard_name": "星巴克（待选择）",
                 "match_status": "ambiguous",
+                "chain_status": "unresolved",
                 "amap_id": "S1",
                 "is_chain": True,
                 "candidate_options": [{"id": "S1", "name": "星巴克(成都太古里店)"}],
@@ -82,7 +83,7 @@ def test_planning_grounded_pois_includes_route_dependent_chain_choice_before_bra
 
     accepted = _planning_grounded_pois(rows)
 
-    assert [poi["raw_name"] for poi in accepted] == ["星巴克"]
+    assert accepted == []
 
 
 def test_sync_transport_edges_overwrites_llm_transport_with_route_matrix():

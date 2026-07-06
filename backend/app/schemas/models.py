@@ -63,9 +63,11 @@ class PoiDecision(BaseModel):
         "remove",
         "rename_confirm",
         "arrange_nearby",
+        "confirm_arrange_nearby",
         "none",
     ]
     manual_name: str | None = None
+    anchor_poi_id: str | None = None
 
 
 class PoiDecisionUpdate(BaseModel):

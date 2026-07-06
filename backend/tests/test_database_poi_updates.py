@@ -193,7 +193,7 @@ def test_save_pois_keeps_chain_candidate_unresolved(tmp_path):
     assert row["system_decision"] == "needs_confirmation"
     assert row["final_decision"] == "unresolved"
     assert row["place_pool_item"]["status_label"] == "需确认"
-    assert "顺路安排" in row["place_pool_item"]["primary_actions"]
+    assert row["place_pool_item"]["primary_actions"] == ["顺路规划", "改名", "移除"]
 
 
 def test_update_poi_decisions_marks_chain_for_route_dependent_planning_without_selecting_branch(tmp_path):
@@ -238,17 +238,40 @@ def test_update_poi_decisions_marks_chain_for_route_dependent_planning_without_s
         ],
     )
 
+    def resolve_branch(raw_poi, current_grounded, anchor_row, user_profile):
+        assert raw_poi["raw_name"] == "星巴克"
+        assert current_grounded["chain_status"] == "unresolved"
+        assert anchor_row["grounded_poi"]["standard_name"] == "成都IFS国际金融中心"
+        assert user_profile["destination"] == "成都"
+        return {
+            **current_grounded,
+            "standard_name": "星巴克(成都IFS店)",
+            "amap_id": "S2",
+            "address": "IFS",
+            "location": {"lng": 104.0805, "lat": 30.6572},
+            "match_status": "matched",
+            "chain_status": "resolved",
+            "resolved_branch_id": "S2",
+            "resolved_branch_name": "星巴克(成都IFS店)",
+            "resolved_from_anchor_poi_id": "amap_I1",
+            "resolved_from_anchor_name": "成都IFS国际金融中心",
+            "resolved_by": "nearby_anchor",
+        }
+
     store.update_poi_decisions(
         session_id,
-        [{"poi_id": "amap_S1", "decision": "arrange_nearby"}],
+        [{"poi_id": "amap_S1", "decision": "confirm_arrange_nearby", "anchor_poi_id": "amap_I1"}],
+        arrange_nearby_grounded=resolve_branch,
     )
 
     row = store.list_pois(session_id)[1]
-    assert row["grounded_poi"]["standard_name"] == "星巴克（待选择）"
-    assert row["grounded_poi"]["match_status"] == "ambiguous"
-    assert row["grounded_poi"]["selection_mode"] == "chain_needs_choice"
-    assert row["user_override"] == "arrange_nearby"
-    assert row["final_decision"] == "include"
+    assert row["grounded_poi"]["standard_name"] == "星巴克(成都IFS店)"
+    assert row["grounded_poi"]["match_status"] == "matched"
+    assert row["grounded_poi"]["chain_status"] == "resolved"
+    assert row["grounded_poi"]["resolved_branch_id"] == "S2"
+    assert row["grounded_poi"]["resolved_from_anchor_poi_id"] == "amap_I1"
+    assert row["user_override"] == "optional"
+    assert row["final_decision"] == "optional"
 
 
 def test_update_poi_decisions_invalidates_stale_itinerary_and_revisions(tmp_path):
@@ -299,3 +322,142 @@ def test_optional_confirms_ambiguous_place_as_tentative(tmp_path):
     assert row["final_decision"] == "optional"
     assert row["place_pool_item"]["status_label"] == "已识别"
     assert row["place_pool_item"]["decision_label"] == "待定"
+
+
+def test_update_poi_decisions_resets_resolved_chain_when_anchor_removed(tmp_path):
+    store = SQLiteStore(str(tmp_path / "travel.sqlite3"))
+    session_id = store.create_session("raw", "notes", {"destination": "成都", "constraints": {}})
+    store.save_pois(
+        session_id,
+        [{"raw_name": "IFS"}, {"raw_name": "星巴克", "possible_category": "restaurant"}],
+        [
+            {
+                "raw_name": "IFS",
+                "standard_name": "成都IFS国际金融中心",
+                "amap_id": "I1",
+                "match_status": "matched",
+                "location": {"lng": 104.08, "lat": 30.657},
+            },
+            {
+                "raw_name": "星巴克",
+                "standard_name": "星巴克(成都IFS店)",
+                "amap_id": "S2",
+                "match_status": "matched",
+                "is_chain": True,
+                "chain_status": "resolved",
+                "resolved_branch_id": "S2",
+                "resolved_branch_name": "星巴克(成都IFS店)",
+                "resolved_from_anchor_poi_id": "amap_I1",
+                "resolved_from_anchor_name": "成都IFS国际金融中心",
+                "selection_mode": "chain_needs_choice",
+                "candidate_options": [
+                    {"id": "S1", "name": "星巴克(成都太古里店)"},
+                    {"id": "S2", "name": "星巴克(成都IFS店)"},
+                ],
+                "location": {"lng": 104.0805, "lat": 30.6572},
+            },
+        ],
+    )
+
+    store.update_poi_decisions(session_id, [{"poi_id": "amap_I1", "decision": "remove"}])
+
+    rows = store.list_pois(session_id)
+    chain_row = rows[1]
+    assert chain_row["grounded_poi"]["chain_status"] == "unresolved"
+    assert chain_row["grounded_poi"]["standard_name"] == "星巴克（待选择）"
+    assert chain_row["grounded_poi"].get("resolved_branch_id") in {"", None}
+    assert chain_row["grounded_poi"].get("resolved_from_anchor_poi_id") in {"", None}
+    assert chain_row["user_override"] == "none"
+    assert chain_row["final_decision"] == "unresolved"
+
+
+def test_update_poi_decisions_promotes_resolved_chain_when_anchor_becomes_must_include(tmp_path):
+    store = SQLiteStore(str(tmp_path / "travel.sqlite3"))
+    session_id = store.create_session("raw", "notes", {"destination": "成都", "constraints": {}})
+    store.save_pois(
+        session_id,
+        [{"raw_name": "IFS"}, {"raw_name": "星巴克", "possible_category": "restaurant"}],
+        [
+            {
+                "raw_name": "IFS",
+                "standard_name": "成都IFS国际金融中心",
+                "amap_id": "I1",
+                "match_status": "matched",
+                "location": {"lng": 104.08, "lat": 30.657},
+            },
+            {
+                "raw_name": "星巴克",
+                "standard_name": "星巴克(成都IFS店)",
+                "amap_id": "S2",
+                "match_status": "matched",
+                "is_chain": True,
+                "chain_status": "resolved",
+                "resolved_branch_id": "S2",
+                "resolved_branch_name": "星巴克(成都IFS店)",
+                "resolved_from_anchor_poi_id": "amap_I1",
+                "resolved_from_anchor_name": "成都IFS国际金融中心",
+                "selection_mode": "chain_needs_choice",
+                "candidate_options": [
+                    {"id": "S1", "name": "星巴克(成都太古里店)"},
+                    {"id": "S2", "name": "星巴克(成都IFS店)"},
+                ],
+                "location": {"lng": 104.0805, "lat": 30.6572},
+            },
+        ],
+    )
+
+    store.update_poi_decisions(session_id, [{"poi_id": "amap_I1", "decision": "must_include"}])
+
+    rows = store.list_pois(session_id)
+    anchor_row = rows[0]
+    chain_row = rows[1]
+    assert anchor_row["user_override"] == "must_include"
+    assert chain_row["user_override"] == "must_include"
+    assert chain_row["final_decision"] == "include"
+    assert chain_row["grounded_poi"]["resolved_from_anchor_poi_id"] == "amap_I1"
+
+
+def test_update_poi_decisions_keeps_anchor_unchanged_when_resolved_chain_changes(tmp_path):
+    store = SQLiteStore(str(tmp_path / "travel.sqlite3"))
+    session_id = store.create_session("raw", "notes", {"destination": "成都", "constraints": {}})
+    store.save_pois(
+        session_id,
+        [{"raw_name": "IFS"}, {"raw_name": "星巴克", "possible_category": "restaurant"}],
+        [
+            {
+                "raw_name": "IFS",
+                "standard_name": "成都IFS国际金融中心",
+                "amap_id": "I1",
+                "match_status": "matched",
+                "location": {"lng": 104.08, "lat": 30.657},
+            },
+            {
+                "raw_name": "星巴克",
+                "standard_name": "星巴克(成都IFS店)",
+                "amap_id": "S2",
+                "match_status": "matched",
+                "is_chain": True,
+                "chain_status": "resolved",
+                "resolved_branch_id": "S2",
+                "resolved_branch_name": "星巴克(成都IFS店)",
+                "resolved_from_anchor_poi_id": "amap_I1",
+                "resolved_from_anchor_name": "成都IFS国际金融中心",
+                "selection_mode": "chain_needs_choice",
+                "candidate_options": [
+                    {"id": "S1", "name": "星巴克(成都太古里店)"},
+                    {"id": "S2", "name": "星巴克(成都IFS店)"},
+                ],
+                "location": {"lng": 104.0805, "lat": 30.6572},
+            },
+        ],
+    )
+
+    store.update_poi_decisions(session_id, [{"poi_id": "amap_S2", "decision": "must_include"}])
+
+    rows = store.list_pois(session_id)
+    anchor_row = rows[0]
+    chain_row = rows[1]
+    assert anchor_row["user_override"] == "none"
+    assert anchor_row["final_decision"] == "optional"
+    assert chain_row["user_override"] == "must_include"
+    assert chain_row["final_decision"] == "include"

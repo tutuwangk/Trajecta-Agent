@@ -1,6 +1,7 @@
 import pytest
 
 from app.core import AppError
+from app.services import chain_arranger
 from app.services.chain_arranger import arrange_chain_near_route, prepare_chain_for_planning
 
 
@@ -84,6 +85,57 @@ def test_arrange_chain_near_route_rejects_non_chain_place():
         )
 
     assert error.value.code == "not_chain_place"
+
+
+def test_arrange_chain_to_anchor_resolves_nearest_branch():
+    resolver = getattr(chain_arranger, "arrange_chain_to_anchor", None)
+    assert callable(resolver)
+
+    chain_poi = {
+        "raw_name": "星巴克",
+        "standard_name": "星巴克（待选择）",
+        "is_chain": True,
+        "chain_status": "unresolved",
+        "candidate_options": [
+            {
+                "id": "S1",
+                "name": "星巴克(成都太古里店)",
+                "address": "太古里",
+                "location": {"lng": 104.081, "lat": 30.655},
+                "city": "成都市",
+                "district": "锦江区",
+                "category_raw": "餐饮服务;咖啡厅;星巴克咖啡",
+            },
+            {
+                "id": "S2",
+                "name": "星巴克(成都IFS店)",
+                "address": "IFS",
+                "location": {"lng": 104.0805, "lat": 30.6572},
+                "city": "成都市",
+                "district": "锦江区",
+                "category_raw": "餐饮服务;咖啡厅;星巴克咖啡",
+            },
+        ],
+    }
+    anchor_poi = {
+        "poi_id": "amap_I1",
+        "standard_name": "成都IFS国际金融中心",
+        "location": {"lng": 104.08, "lat": 30.657},
+        "final_decision": "optional",
+    }
+    durations = {
+        ("104.08,30.657", "104.081,30.655"): 12 * 60,
+        ("104.08,30.657", "104.0805,30.6572"): 4 * 60,
+    }
+
+    arranged = resolver(chain_poi, anchor_poi, FakeAmapClient(durations))
+
+    assert arranged["standard_name"] == "星巴克(成都IFS店)"
+    assert arranged["amap_id"] == "S2"
+    assert arranged["match_status"] == "matched"
+    assert arranged["chain_status"] == "resolved"
+    assert arranged["resolved_branch_id"] == "S2"
+    assert arranged["resolved_from_anchor_poi_id"] == "amap_I1"
 
 
 def test_prepare_chain_for_planning_scores_branches_against_anchor_places():
