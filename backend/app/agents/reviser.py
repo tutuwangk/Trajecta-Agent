@@ -4,7 +4,7 @@ from copy import deepcopy
 import json
 import re
 
-from app.agents.intensity import daily_time_limit_minutes, daily_time_minutes
+from app.agents.intensity import daily_time_limit_minutes, daily_time_minutes, intensity_time_minutes
 
 
 def revise_itinerary(
@@ -76,6 +76,37 @@ def revise_from_user_instruction(current_itinerary: dict, instruction: str, user
     return revise_itinerary(payload, {"issues": []}, user_profile, runtime_pois=runtime_pois, instruction=instruction)
 
 
+def rule_repair(
+    draft_itinerary: dict,
+    verification: dict,
+    user_profile: dict,
+    runtime_pois: list[dict] | None = None,
+) -> dict:
+    return revise_itinerary(draft_itinerary, verification, user_profile, runtime_pois=runtime_pois)
+
+
+def llm_replan(planning_context: dict, previous_skeleton: dict, issues: dict, llm_client) -> dict:
+    from app.agents.planner import replan_skeleton_with_llm
+
+    return replan_skeleton_with_llm(planning_context, previous_skeleton, issues, llm_client)
+
+
+def generate_copy(itinerary: dict, copy_context: dict, user_profile: dict, llm_client=None) -> dict:
+    final = deepcopy(itinerary)
+    payload = None
+    if llm_client is not None:
+        try:
+            payload = llm_client.json_chat(_copy_messages(copy_context), step="generate_itinerary_copy", temperature=0.3)
+        except Exception:
+            payload = None
+    if not isinstance(payload, dict):
+        payload = _fallback_copy_payload(final, user_profile, copy_context)
+    _merge_copy_payload(final, payload)
+    _sanitize_itinerary_text(final)
+    _ensure_display_sections(final, user_profile)
+    return final
+
+
 def _remove_unconfirmed_items(itinerary: dict, runtime_by_id: dict) -> bool:
     removed = False
     for day in itinerary.get("days", []):
@@ -135,7 +166,7 @@ def _trim_days_by_time(itinerary: dict, runtime_by_id: dict, must_visit: list[st
     removed = False
     for day in itinerary.get("days", []):
         removed_pois = list(day.get("removed_pois", []))
-        while day.get("items", []) and daily_time_minutes(day) > limit_minutes:
+        while day.get("items", []) and intensity_time_minutes(day) > limit_minutes:
             if len(day["items"]) <= 1:
                 item = day["items"][0]
                 risks = itinerary.setdefault("global_risks", [])
@@ -222,6 +253,155 @@ def _mentions_rain(instruction: str) -> bool:
 def _can_handle_without_llm(instruction: str) -> bool:
     deterministic_tokens = ["删掉", "删除", "不要去", "避开", "太累", "轻松", "休闲", "慢一点", "松弛", "下雨", "雨天"]
     return any(token in instruction for token in deterministic_tokens)
+
+
+def _copy_messages(copy_context: dict) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "## Role\n"
+                "你是旅行路线文案助手。\n\n"
+                "## Mission\n"
+                "只根据给定事实写 route_summary、day summary、item reason、removed reason、risk notes。\n\n"
+                "## Hard Rules\n"
+                "- 不得新增地点、时间、交通、风险结论。\n"
+                "- 不得改动 poi_id、day、事实字段。\n"
+                "- 文案面向普通旅行用户，简短、直接。\n"
+                "- 内部字段与标签只用于判断，不得直接暴露。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "<copy_context>\n"
+                f"{copy_context}\n"
+                "</copy_context>\n\n"
+                "<output_schema>\n"
+                '{"route_summary":{"main_message":"..."},"days":[{"day":1,"summary":"...","items":[{"poi_id":"...","reason":"...","risk_notes":["..."]}],"removed_pois":[{"poi_id":"...","reason":"..."}],"risk_notes":["..."]}],"global_risks":["..."]}\n'
+                "</output_schema>"
+            ),
+        },
+    ]
+
+
+def _fallback_copy_payload(itinerary: dict, user_profile: dict, copy_context: dict) -> dict:
+    days = []
+    for day in itinerary.get("days", []):
+        day_items = [
+            {
+                "poi_id": item.get("poi_id"),
+                "reason": "先安排必去地点。" if _is_reasonably_must_keep(item.get("name", ""), copy_context, day.get("day")) else "按顺路和当天节奏安排。",
+                "risk_notes": [],
+            }
+            for item in day.get("items", [])
+        ]
+        removed = [
+            {
+                "poi_id": item.get("poi_id"),
+                "reason": _reason_text_from_codes(item.get("reason_codes") or []),
+            }
+            for item in day.get("removed_pois", [])
+        ]
+        days.append(
+            {
+                "day": day.get("day"),
+                "summary": "围绕当天主要地点顺路安排。",
+                "items": day_items,
+                "removed_pois": removed,
+                "risk_notes": [],
+            }
+        )
+    risks = [_issue_to_text(issue) for issue in copy_context.get("hard_issues", []) + copy_context.get("soft_issues", [])]
+    if not risks:
+        risks = [_risk_tag_text(tag) for tag in copy_context.get("global_risk_tags", [])]
+    return {
+        "route_summary": {"main_message": _main_message(itinerary, user_profile)},
+        "days": days,
+        "global_risks": [risk for risk in risks if risk],
+    }
+
+
+def _merge_copy_payload(itinerary: dict, payload: dict) -> None:
+    summary = itinerary.get("route_summary") if isinstance(itinerary.get("route_summary"), dict) else {}
+    raw_summary = payload.get("route_summary") if isinstance(payload.get("route_summary"), dict) else {}
+    if raw_summary.get("main_message"):
+        summary["main_message"] = raw_summary["main_message"]
+    itinerary["route_summary"] = summary
+
+    day_by_id = {day.get("day"): day for day in itinerary.get("days", [])}
+    for raw_day in payload.get("days", []) or []:
+        if not isinstance(raw_day, dict):
+            continue
+        day = day_by_id.get(raw_day.get("day"))
+        if not day:
+            continue
+        if raw_day.get("summary"):
+            day["summary"] = raw_day["summary"]
+        if raw_day.get("risk_notes"):
+            day["risk_notes"] = _text_list(raw_day.get("risk_notes"))
+        item_by_id = {item.get("poi_id"): item for item in day.get("items", [])}
+        for raw_item in raw_day.get("items", []) or []:
+            if not isinstance(raw_item, dict):
+                continue
+            item = item_by_id.get(raw_item.get("poi_id"))
+            if not item:
+                continue
+            if raw_item.get("reason"):
+                item["reason"] = raw_item["reason"]
+            if raw_item.get("risk_notes"):
+                item["risk_notes"] = _text_list(raw_item.get("risk_notes"))
+        removed_by_key = {
+            (item.get("poi_id"), item.get("name")): item
+            for item in day.get("removed_pois", [])
+            if isinstance(item, dict)
+        }
+        for raw_removed in raw_day.get("removed_pois", []) or []:
+            if not isinstance(raw_removed, dict):
+                continue
+            removed = removed_by_key.get((raw_removed.get("poi_id"), raw_removed.get("name")))
+            if removed is None and raw_removed.get("poi_id"):
+                removed = next(
+                    (item for item in day.get("removed_pois", []) if isinstance(item, dict) and item.get("poi_id") == raw_removed.get("poi_id")),
+                    None,
+                )
+            if removed and raw_removed.get("reason"):
+                removed["reason"] = raw_removed["reason"]
+
+    itinerary["global_risks"] = _unique_texts(_text_list(itinerary.get("global_risks", [])) + _text_list(payload.get("global_risks", [])))
+
+
+def _is_reasonably_must_keep(name: str, copy_context: dict, day_number) -> bool:
+    for day in copy_context.get("days", []):
+        if day.get("day") != day_number:
+            continue
+        for item in day.get("items", []):
+            if item.get("name") == name and item.get("must_keep"):
+                return True
+    return False
+
+
+def _reason_text_from_codes(reason_codes: list[str]) -> str:
+    for code in reason_codes:
+        mapped = {
+            "time_over_budget": "为控制当天外出时间，先放入备选。",
+            "far_detour": "路线较绕，本次先不安排。",
+            "must_keep_priority": "优先保留更重要的地点。",
+        }.get(code)
+        if mapped:
+            return mapped
+    return "本次先不安排。"
+
+
+def _issue_to_text(issue: dict) -> str:
+    return str(issue.get("message") or issue.get("suggestion") or "").strip()
+
+
+def _risk_tag_text(tag: str) -> str:
+    return {
+        "must_places_dense": "必去地点较多，当天节奏会更满。",
+        "cross_district_heavy": "当天跨区较多，移动时间可能偏长。",
+    }.get(tag, tag)
 
 
 def _text_list(value) -> list[str]:
@@ -359,6 +539,13 @@ def _is_plannable_poi(poi: dict) -> bool:
     if poi.get("match_status") == "matched":
         return True
     location = poi.get("location") or {}
+    if (
+        poi.get("user_override") == "arrange_nearby"
+        and ((poi.get("planning_semantics") or {}).get("chain_resolution_mode") == "route_dependent_chain" or poi.get("route_branch_options"))
+        and location.get("lng") is not None
+        and location.get("lat") is not None
+    ):
+        return True
     return (
         poi.get("user_override") == "must_include"
         and poi.get("match_status") == "ambiguous"

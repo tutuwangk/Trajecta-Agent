@@ -72,9 +72,9 @@ export function planTrip(sessionId: string) {
   return request<Record<string, unknown>>(`/sessions/${sessionId}/plan`, { method: "POST" });
 }
 
-export function reviseTrip(sessionId: string, instruction: string, quick_action?: string) {
+export function reviseTrip(sessionId: string, instruction: string) {
   return request<Record<string, unknown>>(`/sessions/${sessionId}/revise`, {
     method: "POST",
-    body: JSON.stringify({ instruction, quick_action })
+    body: JSON.stringify({ instruction })
   });
 }

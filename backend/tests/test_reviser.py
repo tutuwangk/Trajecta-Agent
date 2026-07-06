@@ -76,7 +76,7 @@ def test_revise_itinerary_trims_relaxed_days_by_total_time():
     )
 
     total_minutes = sum((item.get("duration_min") or 0) + (item.get("transport_to_next") or {}).get("duration_min", 0) for item in revised["days"][0]["items"])
-    assert total_minutes <= 540
+    assert total_minutes <= 420
     assert revised["days"][0]["removed_pois"]
 
 

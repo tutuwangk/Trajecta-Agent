@@ -133,8 +133,8 @@ def test_normalize_itinerary_marks_large_place_meal_inside_without_double_counti
 
     day = itinerary["days"][0]
     assert day["meal_breaks"] == [
-        {"label": "午餐", "start_time": "12:00", "duration_min": 60, "within_poi_id": "p1", "included_in_item_duration": True},
-        {"label": "晚餐", "start_time": "18:00", "duration_min": 60, "within_poi_id": "p1", "included_in_item_duration": True},
+        {"label": "午餐", "slot": "lunch", "start_time": "12:00", "duration_min": 60, "within_poi_id": "p1", "included_in_item_duration": True, "source": "inside_poi"},
+        {"label": "晚餐", "slot": "dinner", "start_time": "18:00", "duration_min": 60, "within_poi_id": "p1", "included_in_item_duration": True, "source": "inside_poi"},
     ]
     assert daily_time_minutes(day) == 660
 
@@ -209,6 +209,467 @@ def test_normalize_itinerary_drops_optional_meal_when_not_nearby_and_over_limit(
     assert [item["poi_id"] for item in day["items"]] == ["p1", "p3"]
     assert any(poi["name"] == "很远的餐厅" for poi in day["removed_pois"])
     assert day["meal_breaks"] == [
-        {"label": "午餐", "start_time": "12:00", "duration_min": 60, "within_poi_id": "p1", "included_in_item_duration": True},
-        {"label": "晚餐", "start_time": "18:00", "duration_min": 60, "within_poi_id": "p3", "included_in_item_duration": True},
+        {"label": "午餐", "slot": "lunch", "start_time": "12:00", "duration_min": 60, "within_poi_id": "p1", "included_in_item_duration": True, "source": "inside_poi"},
+        {"label": "晚餐", "slot": "dinner", "start_time": "18:00", "duration_min": 60, "within_poi_id": "p3", "included_in_item_duration": True, "source": "inside_poi"},
     ]
+
+
+def test_normalize_itinerary_keeps_quick_stop_and_drops_heavier_optional_when_over_limit():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 80,
+                "hotel_return_transport_min": 80,
+                "items": [
+                    {"poi_id": "p1", "name": "成都大熊猫繁育研究基地", "arrival_time": "10:00", "duration_min": 240},
+                    {"poi_id": "p2", "name": "喜茶(IFS店)", "duration_min": 10, "scheduled_role": "quick_stop", "burden_role": "light_detour", "trim_priority": "keep_if_low_detour"},
+                    {"poi_id": "p3", "name": "东郊记忆", "duration_min": 120},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都大熊猫繁育研究基地", "match_status": "matched", "user_override": "must_include", "final_decision": "include"},
+        {
+            "poi_id": "p2",
+            "standard_name": "喜茶(IFS店)",
+            "match_status": "matched",
+            "user_override": "arrange_nearby",
+            "final_decision": "include",
+            "category": "restaurant",
+            "planning_semantics": {"experience_type": "light_drink"},
+        },
+        {"poi_id": "p3", "standard_name": "东郊记忆", "match_status": "matched", "user_override": "none", "final_decision": "optional"},
+    ]
+    route_matrix = [
+        {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "walking", "duration_min": 10, "distance_m": 600},
+        {"origin_poi_id": "p2", "destination_poi_id": "p3", "mode": "taxi", "duration_min": 30, "distance_m": 9000},
+        {"origin_poi_id": "p1", "destination_poi_id": "p3", "mode": "taxi", "duration_min": 35, "distance_m": 11000},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert [item["poi_id"] for item in day["items"]] == ["p1", "p2"]
+    assert any(poi["name"] == "东郊记忆" for poi in day["removed_pois"])
+
+
+def test_normalize_itinerary_outputs_intensity_minutes_from_trim_pressure_not_total_outing():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 80,
+                "items": [
+                    {"poi_id": "p1", "name": "大景点", "duration_min": 240, "scheduled_role": "anchor_visit"},
+                    {
+                        "poi_id": "p2",
+                        "name": "园里火锅",
+                        "duration_min": 90,
+                        "scheduled_role": "meal_stop",
+                        "burden_role": "protected_basic",
+                    },
+                    {
+                        "poi_id": "p3",
+                        "name": "喜茶(IFS店)",
+                        "duration_min": 15,
+                        "scheduled_role": "quick_stop",
+                        "burden_role": "light_detour",
+                        "quick_stop_total_cost_min": 20,
+                    },
+                ],
+                "meal_slots": [{"slot": "dinner", "requirement": "required", "source": "fallback_nearby"}],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "大景点", "match_status": "matched", "final_decision": "include"},
+        {"poi_id": "p2", "standard_name": "园里火锅", "match_status": "matched", "final_decision": "include", "category": "restaurant"},
+        {"poi_id": "p3", "standard_name": "喜茶(IFS店)", "match_status": "matched", "final_decision": "include", "category": "restaurant"},
+    ]
+    route_matrix = [
+        {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "taxi", "duration_min": 20, "distance_m": 3000},
+        {"origin_poi_id": "p2", "destination_poi_id": "p3", "mode": "walking", "duration_min": 10, "distance_m": 600},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert day["total_outing_min"] > 420
+    assert day["intensity_outing_min"] == 385
+
+
+def test_normalize_itinerary_keeps_required_meal_stop_and_trims_other_optional_first():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 80,
+                "hotel_return_transport_min": 80,
+                "meal_slots": [{"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p2"}],
+                "items": [
+                    {"poi_id": "p1", "name": "成都大熊猫繁育研究基地", "arrival_time": "09:00", "duration_min": 240},
+                    {"poi_id": "p2", "name": "园里火锅", "duration_min": 90, "scheduled_role": "meal_stop", "burden_role": "protected_basic", "trim_priority": "never_trim_before_meal"},
+                    {"poi_id": "p3", "name": "东郊记忆", "duration_min": 120},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都大熊猫繁育研究基地", "match_status": "matched", "user_override": "must_include", "final_decision": "include"},
+        {
+            "poi_id": "p2",
+            "standard_name": "园里火锅",
+            "match_status": "matched",
+            "user_override": "none",
+            "final_decision": "optional",
+            "category": "restaurant",
+            "planning_semantics": {"experience_type": "full_meal"},
+        },
+        {"poi_id": "p3", "standard_name": "东郊记忆", "match_status": "matched", "user_override": "none", "final_decision": "optional"},
+    ]
+    route_matrix = [
+        {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "taxi", "duration_min": 10, "distance_m": 3000},
+        {"origin_poi_id": "p2", "destination_poi_id": "p3", "mode": "taxi", "duration_min": 30, "distance_m": 9000},
+        {"origin_poi_id": "p1", "destination_poi_id": "p3", "mode": "taxi", "duration_min": 35, "distance_m": 11000},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert [item["poi_id"] for item in day["items"]] == ["p1", "p2"]
+    assert day["items"][1]["meal_roles"] == ["lunch"]
+    assert any(poi["name"] == "东郊记忆" for poi in day["removed_pois"])
+
+
+def test_normalize_itinerary_uses_poi_meal_slot_without_duplicate_generic_break():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 20,
+                "meal_slots": [
+                    {"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p2"},
+                    {"slot": "dinner", "requirement": "required", "source": "fallback_nearby"},
+                ],
+                "items": [
+                    {"poi_id": "p1", "name": "成都大熊猫繁育研究基地", "arrival_time": "09:00", "duration_min": 120},
+                    {"poi_id": "p2", "name": "园里火锅", "duration_min": 90},
+                    {"poi_id": "p3", "name": "东郊记忆", "duration_min": 90},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都大熊猫繁育研究基地", "match_status": "matched", "final_decision": "include", "category": "attraction"},
+        {"poi_id": "p2", "standard_name": "园里火锅", "match_status": "matched", "final_decision": "include", "category": "restaurant"},
+        {"poi_id": "p3", "standard_name": "东郊记忆", "match_status": "matched", "final_decision": "include", "category": "attraction"},
+    ]
+    route_matrix = [
+        {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "taxi", "duration_min": 30, "distance_m": 8000},
+        {"origin_poi_id": "p2", "destination_poi_id": "p3", "mode": "taxi", "duration_min": 25, "distance_m": 7000},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert day["items"][1]["meal_roles"] == ["lunch"]
+    assert day["meal_slots"] == [{"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p2"}]
+    assert day["meal_breaks"] == []
+
+
+def test_normalize_itinerary_drops_stale_dinner_when_hotel_can_be_reached_before_1730():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 70,
+                "hotel_return_transport_min": 70,
+                "meal_slots": [
+                    {"slot": "lunch", "requirement": "required", "source": "fallback_nearby"},
+                    {"slot": "dinner", "requirement": "required", "source": "fallback_nearby"},
+                ],
+                "items": [
+                    {"poi_id": "p1", "name": "成都杜甫草堂博物馆", "arrival_time": "10:00", "duration_min": 120},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都杜甫草堂博物馆", "match_status": "matched", "final_decision": "include", "category": "museum"},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, [])
+
+    day = itinerary["days"][0]
+    assert day["meal_slots"] == [{"slot": "lunch", "requirement": "required", "source": "fallback_nearby"}]
+    assert day["meal_breaks"] == [{"label": "午餐", "slot": "lunch", "start_time": "12:00", "duration_min": 60, "source": "fallback_nearby"}]
+    assert day["total_outing_min"] == 320
+
+
+def test_normalize_itinerary_rebinds_required_meal_slot_to_remaining_real_restaurant():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 20,
+                "meal_slots": [{"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p2"}],
+                "items": [
+                    {"poi_id": "p1", "name": "成都博物馆", "arrival_time": "10:00", "duration_min": 90},
+                    {"poi_id": "p3", "name": "园里火锅", "duration_min": 90, "scheduled_role": "meal_stop", "burden_role": "protected_basic"},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都博物馆", "match_status": "matched", "final_decision": "include", "category": "museum"},
+        {"poi_id": "p3", "standard_name": "园里火锅", "match_status": "matched", "final_decision": "include", "category": "restaurant", "planning_semantics": {"experience_type": "full_meal", "meal_capability": "lunch_dinner"}},
+    ]
+    route_matrix = [{"origin_poi_id": "p1", "destination_poi_id": "p3", "mode": "walking", "duration_min": 15, "distance_m": 900}]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert day["meal_slots"] == [{"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p3"}]
+    assert day["items"][1]["meal_roles"] == ["lunch"]
+    assert day["meal_breaks"] == []
+
+
+def test_normalize_itinerary_promotes_required_fallback_meal_to_real_restaurant_when_available():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 20,
+                "meal_slots": [{"slot": "dinner", "requirement": "required", "source": "fallback_nearby"}],
+                "items": [
+                    {"poi_id": "p1", "name": "武侯祠", "arrival_time": "15:30", "duration_min": 90, "transport_to_next": {"duration_min": 20}},
+                    {"poi_id": "p2", "name": "园里火锅", "duration_min": 90, "scheduled_role": "meal_stop", "burden_role": "protected_basic"},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "武侯祠", "match_status": "matched", "final_decision": "include", "category": "attraction"},
+        {"poi_id": "p2", "standard_name": "园里火锅", "match_status": "matched", "final_decision": "include", "category": "restaurant", "planning_semantics": {"experience_type": "full_meal", "meal_capability": "lunch_dinner"}},
+    ]
+    route_matrix = [{"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "taxi", "duration_min": 20, "distance_m": 2400}]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert day["meal_slots"] == [{"slot": "dinner", "requirement": "required", "source": "poi", "poi_id": "p2"}]
+    assert day["items"][1]["meal_roles"] == ["dinner"]
+    assert day["meal_breaks"] == []
+
+
+def test_normalize_itinerary_keeps_fallback_dinner_when_only_restaurant_is_too_early():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 20,
+                "meal_slots": [{"slot": "dinner", "requirement": "required", "source": "fallback_nearby"}],
+                "items": [
+                    {"poi_id": "p1", "name": "园里火锅", "arrival_time": "12:00", "duration_min": 90, "scheduled_role": "meal_stop", "burden_role": "protected_basic", "transport_to_next": {"duration_min": 20}},
+                    {"poi_id": "p2", "name": "东郊记忆", "duration_min": 210},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "园里火锅", "match_status": "matched", "final_decision": "include", "category": "restaurant", "planning_semantics": {"experience_type": "full_meal", "meal_capability": "lunch_dinner"}},
+        {"poi_id": "p2", "standard_name": "东郊记忆", "match_status": "matched", "final_decision": "include", "category": "attraction"},
+    ]
+    route_matrix = [{"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "taxi", "duration_min": 20, "distance_m": 2400}]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert day["meal_slots"] == [{"slot": "dinner", "requirement": "required", "source": "fallback_nearby"}]
+    assert day["meal_breaks"] == [{"label": "晚餐", "slot": "dinner", "start_time": "17:30", "duration_min": 60, "source": "fallback_nearby"}]
+    assert day["items"][0].get("meal_roles") is None
+
+
+def test_normalize_itinerary_keeps_inside_poi_and_optional_breakfast_slots():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 30,
+                "hotel_return_transport_min": 30,
+                "meal_slots": [
+                    {"slot": "breakfast", "requirement": "optional", "source": "poi", "poi_id": "p1"},
+                    {"slot": "lunch", "requirement": "required", "source": "inside_poi", "within_poi_id": "p2"},
+                ],
+                "items": [
+                    {"poi_id": "p1", "name": "赵记豆浆", "arrival_time": "08:00", "duration_min": 45},
+                    {"poi_id": "p2", "name": "成都博物馆", "duration_min": 300},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "赵记豆浆", "match_status": "matched", "final_decision": "include", "category": "restaurant"},
+        {"poi_id": "p2", "standard_name": "成都博物馆", "match_status": "matched", "final_decision": "include", "category": "museum"},
+    ]
+    route_matrix = [{"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "walking", "duration_min": 15, "distance_m": 900}]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert day["items"][0]["meal_roles"] == ["breakfast"]
+    assert day["meal_breaks"] == [
+        {
+            "label": "午餐",
+            "slot": "lunch",
+            "start_time": "12:00",
+            "duration_min": 60,
+            "within_poi_id": "p2",
+            "included_in_item_duration": True,
+            "source": "inside_poi",
+        }
+    ]
+
+
+def test_normalize_itinerary_replaces_inside_poi_meal_with_real_restaurant_when_available():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 20,
+                "meal_slots": [{"slot": "lunch", "requirement": "required", "source": "inside_poi", "within_poi_id": "p1"}],
+                "items": [
+                    {"poi_id": "p1", "name": "成都博物馆", "arrival_time": "10:30", "duration_min": 90, "transport_to_next": {"duration_min": 10}},
+                    {"poi_id": "p2", "name": "园里火锅", "duration_min": 90, "scheduled_role": "meal_stop", "burden_role": "protected_basic"},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都博物馆", "match_status": "matched", "final_decision": "include", "category": "museum", "planning_semantics": {"experience_type": "daytime_visit", "meal_capability": "none"}},
+        {"poi_id": "p2", "standard_name": "园里火锅", "match_status": "matched", "final_decision": "include", "category": "restaurant", "planning_semantics": {"experience_type": "full_meal", "meal_capability": "lunch_dinner"}},
+    ]
+    route_matrix = [{"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "walking", "duration_min": 10, "distance_m": 600}]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert day["meal_slots"] == [{"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p2"}]
+    assert day["items"][1]["meal_roles"] == ["lunch"]
+    assert day["meal_breaks"] == []
+
+
+def test_normalize_itinerary_starts_nightlife_only_day_in_evening():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 20,
+                "items": [
+                    {"poi_id": "p1", "name": "兰桂坊", "duration_min": 120},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "兰桂坊",
+            "match_status": "matched",
+            "final_decision": "include",
+            "category": "restaurant",
+            "planning_semantics": {"experience_type": "nightlife", "time_suitability": ["evening", "night"], "outing_role": "anchor"},
+        }
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, [])
+
+    assert itinerary["days"][0]["items"][0]["arrival_time"] == "18:00"
+
+
+def test_normalize_itinerary_supports_hotel_rest_between_morning_and_night_segments():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 25,
+                "hotel_rest_breaks": [
+                    {
+                        "after_poi_id": "p1",
+                        "before_poi_id": "p2",
+                        "duration_min": 180,
+                        "return_to_hotel_transport_min": 20,
+                        "depart_from_hotel_transport_min": 25,
+                        "reason": "下午回酒店休息",
+                    }
+                ],
+                "segments": [
+                    {"kind": "outing", "segment_time": "morning", "poi_ids": ["p1"]},
+                    {"kind": "hotel_rest", "duration_min": 180, "reason": "下午回酒店休息"},
+                    {"kind": "outing", "segment_time": "night", "poi_ids": ["p2"]},
+                ],
+                "meal_slots": [{"slot": "dinner", "requirement": "required", "source": "inside_poi", "within_poi_id": "p2"}],
+                "items": [
+                    {"poi_id": "p1", "name": "武侯祠", "duration_min": 120},
+                    {"poi_id": "p2", "name": "兰桂坊", "duration_min": 120},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "武侯祠", "match_status": "matched", "final_decision": "include", "category": "attraction", "planning_semantics": {"experience_type": "daytime_visit", "time_suitability": ["morning", "afternoon"], "outing_role": "anchor"}},
+        {"poi_id": "p2", "standard_name": "兰桂坊", "match_status": "matched", "final_decision": "include", "category": "restaurant", "planning_semantics": {"experience_type": "nightlife", "time_suitability": ["evening", "night"], "outing_role": "anchor"}},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, [])
+
+    day = itinerary["days"][0]
+    assert day["items"][0]["arrival_time"] == "10:00"
+    assert day["items"][1]["arrival_time"] == "18:00"
+    assert day["total_outing_min"] == 330

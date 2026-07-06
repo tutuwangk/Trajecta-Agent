@@ -154,6 +154,11 @@ def _is_routable_poi(poi: dict) -> bool:
         return False
     if poi.get("match_status") == "matched":
         return True
+    if (
+        poi.get("user_override") == "arrange_nearby"
+        and ((poi.get("planning_semantics") or {}).get("chain_resolution_mode") == "route_dependent_chain" or poi.get("route_branch_options"))
+    ):
+        return True
     return (
         poi.get("user_override") == "must_include"
         and poi.get("match_status") == "ambiguous"

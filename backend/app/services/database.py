@@ -119,6 +119,7 @@ class SQLiteStore:
         session = self.get_session(session_id)
         profile = user_profile or (session.get("user_profile", {}) if session else {})
         with self.connect() as connection:
+            self._invalidate_itinerary_state(connection, session_id)
             connection.execute("DELETE FROM pois WHERE session_id = ?", (session_id,))
             for raw_poi, grounded_poi in zip(raw_pois, grounded_pois, strict=False):
                 organized = organize_place(raw_poi, grounded_poi, profile)
@@ -159,11 +160,11 @@ class SQLiteStore:
         with self.connect() as connection:
             session = connection.execute("SELECT user_profile FROM sessions WHERE id = ?", (session_id,)).fetchone()
             user_profile = json.loads(session["user_profile"]) if session else {}
+            self._invalidate_itinerary_state(connection, session_id)
             rows = connection.execute(
                 "SELECT id, raw_poi, grounded_poi, final_decision FROM pois WHERE session_id = ? ORDER BY id",
                 (session_id,),
             ).fetchall()
-            decoded_rows = [_decode_poi_context_row(row) for row in rows]
             for index, row in enumerate(rows):
                 raw_poi = json.loads(row["raw_poi"])
                 grounded = json.loads(row["grounded_poi"])
@@ -179,8 +180,6 @@ class SQLiteStore:
                     else:
                         grounded["raw_name"] = manual_name
                 requested_decision = decision.get("decision", "keep")
-                if requested_decision == "arrange_nearby" and arrange_nearby_grounded:
-                    grounded = arrange_nearby_grounded(raw_poi, grounded, _nearby_context(decoded_rows, index))
                 if requested_decision in {"must_include", "must_visit", "optional"} and _has_map_candidate(grounded):
                     grounded["match_status"] = "matched"
                 user_override = "rename_confirm" if manual_name and requested_decision in {"keep", "none"} else requested_decision
@@ -260,6 +259,10 @@ class SQLiteStore:
                 (session_id,),
             ).fetchall()
         return [{"instruction": row["instruction"], "itinerary": json.loads(row["itinerary"]), "created_at": row["created_at"]} for row in rows]
+
+    def _invalidate_itinerary_state(self, connection, session_id: str) -> None:
+        connection.execute("DELETE FROM itineraries WHERE session_id = ?", (session_id,))
+        connection.execute("DELETE FROM revision_history WHERE session_id = ?", (session_id,))
 
     def get_cache(self, table: str, cache_key: str) -> dict | None:
         with self.connect() as connection:

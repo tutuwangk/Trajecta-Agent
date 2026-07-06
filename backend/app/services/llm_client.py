@@ -20,9 +20,11 @@ class LLMClient:
         model: str | None = None,
         base_url: str | None = None,
         trust_env: bool | None = None,
+        role: str | None = None,
     ):
         self.api_key = api_key or os.getenv("LLM_API_KEY")
-        self.model = model or os.getenv("LLM_MODEL", "deepseek-v4-flash")
+        self.role = role or "default"
+        self.model = model or _model_for_role(self.role)
         self.base_url = (base_url or os.getenv("LLM_BASE_URL", "https://api.deepseek.com")).rstrip("/")
         self.trust_env = _trust_env() if trust_env is None else trust_env
         self.max_retries = _positive_int_env("LLM_MAX_RETRIES", 2)
@@ -86,9 +88,26 @@ def default_llm_client() -> LLMClient:
     return LLMClient()
 
 
+def default_planning_llm_client() -> LLMClient:
+    return LLMClient(role="planning")
+
+
+def default_copy_llm_client() -> LLMClient:
+    return LLMClient(role="copy")
+
+
 def _trust_env() -> bool:
     value = os.getenv("LLM_TRUST_ENV", "true").strip().lower()
     return value not in {"0", "false", "no", "off"}
+
+
+def _model_for_role(role: str | None) -> str:
+    normalized = (role or "default").strip().lower()
+    if normalized == "planning":
+        return os.getenv("LLM_PLANNING_MODEL") or os.getenv("LLM_MODEL", "deepseek-v4-flash")
+    if normalized == "copy":
+        return os.getenv("LLM_COPY_MODEL") or os.getenv("LLM_MODEL", "deepseek-v4-flash")
+    return os.getenv("LLM_MODEL", "deepseek-v4-flash")
 
 
 def _positive_int_env(name: str, default: int) -> int:

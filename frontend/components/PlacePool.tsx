@@ -76,6 +76,7 @@ export function PlacePool({
           const loadingText = loading[id];
           const isMust = row.user_override === "must_include";
           const isOptional = row.user_override === "optional" || row.final_decision === "optional";
+          const isArrangeNearby = row.user_override === "arrange_nearby";
           const canArrangeNearby = item.primary_actions.includes("顺路安排");
           const canMarkMust = item.primary_actions.includes("必去");
           const canMarkOptional = item.primary_actions.includes("待定");
@@ -136,6 +137,7 @@ export function PlacePool({
                   </button>
                 )}
               </div>
+              {isArrangeNearby && <div className="mt-3 text-sm text-muted">已按顺路候选处理</div>}
             </article>
           );
         })}
@@ -168,7 +170,7 @@ function GenerateError({ message }: { message?: string }) {
 
 function loadingTextFor(decision: string, manualName?: string) {
   if (manualName) return "正在重新搜索";
-  if (decision === "arrange_nearby") return "正在顺路选店";
+  if (decision === "arrange_nearby") return "正在记录顺路候选";
   return "正在确认";
 }
 

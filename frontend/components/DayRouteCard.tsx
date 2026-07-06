@@ -65,14 +65,20 @@ function outingTimeMinutes(day: DayRoute) {
 }
 
 function transferTimeMinutes(day: DayRoute) {
+  if (typeof day.total_transfer_min === "number") return day.total_transfer_min;
   const betweenPlaces = day.items.reduce((sum, item) => sum + (item.transport_to_next?.duration_min || 0), 0);
   const hotelTransport =
     (day.hotel_departure_transport_min || day.hotel_to_first_transport_min || 0) +
     (day.hotel_return_transport_min || day.last_to_hotel_transport_min || 0);
-  return betweenPlaces + hotelTransport;
+  const hotelRestTransport = (day.hotel_rest_breaks || []).reduce(
+    (sum, hotelBreak) => sum + (hotelBreak.return_to_hotel_transport_min || 0) + (hotelBreak.depart_from_hotel_transport_min || 0),
+    0
+  );
+  return betweenPlaces + hotelTransport + hotelRestTransport;
 }
 
 function intensityLabel(day: DayRoute, outingMinutes: number) {
-  if (outingMinutes <= 540) return "轻松";
+  const intensityMinutes = day.intensity_outing_min ?? outingMinutes;
+  if (intensityMinutes <= 420) return "轻松";
   return "特种兵";
 }

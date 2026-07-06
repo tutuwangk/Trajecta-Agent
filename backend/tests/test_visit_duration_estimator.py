@@ -20,8 +20,18 @@ def test_estimate_visit_durations_extends_large_landmark_stays():
     estimated = estimate_visit_durations(pois)
 
     by_name = {poi["standard_name"]: poi for poi in estimated}
-    assert by_name["颐和园"]["estimated_duration_min"] >= 240
-    assert by_name["北京环球影城"]["estimated_duration_min"] >= 600
+    assert by_name["颐和园"]["visit_duration_profile"] == {
+        "relaxed_min": 180,
+        "intense_min": 240,
+        "confidence": "high",
+        "reason": "大型皇家园林正常游玩需要半天左右。",
+    }
+    assert by_name["北京环球影城"]["visit_duration_profile"] == {
+        "relaxed_min": 480,
+        "intense_min": 600,
+        "confidence": "high",
+        "reason": "主题乐园通常需要接近全天游玩。",
+    }
     assert "duration_reason" in by_name["颐和园"]
 
 
@@ -91,7 +101,8 @@ def test_estimate_visit_durations_uses_llm_for_unlisted_large_place():
                 "durations": [
                     {
                         "poi_id": "p1",
-                        "estimated_duration_min": 210,
+                        "relaxed_duration_min": 150,
+                        "intense_duration_min": 210,
                         "duration_confidence": "high",
                         "duration_reason": "大型动物园通常需要完整半天游玩。",
                     }
@@ -112,6 +123,11 @@ def test_estimate_visit_durations_uses_llm_for_unlisted_large_place():
         llm,
     )
 
-    assert estimated[0]["estimated_duration_min"] == 210
+    assert estimated[0]["visit_duration_profile"] == {
+        "relaxed_min": 150,
+        "intense_min": 210,
+        "confidence": "high",
+        "reason": "大型动物园通常需要完整半天游玩。",
+    }
     assert estimated[0]["duration_confidence"] == "high"
     assert "正常人在这个地方玩一次" in llm.messages[1]["content"]

@@ -11,7 +11,7 @@ export function POICard({ item }: { item: ItineraryItem }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-xs font-medium text-muted">
-            {item.time_block} {item.arrival_time ? `/ ${item.arrival_time}` : ""}
+            {item.time_block}
           </div>
           <h4 className="mt-1 text-lg font-semibold tracking-[-0.01em] text-ink">{item.name}</h4>
         </div>

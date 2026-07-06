@@ -61,8 +61,10 @@ export type GroundedPoi = {
   match_confidence: number;
   match_status: "matched" | "ambiguous" | "unmatched";
   is_chain?: boolean;
+  brand_name?: string;
   selection_mode?: string;
   candidate_options?: Array<Record<string, unknown>>;
+  route_branch_options?: Array<Record<string, unknown>>;
   contexts?: string[];
   experience_tags?: string[];
 };
@@ -113,6 +115,8 @@ export type DayRoute = {
   theme: string;
   summary: string;
   total_outing_min?: number;
+  intensity_outing_min?: number;
+  total_transfer_min?: number;
   total_outing_minutes?: number;
   outing_duration_min?: number;
   outing_duration_minutes?: number;
@@ -120,26 +124,66 @@ export type DayRoute = {
   hotel_return_transport_min?: number;
   hotel_to_first_transport_min?: number;
   last_to_hotel_transport_min?: number;
+  meal_slots?: Array<{
+    slot: "breakfast" | "lunch" | "dinner";
+    requirement?: "required" | "optional";
+    source: "poi" | "inside_poi" | "fallback_nearby";
+    poi_id?: string;
+    within_poi_id?: string;
+  }>;
   meal_breaks?: Array<{
     label?: string;
+    slot?: "breakfast" | "lunch" | "dinner";
     start_time?: string;
     duration_min?: number;
     duration_minutes?: number;
     within_poi_id?: string;
     included_in_item_duration?: boolean;
+    source?: "inside_poi" | "fallback_nearby";
   }>;
+  segments?: DaySegment[];
+  hotel_rest_breaks?: HotelRestBreak[];
   items: ItineraryItem[];
   removed_pois?: Array<{ name: string; reason: string }>;
   alternatives?: Array<Record<string, unknown> | string>;
+};
+
+export type DaySegment =
+  | {
+      kind: "outing";
+      segment_time?: "morning" | "midday" | "afternoon" | "evening" | "night" | string;
+      poi_ids: string[];
+    }
+  | {
+      kind: "hotel_rest";
+      duration_min?: number;
+      reason?: string;
+    };
+
+export type HotelRestBreak = {
+  after_poi_id: string;
+  before_poi_id: string;
+  duration_min?: number;
+  reason?: string;
+  return_to_hotel_transport_min?: number;
+  depart_from_hotel_transport_min?: number;
+  hotel_arrival_time?: string;
+  rest_end_time?: string;
+  next_departure_time?: string;
 };
 
 export type ItineraryItem = {
   time_block: string;
   poi_id: string;
   name: string;
+  selected_branch_id?: string;
+  scheduled_role?: "quick_stop" | "meal_stop" | "anchor_visit" | "filler_visit" | "nightlife_stop" | string;
+  burden_role?: "protected_basic" | "light_detour" | "normal_load" | "heavy_load" | string;
+  trim_priority?: "must_keep" | "never_trim_before_meal" | "keep_if_low_detour" | "trim_first" | string;
   arrival_time?: string;
   duration_min: number;
   reason: string;
+  meal_roles?: Array<"breakfast" | "lunch" | "dinner">;
   transport_to_next?: { mode: "walking" | "taxi" | "public_transport" | "driving" | "transit" | "unknown" | string; duration_min?: number; distance_m?: number; amap_navigation_link?: string };
   risk_notes?: string[];
   amap_link?: string;

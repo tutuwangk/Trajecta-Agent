@@ -6,6 +6,7 @@ def enrich_pois(grounded_pois: list[dict], ugc_items: list[dict]) -> list[dict]:
     for poi in grounded_pois:
         poi_id = f"amap_{poi.get('amap_id')}" if poi.get("amap_id") else f"raw_{poi.get('raw_name')}"
         category = poi.get("category_normalized") or "unknown"
+        planning_semantics = _planning_semantics(poi, category)
         enriched.append(
             {
                 "poi_id": poi_id,
@@ -17,11 +18,16 @@ def enrich_pois(grounded_pois: list[dict], ugc_items: list[dict]) -> list[dict]:
                 "address": poi.get("address", ""),
                 "location": poi.get("location", {}),
                 "category": category,
+                "category_raw": poi.get("category_raw", ""),
                 "match_status": poi.get("match_status"),
                 "ugc_tags": poi.get("experience_tags", []),
                 "ugc_evidence": poi.get("contexts", []),
                 "estimated_duration_min": _duration_for_category(category),
-                "best_time": _best_time_for_category(category, poi.get("experience_tags", [])),
+                "best_time": planning_semantics["time_suitability"],
+                "planning_semantics": planning_semantics,
+                "brand_name": poi.get("brand_name", ""),
+                "route_branch_options": list(poi.get("route_branch_options") or []),
+                "provisional_branch_id": poi.get("provisional_branch_id", ""),
                 "queue_risk": "medium" if any("排队" in context for context in poi.get("contexts", [])) else "unknown",
                 "physical_intensity": "low" if category in {"restaurant", "shopping_mall"} else "medium",
                 "confidence": poi.get("match_confidence", 0),
@@ -47,14 +53,98 @@ def _duration_for_category(category: str) -> int:
     }.get(category, 60)
 
 
-def _best_time_for_category(category: str, tags: list[str]) -> list[str]:
-    if "夜景" in tags:
-        return ["evening", "night"]
+def _planning_semantics(poi: dict, category: str) -> dict:
+    texts = [
+        str(poi.get("raw_name") or ""),
+        str(poi.get("standard_name") or ""),
+        str(poi.get("category_raw") or ""),
+        " ".join(str(item) for item in poi.get("contexts") or []),
+        " ".join(str(item) for item in poi.get("experience_tags") or []),
+    ]
+    text = " ".join(texts)
+    tags = poi.get("experience_tags") or []
+    if any(token in text for token in ["酒吧", "bar", "cocktail", "livehouse", "兰桂坊", "夜店"]):
+        return {
+            "experience_type": "nightlife",
+            "time_suitability": ["evening", "night"],
+            "outing_role": "anchor",
+            "meal_capability": "dinner_only",
+            "quick_stop_eligible": False,
+            "base_duration_profiles": {"visit": 120, "meal_stop": 60},
+            "chain_resolution_mode": _chain_resolution_mode(poi),
+        }
+    if any(token in text for token in ["夜景"]) and category != "restaurant":
+        return {
+            "experience_type": "evening_view",
+            "time_suitability": ["evening", "night"],
+            "outing_role": "anchor",
+            "meal_capability": "none",
+            "quick_stop_eligible": False,
+            "base_duration_profiles": {"visit": 90},
+            "chain_resolution_mode": _chain_resolution_mode(poi),
+        }
+    if any(token in text for token in ["喜茶", "奈雪", "茶百道", "星巴克", "咖啡", "奶茶", "茶饮", "甜品", "果汁"]):
+        return {
+            "experience_type": "light_drink",
+            "time_suitability": ["morning", "afternoon", "evening"],
+            "outing_role": "filler",
+            "meal_capability": "none",
+            "quick_stop_eligible": True,
+            "base_duration_profiles": {"visit": 45, "quick_stop": 15},
+            "chain_resolution_mode": _chain_resolution_mode(poi),
+        }
+    if category == "restaurant" and any(token in text for token in ["小吃", "冰粉", "蛋烘糕", "早餐", "早饭", "包子", "面包"]):
+        return {
+            "experience_type": "snack",
+            "time_suitability": ["morning", "midday", "afternoon", "evening"],
+            "outing_role": "filler",
+            "meal_capability": "breakfast_lunch" if any(token in text for token in ["早餐", "早饭", "包子", "面包"]) else "lunch_dinner",
+            "quick_stop_eligible": True,
+            "base_duration_profiles": {"visit": 45, "quick_stop": 15, "meal_stop": 45},
+            "chain_resolution_mode": _chain_resolution_mode(poi),
+        }
     if category == "restaurant":
-        return ["lunch", "dinner"]
+        time_suitability = ["midday", "evening"]
+        if any(token in text for token in ["早餐", "早饭"]):
+            time_suitability = ["morning", "midday"]
+        return {
+            "experience_type": "full_meal",
+            "time_suitability": time_suitability,
+            "outing_role": "anchor" if any(token in text for token in ["必吃", "专门", "晚餐", "午餐"]) else "filler",
+            "meal_capability": "breakfast_lunch" if time_suitability == ["morning", "midday"] else "lunch_dinner",
+            "quick_stop_eligible": False,
+            "base_duration_profiles": {"visit": 75, "meal_stop": 60},
+            "chain_resolution_mode": _chain_resolution_mode(poi),
+        }
     if "拍照" in tags:
-        return ["afternoon", "evening"]
-    return ["morning", "afternoon"]
+        return {
+            "experience_type": "daytime_visit",
+            "time_suitability": ["afternoon", "evening"],
+            "outing_role": "anchor",
+            "meal_capability": "none",
+            "quick_stop_eligible": False,
+            "base_duration_profiles": {"visit": 90},
+            "chain_resolution_mode": _chain_resolution_mode(poi),
+        }
+    return {
+        "experience_type": "daytime_visit",
+        "time_suitability": ["morning", "afternoon"],
+        "outing_role": "anchor",
+        "meal_capability": "none",
+        "quick_stop_eligible": False,
+        "base_duration_profiles": {"visit": 120},
+        "chain_resolution_mode": _chain_resolution_mode(poi),
+    }
+
+
+def _chain_resolution_mode(poi: dict) -> str:
+    if poi.get("is_chain") and poi.get("user_override") == "arrange_nearby":
+        return "route_dependent_chain"
+    if poi.get("is_chain") and poi.get("match_status") == "ambiguous":
+        return "unresolved_chain"
+    if poi.get("is_chain"):
+        return "user_fixed_branch"
+    return "none"
 
 
 def _uncertainty_notes(poi: dict) -> list[str]:

@@ -1,7 +1,7 @@
-import { cleanUserFacingText } from "@/lib/displayText";
+import { cleanNoticeText } from "@/lib/displayText";
 
-export function RiskNotice({ risks, notes }: { risks?: string[]; notes?: string[] }) {
-  const items = [...(risks || []), ...(notes || [])].map(cleanUserFacingText).filter(Boolean);
+export function RiskNotice({ risks }: { risks?: string[] }) {
+  const items = (risks || []).map(cleanNoticeText).filter(Boolean);
   if (!items.length) return null;
   return (
     <details className="panel border-amber-100 bg-amber-50/80 shadow-none">

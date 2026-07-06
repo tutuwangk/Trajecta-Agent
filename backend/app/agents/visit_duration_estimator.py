@@ -46,17 +46,18 @@ def estimate_visit_durations(runtime_pois: list[dict], llm_client=None) -> list[
     for poi in runtime_pois:
         item = dict(poi)
         fallback_duration, fallback_reason = _normal_visit_duration(item)
+        fallback_intense = _fallback_intense_duration(item, fallback_duration)
+        fallback_profile = _build_duration_profile(
+            fallback_intense,
+            "high" if _text_rule(item) else "medium",
+            fallback_reason,
+        )
         llm_estimate = llm_estimates.get(item.get("poi_id"))
-        llm_duration = _positive_int((llm_estimate or {}).get("estimated_duration_min"))
-        if llm_duration is not None:
-            item["estimated_duration_min"] = max(llm_duration, fallback_duration)
-            item["duration_confidence"] = (llm_estimate or {}).get("duration_confidence") or "medium"
-            item["duration_reason"] = (llm_estimate or {}).get("duration_reason") or "按地点常规游玩体验估计。"
-        else:
-            existing = _positive_int(item.get("estimated_duration_min"))
-            item["estimated_duration_min"] = max(existing or 0, fallback_duration) if not _text_rule(item) else fallback_duration
-            item["duration_confidence"] = "high" if _text_rule(item) else "medium"
-            item["duration_reason"] = fallback_reason
+        profile = _llm_duration_profile(llm_estimate, fallback_profile) or fallback_profile
+        item["visit_duration_profile"] = profile
+        item["estimated_duration_min"] = profile["intense_min"]
+        item["duration_confidence"] = profile["confidence"]
+        item["duration_reason"] = profile["reason"]
         estimated.append(item)
     return estimated
 
@@ -67,11 +68,12 @@ def _llm_duration_estimates(runtime_pois: list[dict], llm_client) -> dict[str, d
             {"role": "system", "content": "你是旅行景点游玩时长估计助手。只输出 JSON，不输出解释性正文。"},
             {
                 "role": "user",
-                "content": f"""请为每个地点估计“正常人在这个地方玩一次要多久”。
+                "content": f"""请为每个地点估计两档“正常人在这个地方玩一次要多久”。
 估计口径：只估计地点内的正常游玩、参观、排队和休息时间，不包含酒店往返和点间交通；不要为了迁就用户选择的行程强度而压缩时长；大型景区、主题乐园、动物园、植物园、博物馆群、古镇、山岳景区应按实际游玩体量给出半天或全天估计。
+输出两档时间：`relaxed_duration_min` 表示轻松但正常的游玩时长，`intense_duration_min` 表示更完整但仍然常规的深度游玩时长。两档差距要合理，通常控制在 15-120 分钟内；`relaxed_duration_min` 必须小于等于 `intense_duration_min`，且都不能离谱偏短。
 
 输出 JSON 格式：
-{{"durations":[{{"poi_id":"...","estimated_duration_min":180,"duration_confidence":"high|medium|low","duration_reason":"..."}}]}}
+{{"durations":[{{"poi_id":"...","relaxed_duration_min":150,"intense_duration_min":210,"duration_confidence":"high|medium|low","duration_reason":"..."}}]}}
 
 地点：{_duration_prompt_pois(runtime_pois)}
 """,
@@ -114,6 +116,45 @@ def _normal_visit_duration(poi: dict) -> tuple[int, str]:
     return minutes, "按地点类型估计正常停留时间。"
 
 
+def _fallback_intense_duration(poi: dict, fallback_duration: int) -> int:
+    existing = _positive_int(poi.get("estimated_duration_min"))
+    if _text_rule(poi):
+        return fallback_duration
+    return max(existing or 0, fallback_duration)
+
+
+def _build_duration_profile(intense_duration: int, confidence: str, reason: str) -> dict:
+    intense_min = _round_to_quarter_hour(max(intense_duration, 45))
+    relaxed_min = _round_to_quarter_hour(max(45, intense_min - _duration_gap_minutes(intense_min)))
+    return {
+        "relaxed_min": min(relaxed_min, intense_min),
+        "intense_min": intense_min,
+        "confidence": confidence,
+        "reason": reason,
+    }
+
+
+def _llm_duration_profile(llm_estimate: dict | None, fallback_profile: dict) -> dict | None:
+    if not isinstance(llm_estimate, dict):
+        return None
+    intense_min = _positive_int(llm_estimate.get("intense_duration_min")) or _positive_int(llm_estimate.get("estimated_duration_min"))
+    relaxed_min = _positive_int(llm_estimate.get("relaxed_duration_min"))
+    if intense_min is None and relaxed_min is None:
+        return None
+    if intense_min is None:
+        intense_min = relaxed_min
+    if relaxed_min is None:
+        relaxed_min = max(45, intense_min - _duration_gap_minutes(intense_min))
+    intense_min = _round_to_quarter_hour(max(intense_min, relaxed_min, 45))
+    relaxed_min = _round_to_quarter_hour(max(45, min(relaxed_min, intense_min)))
+    return {
+        "relaxed_min": relaxed_min,
+        "intense_min": intense_min,
+        "confidence": str(llm_estimate.get("duration_confidence") or fallback_profile.get("confidence") or "medium"),
+        "reason": str(llm_estimate.get("duration_reason") or fallback_profile.get("reason") or "按地点常规游玩体验估计。"),
+    }
+
+
 def _text_rule(poi: dict) -> tuple[str, int, str] | None:
     text = " ".join(
         [
@@ -134,3 +175,21 @@ def _positive_int(value) -> int | None:
     except (TypeError, ValueError):
         return None
     return number if number > 0 else None
+
+
+def _duration_gap_minutes(intense_duration: int) -> int:
+    if intense_duration <= 75:
+        return 15
+    if intense_duration <= 120:
+        return 30
+    if intense_duration <= 180:
+        return 45
+    if intense_duration <= 300:
+        return 60
+    if intense_duration <= 480:
+        return 90
+    return 120
+
+
+def _round_to_quarter_hour(value: int) -> int:
+    return max(15, round(value / 15) * 15)

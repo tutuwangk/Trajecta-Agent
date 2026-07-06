@@ -63,6 +63,28 @@ def test_planning_grounded_pois_includes_user_confirmed_ambiguous_candidate():
     assert [poi["raw_name"] for poi in accepted] == ["晓市集"]
 
 
+def test_planning_grounded_pois_includes_route_dependent_chain_choice_before_branch_resolution():
+    rows = [
+        {
+            "final_decision": "include",
+            "user_override": "arrange_nearby",
+            "grounded_poi": {
+                "raw_name": "星巴克",
+                "standard_name": "星巴克（待选择）",
+                "match_status": "ambiguous",
+                "amap_id": "S1",
+                "is_chain": True,
+                "candidate_options": [{"id": "S1", "name": "星巴克(成都太古里店)"}],
+                "location": {"lng": 104.081, "lat": 30.655},
+            },
+        }
+    ]
+
+    accepted = _planning_grounded_pois(rows)
+
+    assert [poi["raw_name"] for poi in accepted] == ["星巴克"]
+
+
 def test_sync_transport_edges_overwrites_llm_transport_with_route_matrix():
     itinerary = {
         "days": [
@@ -160,3 +182,24 @@ def test_clean_final_messages_removes_stale_technical_and_pre_revision_warnings(
 
     assert itinerary["global_risks"] == []
     assert itinerary["revision_notes"] == ["已将不适合直接执行的地点移入未安排地点。"]
+
+
+def test_clean_final_messages_removes_english_and_internal_debug_strings():
+    itinerary = {
+        "days": [{"items": [{"name": "IFS"}]}],
+        "global_risks": [
+            "fallback nearby lunch slot remains unresolved",
+            "estimated_duration_min=90 for this stop",
+            "请预留排队时间。",
+        ],
+        "revision_notes": [
+            "route matrix cache hit",
+            "酒店周边晚高峰可能更堵。",
+        ],
+        "unscheduled_places": [],
+    }
+
+    _clean_final_messages(itinerary, {"issues": []})
+
+    assert itinerary["global_risks"] == ["请预留排队时间。"]
+    assert itinerary["revision_notes"] == ["酒店周边晚高峰可能更堵。"]

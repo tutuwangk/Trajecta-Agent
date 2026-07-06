@@ -14,6 +14,7 @@ export default function TripPage() {
   const [session, setSession] = useState<SessionData | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const hasItinerary = Boolean(session?.itinerary_state?.itinerary);
   const recognizing = status === "正在识别地点";
   const generatingRoute = status === "正在生成路线";
 
@@ -32,6 +33,7 @@ export default function TripPage() {
   }, [sessionId]);
 
   async function handlePoiChange(decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
+    const hadItinerary = Boolean(session?.itinerary_state?.itinerary);
     setStatus("正在保存地点选择");
     const result = await updatePlaceOverrides(sessionId, decisions);
     if (!result.ok) {
@@ -40,7 +42,7 @@ export default function TripPage() {
       return;
     }
     await load();
-    setStatus("");
+    setStatus(hadItinerary ? "地点已更新，请重新生成路线" : "");
   }
 
   async function handlePlan() {
@@ -57,6 +59,7 @@ export default function TripPage() {
   }
 
   async function handleExtract() {
+    const hadItinerary = Boolean(session?.itinerary_state?.itinerary);
     setStatus("正在识别地点");
     setError("");
     const result = await recognizePlaces(sessionId);
@@ -66,12 +69,13 @@ export default function TripPage() {
       return;
     }
     await load();
-    setStatus("");
+    setStatus(hadItinerary ? "地点已更新，请重新生成路线" : "");
   }
 
-  async function handleRevise(instruction: string, quick?: string) {
+  async function handleRevise(instruction: string) {
     setStatus("正在调整路线");
-    const result = await reviseTrip(sessionId, instruction, quick);
+    setError("");
+    const result = await reviseTrip(sessionId, instruction);
     if (!result.ok) {
       setError(result.error?.message || "调整失败");
       setStatus("");
@@ -126,9 +130,22 @@ export default function TripPage() {
         {error && <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</p>}
       </section>
 
-      <PlacePool pois={session.pois} onChange={handlePoiChange} />
-      <ItineraryCard itinerary={session.itinerary_state?.itinerary} />
-      <RevisionPanel onRevise={handleRevise} disabled={!session.itinerary_state || Boolean(status)} />
+      {hasItinerary ? (
+        <>
+          <ItineraryCard itinerary={session.itinerary_state?.itinerary} />
+          <PlacePool pois={session.pois} onChange={handlePoiChange} />
+        </>
+      ) : (
+        <>
+          <PlacePool pois={session.pois} onChange={handlePoiChange} />
+          <ItineraryCard itinerary={session.itinerary_state?.itinerary} />
+        </>
+      )}
+      <RevisionPanel
+        onRevise={handleRevise}
+        disabled={!session.itinerary_state || Boolean(status)}
+        showSuccess={Boolean(session.revision_history?.length)}
+      />
     </main>
   );
 }

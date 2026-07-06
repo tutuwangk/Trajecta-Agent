@@ -196,7 +196,7 @@ def test_save_pois_keeps_chain_candidate_unresolved(tmp_path):
     assert "顺路安排" in row["place_pool_item"]["primary_actions"]
 
 
-def test_update_poi_decisions_arranges_chain_with_nearby_context(tmp_path):
+def test_update_poi_decisions_marks_chain_for_route_dependent_planning_without_selecting_branch(tmp_path):
     store = SQLiteStore(str(tmp_path / "travel.sqlite3"))
     session_id = store.create_session("raw", "notes", {"destination": "成都", "constraints": {}})
     store.save_pois(
@@ -238,33 +238,40 @@ def test_update_poi_decisions_arranges_chain_with_nearby_context(tmp_path):
         ],
     )
 
-    def arrange_nearby(raw_poi, current_grounded, context):
-        assert raw_poi["raw_name"] == "星巴克"
-        assert current_grounded["is_chain"] is True
-        assert context["previous_grounded"]["standard_name"] == "成都IFS国际金融中心"
-        assert context["next_grounded"]["standard_name"] == "武侯祠"
-        return {
-            "raw_name": "星巴克",
-            "standard_name": "星巴克(成都IFS店)",
-            "amap_id": "S2",
-            "match_status": "matched",
-            "category_normalized": "restaurant",
-            "location": {"lng": 104.0805, "lat": 30.6572},
-            "is_chain": True,
-            "selection_mode": "arranged_nearby",
-        }
-
     store.update_poi_decisions(
         session_id,
         [{"poi_id": "amap_S1", "decision": "arrange_nearby"}],
-        arrange_nearby_grounded=arrange_nearby,
     )
 
     row = store.list_pois(session_id)[1]
-    assert row["grounded_poi"]["standard_name"] == "星巴克(成都IFS店)"
-    assert row["grounded_poi"]["match_status"] == "matched"
+    assert row["grounded_poi"]["standard_name"] == "星巴克（待选择）"
+    assert row["grounded_poi"]["match_status"] == "ambiguous"
+    assert row["grounded_poi"]["selection_mode"] == "chain_needs_choice"
     assert row["user_override"] == "arrange_nearby"
     assert row["final_decision"] == "include"
+
+
+def test_update_poi_decisions_invalidates_stale_itinerary_and_revisions(tmp_path):
+    store = SQLiteStore(str(tmp_path / "travel.sqlite3"))
+    session_id = store.create_session("raw", "notes", {"destination": "成都", "constraints": {}})
+    store.save_pois(
+        session_id,
+        [{"raw_name": "IFS"}],
+        [{"raw_name": "IFS", "standard_name": "成都IFS", "amap_id": "B001", "match_status": "matched"}],
+    )
+    store.save_itinerary(
+        session_id,
+        [{"poi_id": "p1", "standard_name": "成都IFS", "location": {"lng": 104.08, "lat": 30.65}, "match_status": "matched"}],
+        [],
+        {"destination": "成都", "days": [{"day": 1, "items": [{"poi_id": "p1", "name": "成都IFS", "duration_min": 120, "reason": ""}]}], "global_risks": [], "uncertain_pois": [], "revision_notes": []},
+        {"passed": True, "issues": []},
+    )
+    store.add_revision(session_id, "改松一点", {"destination": "成都", "days": [], "global_risks": [], "uncertain_pois": [], "revision_notes": []})
+
+    store.update_poi_decisions(session_id, [{"poi_id": "amap_B001", "decision": "optional"}])
+
+    assert store.get_itinerary(session_id) is None
+    assert store.list_revisions(session_id) == []
 
 
 def test_optional_confirms_ambiguous_place_as_tentative(tmp_path):

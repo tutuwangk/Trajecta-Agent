@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createSession, planTrip, recognizePlaces, updatePlaceOverrides } from "@/lib/api";
 import { InfoTip } from "./InfoTip";
@@ -32,8 +32,16 @@ export function TripInputForm() {
   const [routeError, setRouteError] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [pois, setPois] = useState<PoiRow[]>([]);
+  const [shouldScrollToPlaces, setShouldScrollToPlaces] = useState(false);
+  const placePoolRef = useRef<HTMLDivElement | null>(null);
   const recognizing = status === "正在识别地点" || status === "正在确认位置";
   const generatingRoute = status === "正在整理路线";
+
+  useEffect(() => {
+    if (!shouldScrollToPlaces || !sessionId || status) return;
+    placePoolRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setShouldScrollToPlaces(false);
+  }, [sessionId, shouldScrollToPlaces, status]);
 
   async function recognize() {
     setError("");
@@ -84,6 +92,7 @@ export function TripInputForm() {
     const nextPois = Array.isArray(extracted.data?.pois) ? (extracted.data.pois as PoiRow[]) : [];
     setPois(nextPois);
     setStatus("");
+    setShouldScrollToPlaces(true);
   }
 
   async function handlePlaceChange(decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
@@ -118,9 +127,9 @@ export function TripInputForm() {
   return (
     <div className="space-y-6">
       <section className="px-1 pt-4 sm:pt-8">
-        <p className="eyebrow">Trajecta-Agent</p>
-        <h1 className="mt-4 max-w-none text-4xl font-semibold tracking-[-0.03em] text-ink sm:text-5xl">
-          你的J人旅行搭子：AI定制化旅游攻略
+        <p className="eyebrow text-sm sm:text-base">Trajecta-Agent</p>
+        <h1 className="mt-4 max-w-none text-3xl font-semibold tracking-[-0.03em] text-ink sm:text-4xl">
+          你的J人旅行搭子：旅游行程规划Agent
         </h1>
       </section>
 
@@ -265,14 +274,16 @@ export function TripInputForm() {
         </section>
       </div>
       {Boolean(sessionId) && (
-        <PlacePool
-          pois={pois}
-          onChange={handlePlaceChange}
-          onGenerateRoute={generateRoute}
-          generateLoading={generatingRoute}
-          generateDisabled={!pois.length || Boolean(status)}
-          generateError={routeError}
-        />
+        <div ref={placePoolRef}>
+          <PlacePool
+            pois={pois}
+            onChange={handlePlaceChange}
+            onGenerateRoute={generateRoute}
+            generateLoading={generatingRoute}
+            generateDisabled={!pois.length || Boolean(status)}
+            generateError={routeError}
+          />
+        </div>
       )}
     </div>
   );
