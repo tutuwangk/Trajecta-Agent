@@ -188,7 +188,7 @@ def _least_important_item_index(items: list[dict], runtime_by_id: dict, must_vis
     candidates = []
     for index, item in enumerate(items):
         poi = runtime_by_id.get(item.get("poi_id"), {})
-        if _is_must_keep_item(item, poi, must_visit):
+        if _is_must_keep_item(item, poi, must_visit) or _preserve_role_item(items, index):
             continue
         candidates.append((float(poi.get("confidence") or 0), -index, index))
     if not candidates:
@@ -200,6 +200,18 @@ def _is_must_keep_item(item: dict, poi: dict, must_visit: list[str]) -> bool:
     if poi.get("user_override") == "must_include":
         return True
     return any(name and name in item.get("name", "") for name in must_visit)
+
+
+def _preserve_role_item(items: list[dict], index: int) -> bool:
+    item = items[index]
+    if item.get("trim_priority") == "never_trim_before_meal" or item.get("scheduled_role") == "meal_stop" or item.get("burden_role") == "protected_basic":
+        return True
+    if item.get("trim_priority") != "keep_if_low_detour" and item.get("scheduled_role") != "quick_stop" and item.get("burden_role") != "light_detour":
+        return False
+    prev_transfer = _int((items[index - 1].get("transport_to_next") or {}).get("duration_min")) if index > 0 else 0
+    next_transfer = _int((item.get("transport_to_next") or {}).get("duration_min"))
+    nearby_transfer = min([value for value in [prev_transfer, next_transfer] if value > 0], default=max(prev_transfer, next_transfer))
+    return nearby_transfer + min(_int(item.get("duration_min")), 15) <= 45
 
 
 def _names_to_delete(instruction: str, runtime_by_id: dict) -> list[str]:
@@ -553,6 +565,13 @@ def _is_plannable_poi(poi: dict) -> bool:
         and location.get("lng") is not None
         and location.get("lat") is not None
     )
+
+
+def _int(value) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _short_reason(reason: str) -> str:

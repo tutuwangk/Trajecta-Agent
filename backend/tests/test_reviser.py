@@ -211,6 +211,59 @@ def test_revise_itinerary_keeps_single_large_place_when_low_intensity_overflows(
     assert any("本身需要较长时间" in risk for risk in revised["global_risks"])
 
 
+def test_revise_itinerary_preserves_meal_and_quick_stop_roles_before_trimming_normal_visits():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 92,
+                "hotel_return_transport_min": 85,
+                "items": [
+                    {"poi_id": "p1", "name": "成都太古里", "duration_min": 120, "transport_to_next": {"duration_min": 10}},
+                    {
+                        "poi_id": "p2",
+                        "name": "喜茶(成都太古里锦街店)",
+                        "duration_min": 15,
+                        "scheduled_role": "quick_stop",
+                        "burden_role": "light_detour",
+                        "trim_priority": "keep_if_low_detour",
+                        "transport_to_next": {"duration_min": 5},
+                    },
+                    {
+                        "poi_id": "p3",
+                        "name": "园里火锅(万科天荟店)",
+                        "duration_min": 60,
+                        "scheduled_role": "meal_stop",
+                        "burden_role": "protected_basic",
+                        "trim_priority": "never_trim_before_meal",
+                        "transport_to_next": {"duration_min": 12},
+                    },
+                    {"poi_id": "p4", "name": "兰桂坊成都", "duration_min": 120},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都太古里", "match_status": "matched", "confidence": 0.9, "user_override": "must_include", "final_decision": "include"},
+        {"poi_id": "p2", "standard_name": "喜茶(成都太古里锦街店)", "match_status": "matched", "confidence": 0.2, "final_decision": "include"},
+        {"poi_id": "p3", "standard_name": "园里火锅(万科天荟店)", "match_status": "matched", "confidence": 0.1, "final_decision": "include"},
+        {"poi_id": "p4", "standard_name": "兰桂坊成都", "match_status": "matched", "confidence": 0.95, "final_decision": "optional"},
+    ]
+
+    revised = revise_itinerary(
+        itinerary,
+        {"issues": [{"type": "daily_time_over_intensity_limit", "suggestion": "减少当天总耗时"}]},
+        {"constraints": {"physical_intensity": "low", "must_visit": ["成都太古里"]}},
+        runtime_pois=runtime_pois,
+    )
+
+    assert [item["poi_id"] for item in revised["days"][0]["items"]] == ["p1", "p2", "p3"]
+    assert any(poi["name"] == "兰桂坊成都" for poi in revised["days"][0]["removed_pois"])
+
+
 def test_revise_itinerary_normalizes_llm_risk_objects_before_merging_verification_issues():
     itinerary = {
         "days": [],

@@ -76,6 +76,48 @@ def test_normalize_itinerary_reconnects_transport_after_optional_place_removed()
     assert day["items"][1]["arrival_time"] == "14:30"
 
 
+def test_normalize_itinerary_compacts_stale_segments_after_item_removed():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 20,
+                "segments": [
+                    {"kind": "outing", "segment_time": "morning", "poi_ids": ["p1"]},
+                    {"kind": "outing", "segment_time": "afternoon", "poi_ids": ["p2"]},
+                    {"kind": "outing", "segment_time": "evening", "poi_ids": ["p3"]},
+                ],
+                "items": [
+                    {"poi_id": "p1", "name": "A", "arrival_time": "10:00", "duration_min": 240},
+                    {"poi_id": "p2", "name": "B", "duration_min": 180},
+                    {"poi_id": "p3", "name": "C", "duration_min": 240},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "A", "match_status": "matched", "user_override": "must_include", "final_decision": "include"},
+        {"poi_id": "p2", "standard_name": "B", "match_status": "matched", "user_override": "none", "final_decision": "optional"},
+        {"poi_id": "p3", "standard_name": "C", "match_status": "matched", "user_override": "must_include", "final_decision": "include"},
+    ]
+    route_matrix = [
+        {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "taxi", "duration_min": 10, "distance_m": 1000},
+        {"origin_poi_id": "p2", "destination_poi_id": "p3", "mode": "taxi", "duration_min": 10, "distance_m": 1000},
+        {"origin_poi_id": "p1", "destination_poi_id": "p3", "mode": "taxi", "duration_min": 30, "distance_m": 5000},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert [item["poi_id"] for item in day["items"]] == ["p1", "p3"]
+    assert day["segments"] == [{"kind": "outing", "segment_time": "morning", "poi_ids": ["p1", "p3"]}]
+    assert day["items"][0]["transport_to_next"]["duration_min"] == 30
+
+
 def test_normalize_itinerary_adds_meal_break_and_counts_it_once():
     itinerary = {
         "days": [
@@ -256,6 +298,62 @@ def test_normalize_itinerary_keeps_quick_stop_and_drops_heavier_optional_when_ov
     day = itinerary["days"][0]
     assert [item["poi_id"] for item in day["items"]] == ["p1", "p2"]
     assert any(poi["name"] == "东郊记忆" for poi in day["removed_pois"])
+
+
+def test_normalize_itinerary_keeps_low_detour_quick_stop_even_when_global_chain_score_is_high():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 80,
+                "hotel_return_transport_min": 80,
+                "items": [
+                    {"poi_id": "p1", "name": "成都太古里", "arrival_time": "10:00", "duration_min": 120},
+                    {
+                        "poi_id": "p2",
+                        "name": "喜茶(太古里店)",
+                        "duration_min": 15,
+                        "scheduled_role": "quick_stop",
+                        "burden_role": "light_detour",
+                        "trim_priority": "keep_if_low_detour",
+                        "quick_stop_total_cost_min": 252,
+                    },
+                    {"poi_id": "p3", "name": "IFS国际金融中心", "duration_min": 120},
+                    {"poi_id": "p4", "name": "兰桂坊成都", "duration_min": 120},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都太古里", "match_status": "matched", "user_override": "must_include", "final_decision": "include"},
+        {
+            "poi_id": "p2",
+            "standard_name": "喜茶(太古里店)",
+            "match_status": "matched",
+            "user_override": "arrange_nearby",
+            "final_decision": "include",
+            "category": "restaurant",
+            "planning_semantics": {"experience_type": "light_drink"},
+        },
+        {"poi_id": "p3", "standard_name": "IFS国际金融中心", "match_status": "matched", "user_override": "must_include", "final_decision": "include"},
+        {"poi_id": "p4", "standard_name": "兰桂坊成都", "match_status": "matched", "user_override": "none", "final_decision": "optional"},
+    ]
+    route_matrix = [
+        {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "walking", "duration_min": 5, "distance_m": 393},
+        {"origin_poi_id": "p2", "destination_poi_id": "p3", "mode": "walking", "duration_min": 5, "distance_m": 393},
+        {"origin_poi_id": "p3", "destination_poi_id": "p4", "mode": "walking", "duration_min": 12, "distance_m": 887},
+        {"origin_poi_id": "p1", "destination_poi_id": "p3", "mode": "walking", "duration_min": 10, "distance_m": 767},
+        {"origin_poi_id": "p2", "destination_poi_id": "p4", "mode": "walking", "duration_min": 12, "distance_m": 887},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert [item["poi_id"] for item in day["items"]] == ["p1", "p2", "p3"]
+    assert any(poi["name"] == "兰桂坊成都" for poi in day["removed_pois"])
 
 
 def test_normalize_itinerary_outputs_intensity_minutes_from_trim_pressure_not_total_outing():

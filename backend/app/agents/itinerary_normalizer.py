@@ -28,9 +28,11 @@ def normalize_itinerary(
     itinerary.setdefault("global_risks", [])
     for day in itinerary.get("days", []):
         _remove_unplannable(day, runtime_by_id)
+        _sync_day_segments(day)
         _sync_day_transports(day, route_by_pair)
         _rebuild_timing(day, runtime_by_id, _is_high_intensity(user_profile))
         _trim_optional_items(day, itinerary, runtime_by_id, route_by_pair, must_visit, limit_minutes)
+        _sync_day_segments(day)
         _sync_day_transports(day, route_by_pair)
         _rebuild_timing(day, runtime_by_id, _is_high_intensity(user_profile))
         sync_day_total_time(day)
@@ -79,6 +81,7 @@ def _trim_optional_items(
         item = day["items"].pop(index)
         removed.append({"name": item.get("name", ""), "reason": "为控制当天外出时间，已先放入备选。"})
         removed_any = True
+        _sync_day_segments(day)
         _sync_day_transports(day, route_by_pair)
         _rebuild_timing(day, runtime_by_id, False)
     if removed_any:
@@ -107,11 +110,13 @@ def _is_preservable_optional(items: list[dict], index: int, poi: dict) -> bool:
     prev_transfer = _int((items[index - 1].get("transport_to_next") or {}).get("duration_min")) if index > 0 else 0
     next_transfer = _int((item.get("transport_to_next") or {}).get("duration_min"))
     if item.get("trim_priority") == "keep_if_low_detour":
+        local_quick_cost = _local_quick_stop_cost(item, prev_transfer, next_transfer)
         quick_cost = _int(item.get("quick_stop_total_cost_min"))
+        if quick_cost and local_quick_cost:
+            return min(quick_cost, local_quick_cost) <= 45
         if quick_cost:
             return quick_cost <= 45
-        nearby_transfer = min([value for value in [prev_transfer, next_transfer] if value > 0], default=max(prev_transfer, next_transfer))
-        return nearby_transfer + _int(item.get("duration_min")) <= 45
+        return local_quick_cost <= 45
     duration = _int(item.get("duration_min"))
     if _is_meal_poi(item, poi):
         return max(prev_transfer, next_transfer) <= SHORT_OPTIONAL_TRANSFER_MIN
@@ -271,6 +276,67 @@ def _int(value) -> int:
 def _append_unique(values: list, text: str) -> None:
     if text not in values:
         values.append(text)
+
+
+def _local_quick_stop_cost(item: dict, prev_transfer: int, next_transfer: int) -> int:
+    nearby_transfer = min([value for value in [prev_transfer, next_transfer] if value > 0], default=max(prev_transfer, next_transfer))
+    return nearby_transfer + min(_int(item.get("duration_min")), 15)
+
+
+def _sync_day_segments(day: dict) -> None:
+    raw_segments = day.get("segments") or []
+    if not raw_segments:
+        return
+    ordered_poi_ids = [str(item.get("poi_id") or "") for item in day.get("items") or [] if str(item.get("poi_id") or "").strip()]
+    if not ordered_poi_ids:
+        day["segments"] = []
+        return
+    allowed_poi_ids = set(ordered_poi_ids)
+    synced: list[dict] = []
+    seen: set[str] = set()
+
+    for raw_segment in raw_segments:
+        if raw_segment.get("kind") != "outing":
+            synced.append(
+                {
+                    "kind": "hotel_rest",
+                    "duration_min": _int(raw_segment.get("duration_min")),
+                    "reason": str(raw_segment.get("reason") or "").strip(),
+                }
+            )
+            continue
+        filtered = []
+        for poi_id in raw_segment.get("poi_ids") or []:
+            normalized_poi_id = str(poi_id or "").strip()
+            if not normalized_poi_id or normalized_poi_id not in allowed_poi_ids or normalized_poi_id in seen:
+                continue
+            filtered.append(normalized_poi_id)
+            seen.add(normalized_poi_id)
+        if not filtered:
+            continue
+        segment_time = str(raw_segment.get("segment_time") or "").strip().lower()
+        if synced and synced[-1].get("kind") == "outing":
+            synced[-1]["poi_ids"].extend(filtered)
+            continue
+        synced.append({"kind": "outing", "segment_time": segment_time, "poi_ids": filtered})
+
+    remaining = [poi_id for poi_id in ordered_poi_ids if poi_id not in seen]
+    if remaining:
+        if synced and synced[-1].get("kind") == "outing":
+            synced[-1]["poi_ids"].extend(remaining)
+        else:
+            synced.append({"kind": "outing", "segment_time": "", "poi_ids": remaining})
+
+    cleaned: list[dict] = []
+    for index, segment in enumerate(synced):
+        if segment.get("kind") != "hotel_rest":
+            cleaned.append(segment)
+            continue
+        has_outing_before = any(previous.get("kind") == "outing" for previous in synced[:index])
+        has_outing_after = any(next_segment.get("kind") == "outing" for next_segment in synced[index + 1 :])
+        if has_outing_before and has_outing_after:
+            cleaned.append(segment)
+    day["segments"] = cleaned
 
 
 def _trim_pressure_minutes(day: dict, runtime_by_id: dict) -> int:

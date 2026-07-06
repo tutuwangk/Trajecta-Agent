@@ -532,6 +532,44 @@ def test_materialize_itinerary_from_skeleton_keeps_scheduled_roles_for_chain_and
     assert itinerary["days"][0]["items"][1]["trim_priority"] == "never_trim_before_meal"
 
 
+def test_materialize_itinerary_from_skeleton_infers_quick_stop_for_fixed_light_drink_role():
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
+        [
+            {
+                "poi_id": "p1",
+                "standard_name": "喜茶(IFS黑金店)",
+                "match_status": "matched",
+                "estimated_duration_min": 45,
+                "final_decision": "include",
+                "category": "restaurant",
+                "planning_semantics": {
+                    "experience_type": "light_drink",
+                    "time_suitability": ["afternoon", "evening"],
+                    "outing_role": "filler",
+                    "quick_stop_eligible": True,
+                    "base_duration_profiles": {"visit": 45, "quick_stop": 15},
+                },
+            }
+        ],
+        [],
+    )
+
+    itinerary = materialize_itinerary_from_skeleton(
+        context,
+        {
+            "destination": "成都",
+            "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": [], "risk_tags": []}],
+            "unscheduled": [],
+            "risk_tags": [],
+        },
+    )
+
+    assert itinerary["days"][0]["items"][0]["scheduled_role"] == "quick_stop"
+    assert itinerary["days"][0]["items"][0]["duration_min"] == 15
+    assert itinerary["days"][0]["items"][0]["trim_priority"] == "keep_if_low_detour"
+
+
 def test_compile_planning_context_uses_relaxed_duration_profile_for_light_days_and_intense_for_high_days():
     runtime_poi = {
         "poi_id": "p1",

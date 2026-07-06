@@ -746,7 +746,10 @@ def _quick_stop_eligible(poi: dict) -> bool:
     total_cost = _positive_int(poi.get("quick_stop_total_cost_min"))
     if total_cost is None and poi.get("route_branch_options"):
         total_cost = _positive_int((poi.get("route_branch_options") or [{}])[0].get("quick_stop_total_cost_min"))
-    return total_cost is not None and total_cost <= 45
+    if total_cost is not None:
+        return total_cost <= 45
+    semantics = poi.get("planning_semantics") or {}
+    return bool(semantics.get("quick_stop_eligible"))
 
 
 def _materialized_duration_min(poi: dict, scheduled_role: str) -> int:

@@ -44,6 +44,9 @@
 - `reviser.py` 已拆出规则修复、受限重规划和文案生成三个职责；后台最多自动重规划 2 轮。
 - LLM 客户端已预留 `planning` / `copy` 两个逻辑角色，可分别通过 `LLM_PLANNING_MODEL`、`LLM_COPY_MODEL` 覆盖模型；未设置时回退到 `LLM_MODEL`。
 - `/plan` 会记录 `planning_context_snapshot`、`skeleton_versions`、`hard_issue_history` 和 `repair_attempts` 调试快照到后端日志。
+- 时间线规范化会在裁剪地点后同步压实 `segments`，确保前端仍能拿到保留下来站点之间的真实交通边，不会再被旧分段残留覆盖。
+- `quick stop`、`meal stop` 和低绕路餐饮的保留规则已重新收口到“角色优先 + 本地绕路成本”口径，避免饮品补给和正餐候选被过强的全局裁剪规则误删。
+- 固定门店但语义上属于 `light_drink`、`snack` 的地点，若已被识别为可快速停留，会在路线骨架落地时自动按 `quick stop` 处理，不再依赖连锁分支绕路元数据。
 
 ## 验证记录
 
@@ -53,7 +56,7 @@
 backend/.venv/bin/python -m pytest
 ```
 
-结果：`122 passed`。
+结果：`126 passed`。
 
 ```bash
 cd frontend
@@ -79,5 +82,6 @@ pnpm exec next build --webpack
 - 如果新增地点操作，优先判断它是否真的需要用户手动决策；默认应由后端地点组织层先判断。
 - 如果修改每日时间线，只用前端代码根据路线 JSON 绘制，不让 LLM 生成可视化内容；时间展示保持 5 分钟向后取整，但不能再用前端累计逻辑覆盖后端已给出的到达时间与用餐时段。
 - 如果继续调整午餐或晚餐规则，先判断当天路线里是否已有合适餐饮点可承接；只有真实餐饮点才允许显示成 `午餐：某餐厅`，否则保持“就近用餐”文案。
+- 如果继续改可裁剪规则，优先保住“角色明确且局部代价低”的点，例如 `quick stop`、`meal stop`、低绕路餐饮；不要再让单一全局规则压过这些角色语义。
 - 如果修改酒店名或出行人数链路，优先保持结构化 `user_profile`，不要退回“拼自然语言后再正则解析”的主路径。
 - 如果增加新的 API、环境变量或数据表，需要同步 README、`AGENTS.md` 和 `docs/ARCHITECTURE.md`。
