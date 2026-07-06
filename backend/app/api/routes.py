@@ -18,7 +18,7 @@ from app.core import api_error, api_success
 from app.schemas.models import PoiDecisionUpdate, RevisionRequest, SessionCreate, UserProfile
 from app.services.amap_client import default_amap_client
 from app.services.cache_service import CacheService
-from app.services.chain_arranger import prepare_chain_for_planning
+from app.services.chain_arranger import arrange_chain_to_anchor
 from app.services.database import default_store
 from app.services.link_builder import build_navigation_link, build_poi_link
 from app.services.llm_client import default_copy_llm_client, default_llm_client, default_planning_llm_client
@@ -101,8 +101,9 @@ def update_place_overrides(session_id: str, payload: PoiDecisionUpdate):
     try:
         session = _require_session(session_id)
         decisions = [decision.model_dump() for decision in payload.decisions]
+        has_arrange_confirmation = any(decision.get("decision") == "confirm_arrange_nearby" for decision in decisions)
         has_manual_match = any((decision.get("manual_name") or "").strip() for decision in decisions)
-        amap_client = default_amap_client() if has_manual_match else None
+        amap_client = default_amap_client() if (has_manual_match or has_arrange_confirmation) else None
         llm_client = default_llm_client() if has_manual_match else None
 
         def rematch_grounded(raw_poi: dict, current_grounded: dict, manual_name: str) -> dict:
@@ -115,10 +116,21 @@ def update_place_overrides(session_id: str, payload: PoiDecisionUpdate):
             }
             return ground_single_poi(match_input, session["user_profile"], amap_client, llm_client)
 
+        def arrange_nearby_grounded(raw_poi: dict, current_grounded: dict, anchor_row: dict, user_profile: dict) -> dict:
+            anchor_poi = dict(anchor_row.get("grounded_poi") or {})
+            if anchor_row.get("poi_id") == "hotel_anchor":
+                anchor_poi = _hotel_anchor(user_profile, amap_client)
+                anchor_poi["poi_id"] = "hotel_anchor"
+                anchor_poi["standard_name"] = anchor_poi.get("standard_name") or user_profile.get("hotel_name") or user_profile.get("hotel_area") or "酒店"
+            else:
+                anchor_poi["poi_id"] = anchor_row.get("poi_id")
+            return arrange_chain_to_anchor(current_grounded, anchor_poi, amap_client)
+
         store.update_poi_decisions(
             session_id,
             decisions,
             rematch_grounded=rematch_grounded if has_manual_match else None,
+            arrange_nearby_grounded=arrange_nearby_grounded if has_arrange_confirmation else None,
         )
         pois = store.list_pois(session_id)
         return api_success(
@@ -140,7 +152,6 @@ def create_plan(session_id: str):
         copy_llm = default_copy_llm_client()
         amap_client = default_amap_client()
         hotel_anchor = _hotel_anchor(session["user_profile"], amap_client)
-        accepted_grounded = _resolve_route_dependent_chains_for_planning(accepted_grounded, hotel_anchor, amap_client)
         runtime_pois = estimate_visit_durations(enrich_pois(accepted_grounded, []), planning_llm)
         route_matrix = build_route_matrix(runtime_pois, amap_client, CacheService(store), session["user_profile"])
         order_constraints = _extract_order_constraints(session["raw_input"], session["notes"], runtime_pois)
@@ -499,8 +510,6 @@ def _has_plannable_location(row: dict) -> bool:
     grounded = row["grounded_poi"]
     if grounded.get("match_status") == "matched":
         return True
-    if row.get("user_override") == "arrange_nearby" and grounded.get("is_chain") and grounded.get("candidate_options"):
-        return True
     location = grounded.get("location") or {}
     return (
         row.get("user_override") == "must_include"
@@ -509,25 +518,6 @@ def _has_plannable_location(row: dict) -> bool:
         and location.get("lng") is not None
         and location.get("lat") is not None
     )
-
-
-def _resolve_route_dependent_chains_for_planning(grounded_pois: list[dict], hotel_anchor: dict | None, amap_client) -> list[dict]:
-    anchors = [
-        poi
-        for poi in grounded_pois
-        if _has_location(poi) and not poi.get("is_chain") and (poi.get("user_override") == "must_include" or poi.get("final_decision") == "include")
-    ]
-    if hotel_anchor:
-        anchors.append(hotel_anchor)
-    if not anchors:
-        anchors = [poi for poi in grounded_pois if _has_location(poi) and not poi.get("is_chain")]
-    resolved: list[dict] = []
-    for poi in grounded_pois:
-        if poi.get("is_chain") and poi.get("user_override") == "arrange_nearby" and poi.get("candidate_options"):
-            resolved.append(prepare_chain_for_planning(poi, anchors, amap_client))
-            continue
-        resolved.append(poi)
-    return resolved
 
 
 def _extract_order_constraints(raw_input: str, notes: str, runtime_pois: list[dict]) -> list[dict]:

@@ -68,7 +68,31 @@ def test_organize_place_keeps_chain_candidate_unresolved():
     assert result["place_pool_item"]["status_label"] == "需确认"
     assert result["place_pool_item"]["decision_label"] == "需确认"
     assert result["place_pool_item"]["needs_attention"] is True
-    assert "顺路安排" in result["place_pool_item"]["primary_actions"]
+    assert result["place_pool_item"]["primary_actions"] == ["顺路规划", "改名", "移除"]
+
+
+def test_organize_place_shows_normal_actions_for_resolved_chain_branch():
+    raw_poi = {"raw_name": "星巴克", "contexts": ["下午喝咖啡"], "confidence": 0.86}
+    grounded_poi = {
+        "raw_name": "星巴克",
+        "standard_name": "星巴克(成都IFS店)",
+        "amap_id": "S2",
+        "category_normalized": "restaurant",
+        "location": {"lng": 104.0805, "lat": 30.6572},
+        "match_confidence": 0.92,
+        "match_status": "matched",
+        "is_chain": True,
+        "chain_status": "resolved",
+        "resolved_branch_id": "S2",
+        "resolved_from_anchor_poi_id": "amap_I1",
+    }
+
+    result = organize_place(raw_poi, grounded_poi, {"constraints": {}}, user_override="optional")
+
+    assert result["system_decision"] == "include"
+    assert result["final_decision"] == "optional"
+    assert result["place_pool_item"]["status_label"] == "已识别"
+    assert result["place_pool_item"]["primary_actions"] == ["顺路规划", "必去", "待定", "移除", "改名"]
 
 
 def test_organize_place_infers_meal_role_and_honors_remove_override():

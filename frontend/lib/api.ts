@@ -1,4 +1,4 @@
-import type { ApiResponse, SessionData, UserProfile } from "./types";
+import type { ApiResponse, PoiDecisionInput, SessionData, UserProfile } from "./types";
 
 const API_BASE = "/api/backend";
 
@@ -57,11 +57,11 @@ export function getSession(sessionId: string) {
   return request<SessionData>(`/sessions/${sessionId}`);
 }
 
-export function updatePois(sessionId: string, decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
+export function updatePois(sessionId: string, decisions: PoiDecisionInput[]) {
   return updatePlaceOverrides(sessionId, decisions);
 }
 
-export function updatePlaceOverrides(sessionId: string, decisions: Array<{ poi_id: string; decision: string; manual_name?: string }>) {
+export function updatePlaceOverrides(sessionId: string, decisions: PoiDecisionInput[]) {
   return request<{ pois: SessionData["pois"] }>(`/sessions/${sessionId}/place-overrides`, {
     method: "POST",
     body: JSON.stringify({ decisions })

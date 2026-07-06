@@ -107,10 +107,6 @@ def _final_decision(system_decision: str, user_override: str) -> FinalDecision:
         return "optional"
     if user_override == "remove":
         return "exclude"
-    if user_override == "arrange_nearby" and system_decision == "needs_confirmation":
-        return "include"
-    if user_override == "arrange_nearby" and system_decision in {"include", "optional"}:
-        return "include"
     if system_decision == "include":
         return "optional"
     if system_decision == "optional":
@@ -174,10 +170,10 @@ def _type_label(role: str, category: str) -> str:
 
 def _primary_actions(user_override: str, final_decision: str, grounded_poi: dict) -> list[str]:
     actions = ["必去", "待定", "移除", "改名"]
-    if grounded_poi.get("is_chain") and final_decision == "unresolved":
-        return ["顺路安排", "改名", "移除"]
-    if grounded_poi.get("is_chain") and user_override == "arrange_nearby":
-        return ["改名", "移除"]
+    if grounded_poi.get("is_chain") and grounded_poi.get("chain_status") != "resolved":
+        return ["顺路规划", "改名", "移除"]
+    if grounded_poi.get("is_chain"):
+        return ["顺路规划", *actions]
     if user_override == "remove" or final_decision == "exclude":
         return ["必去", "待定", "改名"]
     return actions

@@ -138,9 +138,7 @@ def _planning_semantics(poi: dict, category: str) -> dict:
 
 
 def _chain_resolution_mode(poi: dict) -> str:
-    if poi.get("is_chain") and poi.get("user_override") == "arrange_nearby":
-        return "route_dependent_chain"
-    if poi.get("is_chain") and poi.get("match_status") == "ambiguous":
+    if poi.get("is_chain") and poi.get("chain_status") != "resolved":
         return "unresolved_chain"
     if poi.get("is_chain"):
         return "user_fixed_branch"

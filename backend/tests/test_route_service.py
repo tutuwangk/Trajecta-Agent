@@ -59,6 +59,28 @@ def test_build_route_matrix_includes_user_confirmed_ambiguous_map_candidate():
     assert {(edge["origin_poi_id"], edge["destination_poi_id"]) for edge in matrix} == {("p1", "p2"), ("p2", "p1")}
 
 
+def test_build_route_matrix_excludes_unresolved_chain_even_if_it_has_coordinates():
+    runtime_pois = [
+        _poi("p1"),
+        {
+            **_poi("p2"),
+            "standard_name": "喜茶（待选择）",
+            "match_status": "ambiguous",
+            "is_chain": True,
+            "chain_status": "unresolved",
+            "user_override": "none",
+        },
+    ]
+
+    matrix = build_route_matrix(
+        runtime_pois,
+        FakeAmap(walking=(12, 900), driving=(8, 1500), transit=(18, 1600)),
+        user_profile={"transport_preference": ["walking", "taxi", "public_transport"]},
+    )
+
+    assert matrix == []
+
+
 def _poi(poi_id: str) -> dict:
     index = 1 if poi_id == "p1" else 2
     return {

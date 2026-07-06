@@ -376,7 +376,7 @@ def test_materialize_itinerary_from_segmented_skeleton_keeps_hotel_rest_segments
     ]
 
 
-def test_compile_planning_context_keeps_route_dependent_chain_branch_options():
+def test_compile_planning_context_excludes_unresolved_chain_from_llm_context():
     context = compile_planning_context(
         {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
         [
@@ -387,53 +387,92 @@ def test_compile_planning_context_keeps_route_dependent_chain_branch_options():
                 "match_status": "ambiguous",
                 "estimated_duration_min": 45,
                 "final_decision": "include",
-                "user_override": "arrange_nearby",
+                "user_override": "none",
                 "district": "锦江区",
                 "location": {"lng": 104.0805, "lat": 30.6572},
                 "planning_semantics": {
                     "experience_type": "light_drink",
                     "time_suitability": ["afternoon", "evening"],
                     "outing_role": "filler",
-                    "chain_resolution_mode": "route_dependent_chain",
+                    "chain_resolution_mode": "unresolved_chain",
                 },
-                "route_branch_options": [
-                    {"branch_id": "H1", "name": "喜茶(IFS店)", "district": "锦江区", "detour_minutes": 12, "anchor_poi_ids": ["p2"]},
-                    {"branch_id": "H2", "name": "喜茶(武侯祠店)", "district": "武侯区", "detour_minutes": 34, "anchor_poi_ids": ["p3"]},
-                ],
+                "chain_status": "unresolved",
             }
         ],
         [],
         order_constraints=[{"before": "IFS", "after": "武侯祠", "strength": "strong_preference", "source": "user_text"}],
     )
 
-    assert context["plannable_pois"][0]["branch_options"][0]["branch_id"] == "H1"
+    assert context["plannable_pois"] == []
     assert context["order_constraints"][0]["strength"] == "strong_preference"
 
 
-def test_materialize_itinerary_from_skeleton_resolves_route_dependent_chain_branch():
+def test_plan_skeleton_prompt_no_longer_mentions_branch_selection():
+    class RecordingLLM:
+        def __init__(self):
+            self.messages = None
+
+        def json_chat(self, messages, step, temperature=0.2):
+            self.messages = messages
+            return {
+                "destination": "成都",
+                "days": [{"day": 1, "poi_ids": ["p1"], "scheduled_roles": {"p1": "quick_stop"}, "unscheduled_poi_ids": [], "risk_tags": []}],
+                "unscheduled": [],
+                "risk_tags": [],
+            }
+
+    llm = RecordingLLM()
     context = compile_planning_context(
         {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
         [
             {
                 "poi_id": "p1",
-                "standard_name": "喜茶（待选择）",
+                "standard_name": "喜茶(IFS店)",
                 "brand_name": "喜茶",
-                "match_status": "ambiguous",
+                "match_status": "matched",
                 "estimated_duration_min": 45,
                 "final_decision": "include",
-                "user_override": "arrange_nearby",
+                "user_override": "optional",
                 "district": "锦江区",
                 "location": {"lng": 104.0805, "lat": 30.6572},
                 "planning_semantics": {
                     "experience_type": "light_drink",
                     "time_suitability": ["afternoon", "evening"],
                     "outing_role": "filler",
-                    "chain_resolution_mode": "route_dependent_chain",
                 },
-                "route_branch_options": [
-                    {"branch_id": "H1", "name": "喜茶(IFS店)", "district": "锦江区", "detour_minutes": 12, "anchor_poi_ids": ["p2"]},
-                    {"branch_id": "H2", "name": "喜茶(武侯祠店)", "district": "武侯区", "detour_minutes": 34, "anchor_poi_ids": ["p3"]},
-                ],
+                "chain_status": "resolved",
+            }
+        ],
+        [],
+    )
+
+    plan_skeleton_with_llm(context, llm)
+
+    prompt = llm.messages[0]["content"] + llm.messages[1]["content"]
+    assert "route_dependent_chain" not in prompt
+    assert "selected_branch_ids" not in prompt
+
+
+def test_materialize_itinerary_from_skeleton_uses_resolved_chain_as_normal_poi():
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
+        [
+            {
+                "poi_id": "p1",
+                "standard_name": "喜茶(IFS店)",
+                "brand_name": "喜茶",
+                "match_status": "matched",
+                "estimated_duration_min": 45,
+                "final_decision": "include",
+                "user_override": "optional",
+                "district": "锦江区",
+                "location": {"lng": 104.0805, "lat": 30.6572},
+                "planning_semantics": {
+                    "experience_type": "light_drink",
+                    "time_suitability": ["afternoon", "evening"],
+                    "outing_role": "filler",
+                },
+                "chain_status": "resolved",
             }
         ],
         [],
@@ -443,55 +482,38 @@ def test_materialize_itinerary_from_skeleton_resolves_route_dependent_chain_bran
         context,
         {
             "destination": "成都",
-            "days": [
-                {
-                    "day": 1,
-                    "poi_ids": ["p1"],
-                    "selected_branch_ids": {"p1": "H2"},
-                    "unscheduled_poi_ids": [],
-                    "risk_tags": [],
-                }
-            ],
+            "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": [], "risk_tags": []}],
             "unscheduled": [],
             "risk_tags": [],
         },
     )
 
-    assert itinerary["days"][0]["items"][0]["name"] == "喜茶(武侯祠店)"
-    assert itinerary["days"][0]["items"][0]["selected_branch_id"] == "H2"
+    assert itinerary["days"][0]["items"][0]["name"] == "喜茶(IFS店)"
+    assert itinerary["days"][0]["items"][0]["selected_branch_id"] is None
 
 
-def test_materialize_itinerary_from_skeleton_keeps_scheduled_roles_for_chain_and_meal_points():
+def test_materialize_itinerary_from_skeleton_keeps_scheduled_roles_for_resolved_chain_and_meal_points():
     context = compile_planning_context(
         {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
         [
             {
                 "poi_id": "p1",
-                "standard_name": "喜茶（待选择）",
+                "standard_name": "喜茶(IFS店)",
                 "brand_name": "喜茶",
-                "match_status": "ambiguous",
+                "match_status": "matched",
                 "estimated_duration_min": 45,
                 "final_decision": "include",
-                "user_override": "arrange_nearby",
+                "user_override": "optional",
                 "district": "锦江区",
                 "location": {"lng": 104.0805, "lat": 30.6572},
                 "planning_semantics": {
                     "experience_type": "light_drink",
                     "time_suitability": ["afternoon", "evening"],
                     "outing_role": "filler",
-                    "chain_resolution_mode": "route_dependent_chain",
                 },
-                "route_branch_options": [
-                    {
-                        "branch_id": "H1",
-                        "name": "喜茶(IFS店)",
-                        "district": "锦江区",
-                        "detour_minutes": 12,
-                        "quick_stop_total_cost_min": 25,
-                        "meal_stop_total_cost_min": 70,
-                        "anchor_poi_ids": ["p2"],
-                    }
-                ],
+                "quick_stop_total_cost_min": 25,
+                "quick_stop_duration_min": 15,
+                "chain_status": "resolved",
             },
             {
                 "poi_id": "p2",
@@ -514,7 +536,6 @@ def test_materialize_itinerary_from_skeleton_keeps_scheduled_roles_for_chain_and
                 {
                     "day": 1,
                     "poi_ids": ["p1", "p2"],
-                    "selected_branch_ids": {"p1": "H1"},
                     "scheduled_roles": {"p1": "quick_stop", "p2": "meal_stop"},
                     "meal_slots": [{"slot": "dinner", "requirement": "required", "source": "poi", "poi_id": "p2"}],
                     "unscheduled_poi_ids": [],

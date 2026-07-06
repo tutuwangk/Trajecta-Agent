@@ -48,8 +48,6 @@ def compile_planning_context(
             "meal_capability": (poi.get("planning_semantics") or {}).get("meal_capability") or "none",
             "quick_stop_eligible": bool((poi.get("planning_semantics") or {}).get("quick_stop_eligible")),
             "base_duration_profiles": dict((poi.get("planning_semantics") or {}).get("base_duration_profiles") or {}),
-            "chain_resolution_mode": (poi.get("planning_semantics") or {}).get("chain_resolution_mode") or "none",
-            "branch_options": list(poi.get("route_branch_options") or []),
             "must_keep": _is_must_keep_candidate(poi, user_profile),
             "is_meal_candidate": _is_meal_candidate(poi),
         }
@@ -278,12 +276,11 @@ def _planning_messages(planning_context: dict) -> list[dict[str, str]]:
                 "- 必去地点优先，待定地点只能在时间允许且顺路时安排。\n"
                 "- 午餐和晚餐是正式规划约束；若 11:30 前还没回酒店，当天必须显式落地午餐；若 17:30 前还没回酒店，当天必须显式落地晚餐。早餐只在用户资料里有明确早餐推荐且顺路时才可作为 optional meal slot 输出。\n"
                 "- 每个 meal slot 必须说明由真实餐饮地点、场内用餐还是就近补位满足。\n"
-                "- 严格使用 planning_context 里的 experience_type、time_suitability、outing_role、chain_resolution_mode 与 order_constraints 做决策。\n"
+                "- 严格使用 planning_context 里的 experience_type、time_suitability、outing_role 与 order_constraints 做决策。\n"
                 "- `light_drink` 只能视为饮品/轻补给，不可承担正式午餐或晚餐；若顺路且适合短暂停靠，可标成 `quick_stop`。\n"
                 "- `full_meal` / `snack` 若承担午餐或晚餐，应标成 `meal_stop`；午餐和晚餐都必须落地，但不应因为强度控制而被当作可随意删掉的负担。\n"
                 "- `nightlife` 只能安排在 evening/night，不可承担午餐；若作为当天收尾，请标成 `nightlife_stop`。\n"
                 "- 如果上午适合的地点和晚上适合的地点之间没有合理顺路安排，可以输出 segments，并在中间插入 `hotel_rest`。\n"
-                "- `route_dependent_chain` 代表系统已提供该品牌的顺路门店候选；若要使用该地点，必须在 `selected_branch_ids` 中为对应 poi_id 选择一个合法 branch_id。\n"
                 "- 如果无法满足，保留骨架并用 reason codes / risk tags 表达，不得编造事实。"
             ),
         },
@@ -306,7 +303,7 @@ def _planning_messages(planning_context: dict) -> list[dict[str, str]]:
                 f"{_prompt_context(planning_context)}\n"
                 "</planning_context>\n\n"
                 "<output_schema>\n"
-                '{"destination":"...","days":[{"day":1,"theme_hint":"...","segments":[{"kind":"outing","segment_time":"morning","poi_ids":["..."]},{"kind":"hotel_rest","duration_min":180,"reason":"中午回酒店休息"},{"kind":"outing","segment_time":"evening","poi_ids":["..."]}],"poi_ids":["..."],"selected_branch_ids":{"poi_id":"branch_id"},"scheduled_roles":{"poi_id":"quick_stop|meal_stop|anchor_visit|filler_visit|nightlife_stop"},"meal_slots":[{"slot":"lunch","requirement":"required","source":"poi","poi_id":"..."}],"unscheduled_poi_ids":["..."],"drop_reason_codes":{"poi_id":["time_over_budget"]},"risk_tags":["must_places_dense"]}],"unscheduled":[{"poi_id":"...","reason_codes":["far_detour"]}],"risk_tags":["..."]}\n'
+                '{"destination":"...","days":[{"day":1,"theme_hint":"...","segments":[{"kind":"outing","segment_time":"morning","poi_ids":["..."]},{"kind":"hotel_rest","duration_min":180,"reason":"中午回酒店休息"},{"kind":"outing","segment_time":"evening","poi_ids":["..."]}],"poi_ids":["..."],"scheduled_roles":{"poi_id":"quick_stop|meal_stop|anchor_visit|filler_visit|nightlife_stop"},"meal_slots":[{"slot":"lunch","requirement":"required","source":"poi","poi_id":"..."}],"unscheduled_poi_ids":["..."],"drop_reason_codes":{"poi_id":["time_over_budget"]},"risk_tags":["must_places_dense"]}],"unscheduled":[{"poi_id":"...","reason_codes":["far_detour"]}],"risk_tags":["..."]}\n'
                 "</output_schema>"
             ),
         },
@@ -477,13 +474,6 @@ def _is_plannable_poi(poi: dict) -> bool:
     if poi.get("match_status") == "matched":
         return True
     location = poi.get("location") or {}
-    if (
-        poi.get("user_override") == "arrange_nearby"
-        and ((poi.get("planning_semantics") or {}).get("chain_resolution_mode") == "route_dependent_chain" or poi.get("route_branch_options"))
-        and location.get("lng") is not None
-        and location.get("lat") is not None
-    ):
-        return True
     return (
         poi.get("user_override") == "must_include"
         and poi.get("match_status") == "ambiguous"

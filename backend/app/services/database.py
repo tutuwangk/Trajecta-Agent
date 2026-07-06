@@ -162,27 +162,37 @@ class SQLiteStore:
             user_profile = json.loads(session["user_profile"]) if session else {}
             self._invalidate_itinerary_state(connection, session_id)
             rows = connection.execute(
-                "SELECT id, raw_poi, grounded_poi, final_decision FROM pois WHERE session_id = ? ORDER BY id",
+                "SELECT id, raw_poi, grounded_poi, system_decision, user_override, final_decision FROM pois WHERE session_id = ? ORDER BY id",
                 (session_id,),
             ).fetchall()
+            context_rows = [_decode_poi_context_row(row) for row in rows]
             for index, row in enumerate(rows):
                 raw_poi = json.loads(row["raw_poi"])
                 grounded = json.loads(row["grounded_poi"])
-                poi_id = f"amap_{grounded.get('amap_id')}" if grounded.get("amap_id") else f"raw_{grounded.get('raw_name')}"
+                poi_id = _poi_id_from_grounded(grounded)
                 decision = by_poi_id.get(poi_id)
                 if not decision:
                     continue
-                manual_name = (decision.get("manual_name") or "").strip()
-                if manual_name:
-                    raw_poi["raw_name"] = manual_name
-                    if rematch_grounded:
-                        grounded = rematch_grounded(raw_poi, grounded, manual_name)
-                    else:
-                        grounded["raw_name"] = manual_name
                 requested_decision = decision.get("decision", "keep")
-                if requested_decision in {"must_include", "must_visit", "optional"} and _has_map_candidate(grounded):
-                    grounded["match_status"] = "matched"
-                user_override = "rename_confirm" if manual_name and requested_decision in {"keep", "none"} else requested_decision
+                if requested_decision == "confirm_arrange_nearby":
+                    anchor_poi_id = str(decision.get("anchor_poi_id") or "").strip()
+                    anchor_row = _resolve_anchor_row(context_rows, user_profile, anchor_poi_id)
+                    if not arrange_nearby_grounded:
+                        raise ValueError("arrange_nearby_grounded callback is required for confirm_arrange_nearby")
+                    grounded = arrange_nearby_grounded(raw_poi, _ensure_unresolved_chain_state(grounded), anchor_row, user_profile)
+                    manual_name = None
+                    user_override = _sync_user_override_from_anchor(anchor_row)
+                else:
+                    manual_name = (decision.get("manual_name") or "").strip()
+                    if manual_name:
+                        raw_poi["raw_name"] = manual_name
+                        if rematch_grounded:
+                            grounded = rematch_grounded(raw_poi, grounded, manual_name)
+                        else:
+                            grounded["raw_name"] = manual_name
+                    if requested_decision in {"must_include", "must_visit", "optional"} and _has_map_candidate(grounded):
+                        grounded["match_status"] = "matched"
+                    user_override = "rename_confirm" if manual_name and requested_decision in {"keep", "none"} else requested_decision
                 organized = organize_place(raw_poi, grounded, user_profile, user_override)
                 legacy = legacy_decision(organized["user_override"], organized["final_decision"])
                 connection.execute(
@@ -214,6 +224,19 @@ class SQLiteStore:
                         row["id"],
                     ),
                 )
+                context_rows[index] = {
+                    "id": row["id"],
+                    "poi_id": _poi_id_from_grounded(grounded),
+                    "raw_poi": raw_poi,
+                    "grounded_poi": grounded,
+                    "system_decision": organized["system_decision"],
+                    "user_override": organized["user_override"],
+                    "final_decision": organized["final_decision"],
+                }
+                if requested_decision == "remove":
+                    _cascade_reset_resolved_chains(connection, session_id, poi_id, user_profile, now)
+                if requested_decision in {"must_include", "must_visit"}:
+                    _cascade_promote_resolved_chains(connection, session_id, poi_id, user_profile, now)
 
     def save_itinerary(self, session_id: str, runtime_pois: list[dict], route_matrix: list[dict], itinerary: dict, verification: dict) -> None:
         now = _now()
@@ -303,10 +326,14 @@ def _poi_row(row) -> dict:
 
 
 def _decode_poi_context_row(row) -> dict:
+    grounded_poi = json.loads(row["grounded_poi"])
     return {
         "id": row["id"],
         "raw_poi": json.loads(row["raw_poi"]),
-        "grounded_poi": json.loads(row["grounded_poi"]),
+        "grounded_poi": grounded_poi,
+        "poi_id": _poi_id_from_grounded(grounded_poi),
+        "system_decision": row["system_decision"],
+        "user_override": row["user_override"],
         "final_decision": row["final_decision"],
     }
 
@@ -339,6 +366,153 @@ def _is_route_anchor(row: dict) -> bool:
 def _has_map_candidate(grounded: dict) -> bool:
     location = grounded.get("location") or {}
     return bool(grounded.get("amap_id") and location.get("lng") is not None and location.get("lat") is not None)
+
+
+def _poi_id_from_grounded(grounded: dict) -> str:
+    if grounded.get("amap_id"):
+        return f"amap_{grounded.get('amap_id')}"
+    return f"raw_{grounded.get('raw_name', '')}"
+
+
+def _resolve_anchor_row(rows: list[dict], user_profile: dict, anchor_poi_id: str) -> dict:
+    if anchor_poi_id == "hotel_anchor":
+        hotel_name = str(user_profile.get("hotel_name") or user_profile.get("hotel_area") or "").strip()
+        if not hotel_name:
+            raise ValueError("hotel anchor requires hotel_name or hotel_area")
+        return {
+            "id": "hotel_anchor",
+            "poi_id": "hotel_anchor",
+            "raw_poi": {"raw_name": hotel_name},
+            "grounded_poi": {
+                "raw_name": hotel_name,
+                "standard_name": hotel_name,
+                "category_normalized": "hotel",
+                "match_status": "matched",
+                "location": {},
+            },
+            "system_decision": "include",
+            "user_override": "none",
+            "final_decision": "include",
+        }
+    for row in rows:
+        if row.get("poi_id") == anchor_poi_id:
+            return row
+    raise ValueError(f"anchor poi not found: {anchor_poi_id}")
+
+
+def _sync_user_override_from_anchor(anchor_row: dict) -> str:
+    if anchor_row.get("user_override") == "must_include" or anchor_row.get("final_decision") == "include":
+        return "must_include"
+    if anchor_row.get("user_override") == "optional" or anchor_row.get("final_decision") == "optional":
+        return "optional"
+    return "none"
+
+
+def _ensure_unresolved_chain_state(grounded: dict) -> dict:
+    if grounded.get("chain_status"):
+        return grounded
+    return {**grounded, "chain_status": "unresolved"}
+
+
+def _cascade_reset_resolved_chains(connection, session_id: str, anchor_poi_id: str, user_profile: dict, now: str) -> None:
+    rows = connection.execute(
+        "SELECT id, raw_poi, grounded_poi FROM pois WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    for row in rows:
+        raw_poi = json.loads(row["raw_poi"])
+        grounded = json.loads(row["grounded_poi"])
+        if str(grounded.get("resolved_from_anchor_poi_id") or "") != anchor_poi_id:
+            continue
+        reset_grounded = _reset_chain_grounded(raw_poi, grounded)
+        organized = organize_place(raw_poi, reset_grounded, user_profile, "none")
+        connection.execute(
+            """
+            UPDATE pois SET
+              decision = ?,
+              system_decision = ?,
+              user_override = ?,
+              final_decision = ?,
+              inferred_role = ?,
+              decision_reason = ?,
+              grounded_poi = ?,
+              updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                legacy_decision(organized["user_override"], organized["final_decision"]),
+                organized["system_decision"],
+                organized["user_override"],
+                organized["final_decision"],
+                organized["inferred_role"],
+                organized["decision_reason"],
+                _json(reset_grounded),
+                now,
+                row["id"],
+            ),
+        )
+
+
+def _cascade_promote_resolved_chains(connection, session_id: str, anchor_poi_id: str, user_profile: dict, now: str) -> None:
+    rows = connection.execute(
+        "SELECT id, raw_poi, grounded_poi FROM pois WHERE session_id = ? ORDER BY id",
+        (session_id,),
+    ).fetchall()
+    for row in rows:
+        raw_poi = json.loads(row["raw_poi"])
+        grounded = json.loads(row["grounded_poi"])
+        if str(grounded.get("resolved_from_anchor_poi_id") or "") != anchor_poi_id:
+            continue
+        organized = organize_place(raw_poi, grounded, user_profile, "must_include")
+        connection.execute(
+            """
+            UPDATE pois SET
+              decision = ?,
+              system_decision = ?,
+              user_override = ?,
+              final_decision = ?,
+              inferred_role = ?,
+              decision_reason = ?,
+              updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                legacy_decision(organized["user_override"], organized["final_decision"]),
+                organized["system_decision"],
+                organized["user_override"],
+                organized["final_decision"],
+                organized["inferred_role"],
+                organized["decision_reason"],
+                now,
+                row["id"],
+            ),
+        )
+
+
+def _reset_chain_grounded(raw_poi: dict, grounded: dict) -> dict:
+    candidate_options = list(grounded.get("candidate_options") or [])
+    first_candidate = candidate_options[0] if candidate_options else {}
+    raw_name = str(raw_poi.get("raw_name") or grounded.get("raw_name") or "").strip()
+    return {
+        **grounded,
+        "raw_name": raw_name or grounded.get("raw_name", ""),
+        "standard_name": f"{raw_name}（待选择）" if raw_name else grounded.get("standard_name", ""),
+        "amap_id": first_candidate.get("id", ""),
+        "address": first_candidate.get("address", ""),
+        "location": first_candidate.get("location", {}),
+        "city": first_candidate.get("city", grounded.get("city", "")),
+        "district": first_candidate.get("district", grounded.get("district", "")),
+        "category_raw": first_candidate.get("category_raw", grounded.get("category_raw", "")),
+        "category_normalized": first_candidate.get("category_normalized", grounded.get("category_normalized", "")),
+        "match_status": "ambiguous",
+        "chain_status": "unresolved",
+        "selection_mode": "chain_needs_choice",
+        "resolved_branch_id": "",
+        "resolved_branch_name": "",
+        "resolved_from_anchor_poi_id": "",
+        "resolved_from_anchor_name": "",
+        "resolved_by": "",
+    }
 
 
 def _json(value: Any) -> str:

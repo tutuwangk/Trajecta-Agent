@@ -28,7 +28,7 @@ export type PoiRow = {
   id: number;
   raw_poi: Record<string, unknown>;
   grounded_poi: GroundedPoi;
-  decision: "keep" | "delete" | "must_visit" | "optional" | "arrange_nearby";
+  decision: "keep" | "delete" | "must_visit" | "optional" | "arrange_nearby" | "confirm_arrange_nearby";
   system_decision: "include" | "optional" | "needs_confirmation" | "exclude";
   user_override: "must_include" | "optional" | "remove" | "rename_confirm" | "arrange_nearby" | "none";
   final_decision: "include" | "optional" | "exclude" | "unresolved";
@@ -61,12 +61,25 @@ export type GroundedPoi = {
   match_confidence: number;
   match_status: "matched" | "ambiguous" | "unmatched";
   is_chain?: boolean;
+  chain_status?: "unresolved" | "resolved";
   brand_name?: string;
   selection_mode?: string;
+  resolved_branch_id?: string;
+  resolved_branch_name?: string;
+  resolved_from_anchor_poi_id?: string;
+  resolved_from_anchor_name?: string;
+  resolved_by?: string;
   candidate_options?: Array<Record<string, unknown>>;
   route_branch_options?: Array<Record<string, unknown>>;
   contexts?: string[];
   experience_tags?: string[];
+};
+
+export type PoiDecisionInput = {
+  poi_id: string;
+  decision: string;
+  manual_name?: string;
+  anchor_poi_id?: string;
 };
 
 export type SessionData = {
