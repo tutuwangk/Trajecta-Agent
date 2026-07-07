@@ -461,3 +461,35 @@ def test_update_poi_decisions_keeps_anchor_unchanged_when_resolved_chain_changes
     assert anchor_row["final_decision"] == "optional"
     assert chain_row["user_override"] == "must_include"
     assert chain_row["final_decision"] == "include"
+
+
+def test_store_saves_and_resolves_planning_intervention(tmp_path):
+    store = SQLiteStore(str(tmp_path / "travel.sqlite3"))
+    session_id = store.create_session(
+        "晚上去九眼桥",
+        "",
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
+    )
+    intervention = {
+        "status": "needs_user_choice",
+        "question": "九眼桥需要放在晚上，但当天地点较多，你想优先保留哪种安排？",
+        "options": [
+            {"id": "keep_time", "label": "保留九眼桥晚上去", "description": "减少下午地点。"},
+            {"id": "relax_pace", "label": "放宽节奏", "description": "当天会更满。"},
+        ],
+    }
+
+    intervention_id = store.save_planning_intervention(session_id, intervention)
+    assert store.get_open_planning_intervention(session_id)["id"] == intervention_id
+
+    store.resolve_planning_intervention(session_id, intervention_id, "keep_time")
+
+    assert store.get_open_planning_intervention(session_id) is None
+    resolved = store.list_resolved_planning_decisions(session_id)
+    assert resolved == [
+        {
+            "intervention_id": intervention_id,
+            "choice_id": "keep_time",
+            "choice_label": "保留九眼桥晚上去",
+        }
+    ]

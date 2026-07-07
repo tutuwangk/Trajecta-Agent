@@ -370,6 +370,38 @@ def test_verify_itinerary_does_not_treat_light_drink_as_formal_meal_stop():
     assert "meal_stop_missing" in {issue["type"] for issue in result["issues"]}
 
 
+def test_verify_itinerary_flags_explicit_evening_time_constraint_when_scheduled_too_early():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [
+                    {"poi_id": "p1", "name": "成都太古里", "arrival_time": "10:00", "duration_min": 120, "transport_to_next": {"duration_min": 15}},
+                    {"poi_id": "p2", "name": "九眼桥", "arrival_time": "12:15", "duration_min": 60},
+                ],
+                "meal_breaks": [],
+            }
+        ]
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都太古里", "match_status": "matched", "category": "shopping_mall"},
+        {"poi_id": "p2", "standard_name": "九眼桥", "match_status": "matched", "category": "attraction"},
+    ]
+
+    result = verify_itinerary(
+        itinerary,
+        {"constraints": {"physical_intensity": "medium"}},
+        [],
+        runtime_pois,
+        time_constraints=[
+            {"poi_id": "p2", "preferred_window": "evening", "strength": "quasi_hard", "source_text": "晚上去九眼桥"}
+        ],
+    )
+
+    issue_types = {issue["type"] for issue in result["issues"]}
+    assert "time_constraint_violated" in issue_types
+
+
 def test_verify_itinerary_respects_hotel_rest_segments_for_transfers_but_still_requires_lunch():
     itinerary = {
         "days": [

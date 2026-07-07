@@ -16,6 +16,7 @@ HARD_ISSUE_TYPES = {
     "must_visit_missing",
     "avoid_visit_scheduled",
     "meal_slot_missing",
+    "time_constraint_violated",
 }
 
 
@@ -24,8 +25,9 @@ def verify_itinerary(
     user_profile: dict,
     route_matrix: list[dict],
     runtime_pois: list[dict] | None = None,
+    time_constraints: list[dict] | None = None,
 ) -> dict:
-    issues = _collect_issues(itinerary, user_profile, route_matrix, runtime_pois)
+    issues = _collect_issues(itinerary, user_profile, route_matrix, runtime_pois, time_constraints=time_constraints)
     return {"passed": not issues, "issues": issues}
 
 
@@ -34,8 +36,13 @@ def validate_hard_constraints(
     user_profile: dict,
     route_matrix: list[dict],
     runtime_pois: list[dict] | None = None,
+    time_constraints: list[dict] | None = None,
 ) -> dict:
-    issues = [issue for issue in _collect_issues(itinerary, user_profile, route_matrix, runtime_pois) if issue["type"] in HARD_ISSUE_TYPES]
+    issues = [
+        issue
+        for issue in _collect_issues(itinerary, user_profile, route_matrix, runtime_pois, time_constraints=time_constraints)
+        if issue["type"] in HARD_ISSUE_TYPES
+    ]
     return {"passed": not issues, "issues": issues}
 
 
@@ -44,9 +51,14 @@ def review_soft_quality(
     user_profile: dict,
     route_matrix: list[dict],
     runtime_pois: list[dict] | None = None,
+    time_constraints: list[dict] | None = None,
     llm_client=None,
 ) -> list[dict]:
-    issues = [issue for issue in _collect_issues(itinerary, user_profile, route_matrix, runtime_pois) if issue["type"] not in HARD_ISSUE_TYPES]
+    issues = [
+        issue
+        for issue in _collect_issues(itinerary, user_profile, route_matrix, runtime_pois, time_constraints=time_constraints)
+        if issue["type"] not in HARD_ISSUE_TYPES
+    ]
     if llm_client is None:
         return issues
     try:
@@ -109,6 +121,7 @@ def _collect_issues(
     user_profile: dict,
     route_matrix: list[dict],
     runtime_pois: list[dict] | None = None,
+    time_constraints: list[dict] | None = None,
 ) -> list[dict]:
     issues: list[dict] = []
     runtime_by_id = {poi.get("poi_id"): poi for poi in runtime_pois or []}
@@ -172,6 +185,9 @@ def _collect_issues(
                         "suggestion": "先作为待确认地点展示，确认后再进入路线。",
                     }
                 )
+            time_issue = _time_constraint_issue(day, item, time_constraints or [])
+            if time_issue:
+                issues.append(time_issue)
         if len(districts) > 2:
             issues.append(
                 {
@@ -373,6 +389,63 @@ def _int(value) -> int:
 def _slot_label(slot: str | None) -> str:
     mapping = {"breakfast": "早餐", "lunch": "午餐", "dinner": "晚餐"}
     return mapping.get(slot or "", "用餐")
+
+
+def _time_constraint_issue(day: dict, item: dict, time_constraints: list[dict]) -> dict | None:
+    poi_id = str(item.get("poi_id") or "")
+    if not poi_id:
+        return None
+    matching = [constraint for constraint in time_constraints if str(constraint.get("poi_id") or "") == poi_id]
+    if not matching:
+        return None
+    arrival = _parse_time(item.get("arrival_time"))
+    if arrival is None:
+        return None
+    duration = _int(item.get("duration_min"))
+    end = arrival + duration
+    for constraint in matching:
+        if constraint.get("strength") not in {"quasi_hard", "hard"}:
+            continue
+        window = str(constraint.get("preferred_window") or "")
+        if _time_overlaps_window(arrival, end, window):
+            continue
+        label = _time_window_label(window)
+        return {
+            "type": "time_constraint_violated",
+            "severity": "high",
+            "message": f"用户明确希望 {item.get('name')} 安排在{label}，但当前时间不匹配。",
+            "suggestion": f"把 {item.get('name')} 调整到{label}，或让用户选择是否放宽这个要求。",
+            "evidence": constraint.get("source_text") or f"Day {day.get('day')}",
+        }
+    return None
+
+
+def _time_overlaps_window(start: int, end: int, window: str) -> bool:
+    window_start, window_end = _time_window_minutes(window)
+    if window_start is None or window_end is None:
+        return True
+    return start < window_end and end > window_start
+
+
+def _time_window_minutes(window: str) -> tuple[int | None, int | None]:
+    mapping = {
+        "morning": (8 * 60, 12 * 60),
+        "midday": (11 * 60, 14 * 60),
+        "afternoon": (12 * 60, 17 * 60 + 30),
+        "evening": (17 * 60 + 30, 22 * 60),
+        "night": (18 * 60, 24 * 60),
+    }
+    return mapping.get(window, (None, None))
+
+
+def _time_window_label(window: str) -> str:
+    return {
+        "morning": "上午",
+        "midday": "中午",
+        "afternoon": "下午",
+        "evening": "晚上",
+        "night": "夜间",
+    }.get(window, "指定时段")
 
 
 def _is_plannable_poi(poi: dict) -> bool:

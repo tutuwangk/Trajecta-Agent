@@ -697,6 +697,52 @@ def test_normalize_itinerary_replaces_inside_poi_meal_with_real_restaurant_when_
     assert day["meal_breaks"] == []
 
 
+def test_normalize_itinerary_rejects_snack_as_lunch_even_if_llm_marked_meal_stop():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 20,
+                "hotel_return_transport_min": 20,
+                "meal_slots": [{"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p2"}],
+                "items": [
+                    {"poi_id": "p1", "name": "成都太古里", "arrival_time": "10:00", "duration_min": 120, "transport_to_next": {"duration_min": 5}},
+                    {"poi_id": "p2", "name": "TRUFFE BOULANGERIE B&C", "duration_min": 45, "scheduled_role": "meal_stop", "burden_role": "protected_basic"},
+                    {"poi_id": "p3", "name": "九眼桥", "duration_min": 60},
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都太古里", "match_status": "matched", "final_decision": "include", "category": "shopping_mall"},
+        {
+            "poi_id": "p2",
+            "standard_name": "TRUFFE BOULANGERIE B&C",
+            "match_status": "matched",
+            "final_decision": "include",
+            "category": "restaurant",
+            "planning_semantics": {"experience_type": "snack", "meal_capability": "breakfast_lunch"},
+            "route_semantics": {"meal_level": "小吃/甜品", "meal_fit": ["仅补给"]},
+        },
+        {"poi_id": "p3", "standard_name": "九眼桥", "match_status": "matched", "final_decision": "include", "category": "attraction"},
+    ]
+    route_matrix = [
+        {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "walking", "duration_min": 5, "distance_m": 300},
+        {"origin_poi_id": "p2", "destination_poi_id": "p3", "mode": "taxi", "duration_min": 15, "distance_m": 3000},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, route_matrix)
+
+    day = itinerary["days"][0]
+    assert day["meal_slots"] == [{"slot": "lunch", "requirement": "required", "source": "fallback_nearby"}]
+    assert day["items"][1].get("meal_roles") is None
+    assert day["items"][1]["scheduled_role"] == "quick_stop"
+    assert day["meal_breaks"] == [{"label": "午餐", "slot": "lunch", "start_time": "12:00", "duration_min": 60, "source": "fallback_nearby"}]
+
+
 def test_normalize_itinerary_starts_nightlife_only_day_in_evening():
     itinerary = {
         "days": [

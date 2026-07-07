@@ -89,7 +89,20 @@ export type SessionData = {
   user_profile: UserProfile;
   pois: PoiRow[];
   itinerary_state?: ItineraryState | null;
+  planning_intervention?: PlanningIntervention | null;
   revision_history: Array<Record<string, unknown>>;
+};
+
+export type PlanningIntervention = {
+  id: string;
+  status: "needs_user_choice";
+  question: string;
+  options: Array<{
+    id: string;
+    label: string;
+    description?: string;
+  }>;
+  context_summary?: Record<string, unknown>;
 };
 
 export type ItineraryState = {

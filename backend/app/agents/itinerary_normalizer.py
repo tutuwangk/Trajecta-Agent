@@ -366,6 +366,7 @@ def _rebuild_timing_from_meal_slots(day: dict, runtime_by_id: dict, current: int
     items = day.get("items") or []
     meal_slots = _resolve_day_meal_slots(day, items, runtime_by_id)
     day["meal_slots"] = meal_slots
+    _downgrade_invalid_meal_stops(items, runtime_by_id, meal_slots)
     meal_breaks: list[dict] = []
     pending_fallbacks = sorted(
         [slot for slot in meal_slots if slot.get("source") == "fallback_nearby"],
@@ -403,6 +404,7 @@ def _rebuild_segmented_timing(day: dict, runtime_by_id: dict, current: int) -> N
     items_by_id = {item.get("poi_id"): item for item in day.get("items") or []}
     meal_slots = _resolve_day_meal_slots(day, day.get("items") or [], runtime_by_id)
     day["meal_slots"] = meal_slots
+    _downgrade_invalid_meal_stops(day.get("items") or [], runtime_by_id, meal_slots)
     meal_breaks: list[dict] = []
     hotel_rest_breaks = _hotel_rest_breaks_by_after(day)
     total_minutes = (day.get("hotel_departure_transport_min") or day.get("hotel_to_first_transport_min") or 0) + (
@@ -471,7 +473,13 @@ def _resolve_day_meal_slots(day: dict, items: list[dict], runtime_by_id: dict) -
         slot = dict(raw_slot)
         source = slot.get("source")
         slot_name = str(slot.get("slot") or "")
-        if source == "poi" and slot.get("poi_id") not in item_ids:
+        if source == "poi":
+            target_item = next((item for item in items if item.get("poi_id") == slot.get("poi_id")), None)
+            target_poi = runtime_by_id.get(slot.get("poi_id"), {})
+            if target_item is not None and _can_cover_meal_slot(target_item, target_poi, slot_name):
+                resolved.append(slot)
+                reserved_poi_ids.add(str(slot.get("poi_id") or ""))
+                continue
             replacement = _replacement_meal_slot(slot_name, items, runtime_by_id, reserved_poi_ids)
             if replacement is not None:
                 slot = replacement
@@ -530,6 +538,8 @@ def _replacement_meal_slot(slot_name: str, items: list[dict], runtime_by_id: dic
 def _can_cover_meal_slot(item: dict, poi: dict, slot_name: str) -> bool:
     if item.get("scheduled_role") == "quick_stop" or item.get("burden_role") == "light_detour":
         return False
+    if not _route_semantics_allow_formal_meal(poi, slot_name):
+        return False
     semantics = poi.get("planning_semantics") or {}
     experience_type = str(semantics.get("experience_type") or "")
     if experience_type == "light_drink":
@@ -543,7 +553,41 @@ def _can_cover_meal_slot(item: dict, poi: dict, slot_name: str) -> bool:
         return slot_name == "dinner"
     if item.get("scheduled_role") == "meal_stop" and _is_meal_poi(item, poi):
         return slot_name in {"lunch", "dinner"}
+    if _is_meal_poi(item, poi):
+        return slot_name in {"breakfast", "lunch", "dinner"}
     return False
+
+
+def _route_semantics_allow_formal_meal(poi: dict, slot_name: str) -> bool:
+    if slot_name not in {"lunch", "dinner"}:
+        return True
+    route_semantics = poi.get("route_semantics") or {}
+    meal_level = str(route_semantics.get("meal_level") or "").strip().lower()
+    if not meal_level:
+        return True
+    if meal_level in {"正餐", "full_meal", "formal_meal"}:
+        return True
+    if meal_level in {"轻食", "light_meal"} and route_semantics.get("explicit_meal_request"):
+        return True
+    return False
+
+
+def _downgrade_invalid_meal_stops(items: list[dict], runtime_by_id: dict, meal_slots: list[dict]) -> None:
+    meal_poi_ids = {
+        str(slot.get("poi_id") or slot.get("within_poi_id") or "")
+        for slot in meal_slots
+        if slot.get("source") in {"poi", "inside_poi"}
+    }
+    for item in items:
+        if item.get("scheduled_role") != "meal_stop" or str(item.get("poi_id") or "") in meal_poi_ids:
+            continue
+        poi = runtime_by_id.get(item.get("poi_id"), {})
+        route_semantics = poi.get("route_semantics") or {}
+        meal_level = str(route_semantics.get("meal_level") or "").strip().lower()
+        if meal_level in {"小吃/甜品", "饮品", "非餐饮", "snack", "drink", "not_meal", "light_drink"}:
+            item["scheduled_role"] = "quick_stop"
+            item["burden_role"] = "light_detour"
+            item["trim_priority"] = "keep_if_low_detour"
 
 
 def _meal_capability_supports_slot(meal_capability: str, slot_name: str) -> bool:

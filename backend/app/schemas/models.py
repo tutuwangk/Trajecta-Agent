@@ -77,3 +77,8 @@ class PoiDecisionUpdate(BaseModel):
 class RevisionRequest(BaseModel):
     instruction: str
     quick_action: str | None = None
+
+
+class PlanningDecisionRequest(BaseModel):
+    intervention_id: str
+    choice_id: str

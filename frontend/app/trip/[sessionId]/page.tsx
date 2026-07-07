@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { getSession, planTrip, recognizePlaces, reviseTrip, updatePlaceOverrides } from "@/lib/api";
-import type { PoiDecisionInput, SessionData } from "@/lib/types";
+import { getSession, planTrip, recognizePlaces, reviseTrip, submitPlanningDecision, updatePlaceOverrides } from "@/lib/api";
+import type { PlanningIntervention, PoiDecisionInput, SessionData } from "@/lib/types";
 import { ItineraryCard } from "@/components/ItineraryCard";
+import { PlanningInterventionCard } from "@/components/PlanningInterventionCard";
 import { PlacePool } from "@/components/PlacePool";
 import { RevisionPanel } from "@/components/RevisionPanel";
 
@@ -12,6 +13,7 @@ export default function TripPage() {
   const params = useParams<{ sessionId: string }>();
   const sessionId = params.sessionId;
   const [session, setSession] = useState<SessionData | null>(null);
+  const [planningIntervention, setPlanningIntervention] = useState<PlanningIntervention | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const hasItinerary = Boolean(session?.itinerary_state?.itinerary);
@@ -22,6 +24,7 @@ export default function TripPage() {
     const result = await getSession(sessionId);
     if (result.ok && result.data) {
       setSession(result.data);
+      setPlanningIntervention(result.data.planning_intervention || null);
       setError("");
     } else {
       setError(result.error?.message || "读取行程失败");
@@ -54,8 +57,28 @@ export default function TripPage() {
       setStatus("");
       return;
     }
+    if (result.data?.status === "needs_user_choice" && result.data.planning_intervention) {
+      setPlanningIntervention(result.data.planning_intervention);
+      setStatus("");
+      return;
+    }
+    setPlanningIntervention(null);
     await load();
     setStatus("");
+  }
+
+  async function handlePlanningChoice(choiceId: string) {
+    if (!planningIntervention) return;
+    setStatus("正在按你的选择调整路线");
+    setError("");
+    const result = await submitPlanningDecision(sessionId, planningIntervention.id, choiceId);
+    if (!result.ok) {
+      setError(result.error?.message || "保存选择失败");
+      setStatus("");
+      return;
+    }
+    setPlanningIntervention(null);
+    await handlePlan();
   }
 
   async function handleExtract() {
@@ -129,6 +152,12 @@ export default function TripPage() {
         {status && <p className="mt-4 rounded-2xl bg-surface px-4 py-3 text-sm text-ink">{status}</p>}
         {error && <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</p>}
       </section>
+
+      <PlanningInterventionCard
+        intervention={planningIntervention}
+        disabled={Boolean(status)}
+        onChoose={handlePlanningChoice}
+      />
 
       {hasItinerary ? (
         <>

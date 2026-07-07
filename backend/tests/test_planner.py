@@ -2,6 +2,7 @@ from app.core import AppError
 from app.api.routes import _extract_order_constraints
 from app.agents.planner import (
     compile_planning_context,
+    enrich_planning_semantics_with_llm,
     materialize_itinerary_from_skeleton,
     plan_skeleton_with_llm,
 )
@@ -239,6 +240,48 @@ def test_compile_planning_context_collects_meal_candidates_with_suitability_hint
             "route_fit_context": ["午餐想吃火锅", "晚上也可以去"],
         }
     ]
+
+
+def test_enrich_planning_semantics_with_llm_attaches_route_only_semantics():
+    class SemanticsLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            assert step == "plan_poi_semantics"
+            prompt = messages[0]["content"] + messages[1]["content"]
+            assert "规划语义层" in prompt
+            return {
+                "semantics": [
+                    {
+                        "poi_id": "p1",
+                        "visit_role": "顺路补充",
+                        "meal_level": "小吃/甜品",
+                        "meal_fit": ["仅补给"],
+                        "time_fit": ["下午", "傍晚"],
+                        "priority_reason": "适合逛街途中短暂停靠。",
+                        "risk_hint": "不能承接正式午餐。",
+                    }
+                ]
+            }
+
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
+        [
+            {
+                "poi_id": "p1",
+                "standard_name": "TRUFFE BOULANGERIE B&C",
+                "match_status": "matched",
+                "estimated_duration_min": 45,
+                "final_decision": "include",
+                "category": "restaurant",
+            }
+        ],
+        [],
+    )
+
+    enriched = enrich_planning_semantics_with_llm(context, SemanticsLLM())
+
+    assert enriched["route_semantics"]["p1"]["meal_level"] == "小吃/甜品"
+    assert enriched["poi_lookup"]["p1"]["route_semantics"]["meal_fit"] == ["仅补给"]
+    assert enriched["plannable_pois"][0]["route_semantics"]["priority_reason"] == "适合逛街途中短暂停靠。"
 
 
 def test_compile_planning_context_filters_light_drink_out_of_lunch_dinner_candidates_and_keeps_nightlife_timing():

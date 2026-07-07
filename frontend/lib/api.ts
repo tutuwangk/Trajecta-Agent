@@ -1,4 +1,4 @@
-import type { ApiResponse, PoiDecisionInput, SessionData, UserProfile } from "./types";
+import type { ApiResponse, PlanningIntervention, PoiDecisionInput, SessionData, UserProfile } from "./types";
 
 const API_BASE = "/api/backend";
 
@@ -69,7 +69,17 @@ export function updatePlaceOverrides(sessionId: string, decisions: PoiDecisionIn
 }
 
 export function planTrip(sessionId: string) {
-  return request<Record<string, unknown>>(`/sessions/${sessionId}/plan`, { method: "POST" });
+  return request<{ status?: "completed" | "needs_user_choice"; planning_intervention?: PlanningIntervention } & Record<string, unknown>>(
+    `/sessions/${sessionId}/plan`,
+    { method: "POST" }
+  );
+}
+
+export function submitPlanningDecision(sessionId: string, interventionId: string, choiceId: string) {
+  return request<{ status: "accepted" }>(`/sessions/${sessionId}/planning-decisions`, {
+    method: "POST",
+    body: JSON.stringify({ intervention_id: interventionId, choice_id: choiceId })
+  });
 }
 
 export function reviseTrip(sessionId: string, instruction: string) {

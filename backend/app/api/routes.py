@@ -8,14 +8,14 @@ from fastapi import APIRouter, HTTPException
 from app.agents.input_parser import parse_user_profile
 from app.agents.intensity import sync_day_total_time
 from app.agents.itinerary_normalizer import normalize_itinerary
-from app.agents.planning_workflow import run_planning_workflow
+from app.agents.planning_workflow import PlanningInterventionRequired, run_planning_workflow
 from app.agents.poi_extractor import extract_poi_names
 from app.agents.reviser import revise_from_user_instruction, revise_itinerary
 from app.agents.ugc_reader import extract_ugc_items
 from app.agents.verifier import verify_itinerary
 from app.agents.visit_duration_estimator import estimate_visit_durations
 from app.core import api_error, api_success
-from app.schemas.models import PoiDecisionUpdate, RevisionRequest, SessionCreate, UserProfile
+from app.schemas.models import PlanningDecisionRequest, PoiDecisionUpdate, RevisionRequest, SessionCreate, UserProfile
 from app.services.amap_client import default_amap_client
 from app.services.cache_service import CacheService
 from app.services.chain_arranger import arrange_chain_to_anchor
@@ -56,6 +56,7 @@ def get_session(session_id: str):
             **session,
             "pois": store.list_pois(session_id),
             "itinerary_state": store.get_itinerary(session_id),
+            "planning_intervention": store.get_open_planning_intervention(session_id),
             "revision_history": store.list_revisions(session_id),
         }
     )
@@ -155,6 +156,8 @@ def create_plan(session_id: str):
         runtime_pois = estimate_visit_durations(enrich_pois(accepted_grounded, []), planning_llm)
         route_matrix = build_route_matrix(runtime_pois, amap_client, CacheService(store), session["user_profile"])
         order_constraints = _extract_order_constraints(session["raw_input"], session["notes"], runtime_pois)
+        time_constraints = _extract_time_constraints(session["raw_input"], session["notes"], runtime_pois)
+        planning_decisions = store.list_resolved_planning_decisions(session_id)
 
         def prepare_itinerary(itinerary: dict) -> None:
             _sync_precise_transport_edges(itinerary, runtime_pois, route_matrix, session["user_profile"], amap_client)
@@ -171,6 +174,8 @@ def create_plan(session_id: str):
             uncertain_pois=uncertain_pois,
             hotel_anchor=hotel_anchor,
             order_constraints=order_constraints,
+            time_constraints=time_constraints,
+            planning_decisions=planning_decisions,
             prepare_itinerary=prepare_itinerary,
         )
         logger.info("Planning workflow debug snapshot: %s", _debug)
@@ -178,11 +183,29 @@ def create_plan(session_id: str):
         _attach_links(final, runtime_pois)
         store.save_itinerary(session_id, runtime_pois, route_matrix, final, final_verification)
         return api_success(
-            {"runtime_pois": runtime_pois, "route_matrix": route_matrix, "itinerary": final, "verification": final_verification},
+            {"status": "completed", "runtime_pois": runtime_pois, "route_matrix": route_matrix, "itinerary": final, "verification": final_verification},
             {"build_route_matrix": "done", "plan_itinerary": "done", "verify_itinerary": "done"},
+        )
+    except PlanningInterventionRequired as exc:
+        intervention = dict(exc.intervention)
+        intervention_id = store.save_planning_intervention(session_id, intervention)
+        intervention["id"] = intervention_id
+        return api_success(
+            {"status": "needs_user_choice", "planning_intervention": intervention},
+            {"build_route_matrix": "done", "plan_itinerary": "needs_user_choice"},
         )
     except Exception as exc:
         return api_error(exc, {"plan": "failed"})
+
+
+@router.post("/sessions/{session_id}/planning-decisions")
+def submit_planning_decision(session_id: str, payload: PlanningDecisionRequest):
+    try:
+        _require_session(session_id)
+        store.resolve_planning_intervention(session_id, payload.intervention_id, payload.choice_id)
+        return api_success({"status": "accepted"}, {"planning_decision": "done"})
+    except Exception as exc:
+        return api_error(exc, {"planning_decision": "failed"})
 
 
 @router.post("/sessions/{session_id}/revise")
@@ -538,6 +561,69 @@ def _extract_order_constraints(raw_input: str, notes: str, runtime_pois: list[di
         if before and after and before != after:
             constraints.append({"before": before, "after": after, "strength": "strong_preference", "source": "user_text"})
     return constraints
+
+
+def _extract_time_constraints(raw_input: str, notes: str, runtime_pois: list[dict]) -> list[dict]:
+    text = f"{raw_input}\n{notes}"
+    constraints: list[dict] = []
+    for poi in runtime_pois:
+        poi_id = str(poi.get("poi_id") or "").strip()
+        if not poi_id:
+            continue
+        names = _poi_constraint_names(poi)
+        for name in names:
+            matched = _time_constraint_for_name(text, name)
+            if not matched:
+                continue
+            preferred_window, source_text = matched
+            constraints.append(
+                {
+                    "poi_id": poi_id,
+                    "name": name,
+                    "preferred_window": preferred_window,
+                    "strength": "quasi_hard",
+                    "source_text": source_text,
+                }
+            )
+            break
+    return constraints
+
+
+def _poi_constraint_names(poi: dict) -> list[str]:
+    raw_values = [
+        poi.get("standard_name"),
+        poi.get("raw_name"),
+        poi.get("name"),
+        *(poi.get("raw_names") or []),
+    ]
+    names: list[str] = []
+    for value in raw_values:
+        text = str(value or "").strip()
+        if text and text not in names:
+            names.append(text)
+    return names
+
+
+def _time_constraint_for_name(text: str, name: str) -> tuple[str, str] | None:
+    patterns = [
+        ("evening", [f"晚上去{name}", f"夜里去{name}", f"夜晚去{name}", f"傍晚去{name}", f"最后去{name}", f"收尾去{name}"]),
+        ("morning", [f"上午去{name}", f"早上去{name}", f"第一站{name}", f"上午先去{name}"]),
+        ("afternoon", [f"下午去{name}", f"午后去{name}"]),
+    ]
+    for window, phrases in patterns:
+        for phrase in phrases:
+            if phrase in text:
+                return window, phrase
+    suffix_patterns = [
+        ("evening", [f"{name}晚上", f"{name}夜景", f"{name}夜生活"]),
+        ("morning", [f"{name}上午", f"{name}早上"]),
+        ("afternoon", [f"{name}下午"]),
+    ]
+    for window, phrases in suffix_patterns:
+        for phrase in phrases:
+            if phrase in text:
+                return window, phrase
+    return None
 
 
 def _resolved_runtime_poi(runtime_poi: dict | None, item: dict | None) -> dict | None:

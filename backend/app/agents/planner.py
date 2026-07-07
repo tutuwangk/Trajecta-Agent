@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from copy import deepcopy
 
 from app.agents.intensity import daily_time_limit_minutes
 from app.core import AppError
@@ -13,6 +14,8 @@ def compile_planning_context(
     uncertain_pois: list[dict] | None = None,
     hotel_anchor: dict | None = None,
     order_constraints: list[dict] | None = None,
+    time_constraints: list[dict] | None = None,
+    planning_decisions: list[dict] | None = None,
 ) -> dict:
     plannable_pois: list[dict] = []
     optional_poi_ids: list[str] = []
@@ -44,6 +47,7 @@ def compile_planning_context(
             "inferred_role": poi.get("inferred_role") or "",
             "experience_tags": list(poi.get("experience_tags") or poi.get("ugc_tags") or []),
             "time_suitability": list((poi.get("planning_semantics") or {}).get("time_suitability") or poi.get("best_time") or []),
+            "route_semantics": dict(poi.get("route_semantics") or {}),
             "outing_role": (poi.get("planning_semantics") or {}).get("outing_role") or "anchor",
             "meal_capability": (poi.get("planning_semantics") or {}).get("meal_capability") or "none",
             "quick_stop_eligible": bool((poi.get("planning_semantics") or {}).get("quick_stop_eligible")),
@@ -97,11 +101,43 @@ def compile_planning_context(
         ],
         "route_matrix": route_matrix,
         "order_constraints": list(order_constraints or []),
+        "time_constraints": list(time_constraints or []),
+        "planning_decisions": list(planning_decisions or []),
+        "route_semantics": {
+            poi_id: dict(poi.get("route_semantics") or {})
+            for poi_id, poi in poi_lookup.items()
+            if poi.get("route_semantics")
+        },
         "poi_lookup": poi_lookup,
         "allowed_poi_ids": [poi["poi_id"] for poi in plannable_pois],
         "uncertain_pois": list(uncertain_pois or []),
         "runtime_pois": runtime_pois,
     }
+
+
+def enrich_planning_semantics_with_llm(planning_context: dict, llm_client, max_attempts: int = 2) -> dict:
+    if not planning_context.get("plannable_pois"):
+        return planning_context
+    last_error: AppError | None = None
+    for _ in range(max_attempts):
+        try:
+            payload = llm_client.json_chat(_semantic_messages(planning_context), step="plan_poi_semantics", temperature=0.2)
+            semantics = _normalize_semantics_payload(payload, planning_context)
+            enriched = deepcopy(planning_context)
+            enriched["route_semantics"] = semantics
+            for poi in enriched.get("plannable_pois", []):
+                poi_id = poi.get("poi_id")
+                if poi_id in semantics:
+                    poi["route_semantics"] = semantics[poi_id]
+            for poi_id, poi in enriched.get("poi_lookup", {}).items():
+                if poi_id in semantics:
+                    poi["route_semantics"] = semantics[poi_id]
+            return enriched
+        except AppError as exc:
+            last_error = exc
+            if exc.code not in {"llm_invalid_json", "llm_invalid_planning_semantics"}:
+                raise
+    raise last_error or AppError("LLM 未返回有效规划语义。", code="llm_invalid_planning_semantics", step="plan_poi_semantics")
 
 
 def plan_skeleton_with_llm(planning_context: dict, llm_client, max_attempts: int = 2) -> dict:
@@ -112,6 +148,18 @@ def plan_skeleton_with_llm(planning_context: dict, llm_client, max_attempts: int
         _planning_messages(planning_context),
         planning_context,
         step="plan_itinerary_skeleton",
+        max_attempts=max_attempts,
+    )
+
+
+def plan_day_blueprint_with_llm(planning_context: dict, llm_client, max_attempts: int = 2) -> dict:
+    if not planning_context.get("plannable_pois"):
+        return _empty_skeleton(planning_context)
+    return _call_skeleton_llm(
+        llm_client,
+        _blueprint_messages(planning_context),
+        planning_context,
+        step="plan_itinerary_blueprint",
         max_attempts=max_attempts,
     )
 
@@ -128,6 +176,22 @@ def replan_skeleton_with_llm(
         _replan_messages(planning_context, previous_skeleton, issues),
         planning_context,
         step="replan_itinerary_skeleton",
+        max_attempts=max_attempts,
+    )
+
+
+def replan_day_blueprint_with_llm(
+    planning_context: dict,
+    previous_skeleton: dict,
+    issues: dict | list[dict],
+    llm_client,
+    max_attempts: int = 2,
+) -> dict:
+    return _call_skeleton_llm(
+        llm_client,
+        _replan_blueprint_messages(planning_context, previous_skeleton, issues),
+        planning_context,
+        step="replan_itinerary_blueprint",
         max_attempts=max_attempts,
     )
 
@@ -167,6 +231,7 @@ def materialize_itinerary_from_skeleton(planning_context: dict, skeleton: dict) 
                     "burden_role": _burden_role(poi, scheduled_role),
                     "trim_priority": _trim_priority(poi, scheduled_role),
                     "quick_stop_total_cost_min": poi.get("quick_stop_total_cost_min"),
+                    "preferred_time_windows": _preferred_time_windows(poi_id, poi, planning_context),
                 }
             )
         removed_pois = []
@@ -343,6 +408,126 @@ def _replan_messages(planning_context: dict, previous_skeleton: dict, issues: di
     ]
 
 
+def _semantic_messages(planning_context: dict) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "## Role\n"
+                "你是旅行路线的规划语义层。\n\n"
+                "## Mission\n"
+                "为每个候选地点判断本次路线里的用途、正餐能力、适合时段和风险提示，只输出严格 JSON。\n\n"
+                "## Hard Rules\n"
+                "- 不得新增候选集合之外的 poi_id。\n"
+                "- 不改地点池决策，只输出路线专用语义。\n"
+                "- 午餐/晚餐只有正餐地点，或用户明确指定的轻食地点，才能承接。\n"
+                "- 面包店、咖啡、甜品、饮品默认只能作为早餐、轻补给或顺路停靠。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "<task>请输出规划语义层结果。</task>\n\n"
+                "<planning_context>\n"
+                f"{_prompt_context(planning_context)}\n"
+                "</planning_context>\n\n"
+                "<output_schema>\n"
+                '{"semantics":[{"poi_id":"...","visit_role":"主目的地|顺路补充|餐饮|夜间体验|购物/休息|备选","meal_level":"正餐|轻食|小吃/甜品|饮品|非餐饮","meal_fit":["早餐|午餐|晚餐|仅补给|不可承接正餐"],"time_fit":["上午|中午|下午|傍晚|夜间|全天"],"priority_reason":"...","risk_hint":"..."}]}\n'
+                "</output_schema>"
+            ),
+        },
+    ]
+
+
+def _blueprint_messages(planning_context: dict) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "## Role\n"
+                "你是旅行日程蓝图规划者。\n\n"
+                "## Mission\n"
+                "像真人旅行规划一样先决定每天怎么过，输出可落地蓝图 JSON。\n\n"
+                "## Hard Rules\n"
+                "- 不得新增候选集合之外的 poi_id。\n"
+                "- 禁止输出最终 arrival_time、交通时间、total_outing_min 和最终文案。\n"
+                "- 必须使用规划语义层的 meal_level、meal_fit、time_fit 和用户明确时间要求。\n"
+                "- 明确写了晚上/夜间的地点应放 evening/night 分段；无法满足时放入未安排并给 reason code。\n"
+                "- 午餐/晚餐不能由饮品、甜品、普通面包店默认承接；无合适餐厅时使用 fallback_nearby。\n"
+                "- 可以使用 segments 表达上午、午餐、下午、晚餐、夜间和回酒店休息。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "<task>请输出 DayBlueprint。</task>\n\n"
+                "<planning_context>\n"
+                f"{_prompt_context(planning_context)}\n"
+                "</planning_context>\n\n"
+                "<output_schema>\n"
+                '{"destination":"...","days":[{"day":1,"theme_hint":"...","segments":[{"kind":"outing","segment_time":"morning","poi_ids":["..."]},{"kind":"hotel_rest","duration_min":180,"reason":"回酒店休息"},{"kind":"outing","segment_time":"night","poi_ids":["..."]}],"poi_ids":["..."],"scheduled_roles":{"poi_id":"quick_stop|meal_stop|anchor_visit|filler_visit|nightlife_stop"},"meal_slots":[{"slot":"lunch","requirement":"required","source":"fallback_nearby"}],"unscheduled_poi_ids":["..."],"drop_reason_codes":{"poi_id":["time_window_conflict"]},"risk_tags":["..."]}],"unscheduled":[{"poi_id":"...","reason_codes":["far_detour"]}],"risk_tags":["..."]}\n'
+                "</output_schema>"
+            ),
+        },
+    ]
+
+
+def _replan_blueprint_messages(planning_context: dict, previous_skeleton: dict, issues: dict | list[dict]) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "## Role\n"
+                "你是旅行日程蓝图重排助手。\n\n"
+                "## Mission\n"
+                "根据硬问题和高严重体验问题重排 DayBlueprint，尽量保持合理旅行体验。\n\n"
+                "## Hard Rules\n"
+                "- 不得新增候选集合之外的 poi_id。\n"
+                "- 禁止输出最终 arrival_time、交通时间、total_outing_min 和最终文案。\n"
+                "- 硬问题必须修；高严重软问题优先修；中低严重软问题可以保留为风险。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "<planning_context>\n"
+                f"{_prompt_context(planning_context)}\n"
+                "</planning_context>\n\n"
+                "<previous_blueprint>\n"
+                f"{previous_skeleton}\n"
+                "</previous_blueprint>\n\n"
+                "<issues>\n"
+                f"{issues}\n"
+                "</issues>"
+            ),
+        },
+    ]
+
+
+def _normalize_semantics_payload(payload: dict, planning_context: dict) -> dict[str, dict]:
+    if not isinstance(payload, dict):
+        raise AppError("LLM 返回的规划语义不是对象。", code="llm_invalid_planning_semantics", step="plan_poi_semantics")
+    allowed_poi_ids = set(planning_context.get("allowed_poi_ids", []))
+    result: dict[str, dict] = {}
+    for raw_item in payload.get("semantics") or []:
+        if not isinstance(raw_item, dict):
+            continue
+        poi_id = str(raw_item.get("poi_id") or "").strip()
+        if not poi_id:
+            continue
+        if poi_id not in allowed_poi_ids:
+            raise AppError("LLM 返回了候选集合之外的规划语义 poi_id。", code="llm_invalid_planning_semantics", step="plan_poi_semantics")
+        result[poi_id] = {
+            "visit_role": str(raw_item.get("visit_role") or "").strip(),
+            "meal_level": str(raw_item.get("meal_level") or "").strip(),
+            "meal_fit": _string_list(raw_item.get("meal_fit")),
+            "time_fit": _string_list(raw_item.get("time_fit")),
+            "priority_reason": str(raw_item.get("priority_reason") or "").strip(),
+            "risk_hint": str(raw_item.get("risk_hint") or "").strip(),
+        }
+    return result
+
+
 def _normalize_skeleton_payload(payload: dict, planning_context: dict, step: str) -> dict:
     if not isinstance(payload, dict):
         raise AppError("LLM 返回的路线骨架不是对象。", code="llm_invalid_plan_skeleton", step=step)
@@ -445,6 +630,9 @@ def _prompt_context(planning_context: dict) -> dict:
         "hotel_anchor": planning_context.get("hotel_anchor"),
         "plannable_pois": planning_context.get("plannable_pois", []),
         "order_constraints": planning_context.get("order_constraints", []),
+        "time_constraints": planning_context.get("time_constraints", []),
+        "planning_decisions": planning_context.get("planning_decisions", []),
+        "route_semantics": planning_context.get("route_semantics", {}),
         "must_poi_ids": planning_context.get("must_poi_ids", []),
         "preferred_poi_ids": planning_context.get("preferred_poi_ids", []),
         "optional_poi_ids": planning_context.get("optional_poi_ids", []),
@@ -558,6 +746,44 @@ def _meal_route_fit_context(poi: dict) -> list[str]:
 def _experience_type(poi: dict) -> str:
     semantics = poi.get("planning_semantics") or {}
     return str(semantics.get("experience_type") or poi.get("experience_type") or "daytime_visit")
+
+
+def _preferred_time_windows(poi_id: str, poi: dict, planning_context: dict) -> list[str]:
+    windows: list[str] = []
+    for constraint in planning_context.get("time_constraints") or []:
+        if str(constraint.get("poi_id") or "") == poi_id and constraint.get("preferred_window"):
+            windows.append(str(constraint.get("preferred_window")))
+    route_semantics = poi.get("route_semantics") or planning_context.get("route_semantics", {}).get(poi_id, {})
+    for label in route_semantics.get("time_fit") or []:
+        window = _normalized_time_window(str(label))
+        if window:
+            windows.append(window)
+    for label in (poi.get("planning_semantics") or {}).get("time_suitability") or poi.get("best_time") or []:
+        window = _normalized_time_window(str(label))
+        if window:
+            windows.append(window)
+    return list(dict.fromkeys(windows))
+
+
+def _normalized_time_window(value: str) -> str:
+    text = value.strip().lower()
+    mapping = {
+        "上午": "morning",
+        "morning": "morning",
+        "中午": "midday",
+        "midday": "midday",
+        "下午": "afternoon",
+        "afternoon": "afternoon",
+        "傍晚": "evening",
+        "晚上": "evening",
+        "夜间": "night",
+        "夜晚": "night",
+        "evening": "evening",
+        "night": "night",
+        "全天": "all_day",
+        "all_day": "all_day",
+    }
+    return mapping.get(text, "")
 
 
 def _normalize_day_segments(

@@ -46,3 +46,22 @@ def test_sync_precise_transport_edges_rebuilds_selected_branch_route(monkeypatch
         "duration_min": 8,
         "distance_m": 600,
     }
+
+
+def test_extract_time_constraints_marks_explicit_evening_request():
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "九眼桥", "raw_names": ["九眼桥"]},
+        {"poi_id": "p2", "standard_name": "成都太古里", "raw_names": ["太古里"]},
+    ]
+
+    constraints = routes._extract_time_constraints("晚上去九眼桥，白天逛太古里", "", runtime_pois)
+
+    assert constraints == [
+        {
+            "poi_id": "p1",
+            "name": "九眼桥",
+            "preferred_window": "evening",
+            "strength": "quasi_hard",
+            "source_text": "晚上去九眼桥",
+        }
+    ]

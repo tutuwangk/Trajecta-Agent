@@ -40,6 +40,17 @@ CREATE TABLE IF NOT EXISTS revision_history (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS planning_interventions (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  choice_id TEXT,
+  choice_label TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE IF NOT EXISTS route_cache (
   cache_key TEXT PRIMARY KEY,
   value JSONB NOT NULL,

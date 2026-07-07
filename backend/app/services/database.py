@@ -65,6 +65,16 @@ class SQLiteStore:
                     itinerary TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS planning_interventions (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    choice_id TEXT,
+                    choice_label TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS route_cache (
                     cache_key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
@@ -283,9 +293,81 @@ class SQLiteStore:
             ).fetchall()
         return [{"instruction": row["instruction"], "itinerary": json.loads(row["itinerary"]), "created_at": row["created_at"]} for row in rows]
 
+    def save_planning_intervention(self, session_id: str, payload: dict) -> str:
+        intervention_id = str(uuid.uuid4())
+        now = _now()
+        stored_payload = dict(payload)
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE planning_interventions SET status = 'superseded', updated_at = ? WHERE session_id = ? AND status = 'open'",
+                (now, session_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO planning_interventions (id, session_id, payload, status, created_at, updated_at)
+                VALUES (?, ?, ?, 'open', ?, ?)
+                """,
+                (intervention_id, session_id, _json(stored_payload), now, now),
+            )
+        return intervention_id
+
+    def get_open_planning_intervention(self, session_id: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM planning_interventions WHERE session_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        payload = json.loads(row["payload"])
+        payload["id"] = row["id"]
+        return payload
+
+    def resolve_planning_intervention(self, session_id: str, intervention_id: str, choice_id: str) -> None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM planning_interventions WHERE session_id = ? AND id = ? AND status = 'open'",
+                (session_id, intervention_id),
+            ).fetchone()
+            if not row:
+                raise ValueError("planning intervention not found")
+            payload = json.loads(row["payload"])
+            choice = next((option for option in payload.get("options") or [] if option.get("id") == choice_id), None)
+            if not choice:
+                raise ValueError("planning intervention choice not found")
+            connection.execute(
+                """
+                UPDATE planning_interventions
+                SET status = 'resolved', choice_id = ?, choice_label = ?, updated_at = ?
+                WHERE session_id = ? AND id = ?
+                """,
+                (choice_id, choice.get("label") or choice_id, _now(), session_id, intervention_id),
+            )
+
+    def list_resolved_planning_decisions(self, session_id: str) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, choice_id, choice_label
+                FROM planning_interventions
+                WHERE session_id = ? AND status = 'resolved'
+                ORDER BY updated_at
+                """,
+                (session_id,),
+            ).fetchall()
+        return [
+            {
+                "intervention_id": row["id"],
+                "choice_id": row["choice_id"],
+                "choice_label": row["choice_label"],
+            }
+            for row in rows
+        ]
+
     def _invalidate_itinerary_state(self, connection, session_id: str) -> None:
         connection.execute("DELETE FROM itineraries WHERE session_id = ?", (session_id,))
         connection.execute("DELETE FROM revision_history WHERE session_id = ?", (session_id,))
+        connection.execute("DELETE FROM planning_interventions WHERE session_id = ?", (session_id,))
 
     def get_cache(self, table: str, cache_key: str) -> dict | None:
         with self.connect() as connection:
