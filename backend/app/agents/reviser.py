@@ -248,6 +248,8 @@ def _unique_texts(values: list[str]) -> list[str]:
 
 
 def _ensure_display_sections(itinerary: dict, user_profile: dict) -> None:
+    for day in itinerary.get("days", []):
+        day["total_outing_min"] = daily_time_minutes(day)
     unscheduled = _collect_unscheduled(itinerary)
     attention = _collect_attention(itinerary)
     scheduled_count = sum(len(day.get("items", [])) for day in itinerary.get("days", []))

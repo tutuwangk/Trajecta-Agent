@@ -26,10 +26,10 @@ def test_parse_json_content_rejects_text_without_json():
 
 
 class FakeResponse:
-    status_code = 200
-
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self.payload = payload
+        self.status_code = status_code
+        self.text = str(payload)
 
     def json(self):
         return self.payload
@@ -84,3 +84,25 @@ def test_llm_client_maps_httpx_errors_to_app_error(monkeypatch):
 
     assert exc_info.value.code == "llm_request_failed"
     assert exc_info.value.step == "extract_ugc"
+    assert "网络连接或请求超时" in exc_info.value.message
+
+
+def test_llm_client_reports_upstream_status_without_leaking_key(monkeypatch):
+    def fake_post(*args, **kwargs):
+        return FakeResponse(
+            {"error": {"message": "Invalid API key sk-secret"}},
+            status_code=401,
+        )
+
+    monkeypatch.setattr("app.services.llm_client.httpx.post", fake_post)
+
+    client = LLMClient(api_key="sk-secret", model="test-model", base_url="https://example.com")
+
+    with pytest.raises(AppError) as exc_info:
+        client.json_chat([{"role": "user", "content": "ping"}], step="extract_ugc")
+
+    assert exc_info.value.code == "llm_request_failed"
+    assert exc_info.value.step == "extract_ugc"
+    assert "401" in exc_info.value.message
+    assert "Key" in exc_info.value.message
+    assert "sk-secret" not in exc_info.value.message

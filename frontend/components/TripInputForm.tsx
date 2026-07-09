@@ -119,9 +119,9 @@ export function TripInputForm() {
   return (
     <div className="space-y-6">
       <section className="px-1 pt-4 sm:pt-8">
-        <p className="eyebrow">Trajecta-Agent</p>
-        <h1 className="mt-4 max-w-none text-4xl font-semibold tracking-[-0.03em] text-ink sm:text-5xl">
-          你的J人旅行搭子：AI定制化旅游攻略
+        <p className="text-base font-semibold uppercase tracking-[0.14em] text-muted sm:text-lg">Trajecta-Agent</p>
+        <h1 className="mt-4 max-w-none text-3xl font-semibold tracking-[-0.03em] text-ink sm:text-4xl">
+          你的J人旅行搭子：行程规划Agent
         </h1>
       </section>
 

@@ -25,6 +25,10 @@ def daily_time_limit_minutes(user_profile: dict) -> int:
 
 def daily_time_minutes(day_or_items: dict | list[dict]) -> int:
     if isinstance(day_or_items, dict):
+        timeline_minutes = _timeline_time_minutes(day_or_items.get("items") or [])
+        if timeline_minutes is not None:
+            return timeline_minutes
+
         explicit = _first_int(
             day_or_items,
             ["total_outing_min", "total_outing_minutes", "outing_duration_min", "outing_duration_minutes"],
@@ -39,6 +43,35 @@ def daily_time_minutes(day_or_items: dict | list[dict]) -> int:
         total += _items_time_minutes(day_or_items.get("items") or [])
         return total
     return _items_time_minutes(day_or_items)
+
+
+def _timeline_time_minutes(items: list[dict]) -> int | None:
+    if not items:
+        return None
+
+    first_arrival = _clock_minutes(items[0].get("arrival_time"))
+    last_arrival = _clock_minutes(items[-1].get("arrival_time"))
+    if first_arrival is None or last_arrival is None:
+        return None
+
+    last_departure = last_arrival + int(items[-1].get("duration_min") or 0)
+    return max(0, last_departure - first_arrival)
+
+
+def _clock_minutes(value: str | None) -> int | None:
+    if not isinstance(value, str):
+        return None
+    parts = value.strip().split(":")
+    if len(parts) != 2:
+        return None
+    try:
+        hours = int(parts[0])
+        minutes = int(parts[1])
+    except ValueError:
+        return None
+    if not 0 <= hours <= 23 or not 0 <= minutes <= 59:
+        return None
+    return hours * 60 + minutes
 
 
 def _items_time_minutes(items: list[dict]) -> int:

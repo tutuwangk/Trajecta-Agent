@@ -217,3 +217,25 @@ def test_revise_itinerary_adds_summary_and_attention_sections():
     assert revised["route_summary"]["attention_required_count"] == 1
     assert revised["unscheduled_places"] == [{"name": "都江堰", "reason": "距离较远"}]
     assert revised["attention_places"][0]["name"] == "晓市集"
+
+
+def test_revise_itinerary_recomputes_total_outing_time_from_timeline():
+    itinerary = {
+        "destination": "成都",
+        "days": [
+            {
+                "day": 1,
+                "total_outing_min": 999,
+                "items": [
+                    {"poi_id": "p1", "name": "IFS", "arrival_time": "10:00", "duration_min": 90},
+                    {"poi_id": "p2", "name": "太古里", "arrival_time": "12:00", "duration_min": 90},
+                ],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+
+    revised = revise_itinerary(itinerary, {"issues": []}, {"constraints": {}})
+
+    assert revised["days"][0]["total_outing_min"] == 210

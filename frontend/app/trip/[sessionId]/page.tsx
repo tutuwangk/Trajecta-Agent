@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { getSession, planTrip, recognizePlaces, reviseTrip, updatePlaceOverrides } from "@/lib/api";
+import { getSession, planTrip, recognizePlaces, updatePlaceOverrides } from "@/lib/api";
 import type { SessionData } from "@/lib/types";
 import { ItineraryCard } from "@/components/ItineraryCard";
 import { PlacePool } from "@/components/PlacePool";
-import { RevisionPanel } from "@/components/RevisionPanel";
 
 export default function TripPage() {
   const params = useParams<{ sessionId: string }>();
@@ -69,21 +68,11 @@ export default function TripPage() {
     setStatus("");
   }
 
-  async function handleRevise(instruction: string, quick?: string) {
-    setStatus("正在调整路线");
-    const result = await reviseTrip(sessionId, instruction, quick);
-    if (!result.ok) {
-      setError(result.error?.message || "调整失败");
-      setStatus("");
-      return;
-    }
-    await load();
-    setStatus("");
-  }
-
   if (!session) {
     return <main className="mx-auto max-w-6xl px-4 py-8 text-sm text-muted">{error || "正在读取行程"}</main>;
   }
+
+  const hasItinerary = Boolean(session.itinerary_state?.itinerary);
 
   return (
     <main className="mx-auto min-h-[100dvh] max-w-7xl space-y-5 px-4 py-6 sm:px-6 lg:px-8">
@@ -126,9 +115,8 @@ export default function TripPage() {
         {error && <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</p>}
       </section>
 
-      <PlacePool pois={session.pois} onChange={handlePoiChange} />
+      {!hasItinerary && <PlacePool pois={session.pois} onChange={handlePoiChange} />}
       <ItineraryCard itinerary={session.itinerary_state?.itinerary} />
-      <RevisionPanel onRevise={handleRevise} disabled={!session.itinerary_state || Boolean(status)} />
     </main>
   );
 }
