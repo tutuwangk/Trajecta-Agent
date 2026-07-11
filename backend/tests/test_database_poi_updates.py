@@ -47,7 +47,7 @@ def test_update_poi_decisions_rematches_manual_name(tmp_path):
     assert row["grounded_poi"]["amap_id"] == "B001"
     assert row["system_decision"] == "include"
     assert row["user_override"] == "rename_confirm"
-    assert row["final_decision"] == "optional"
+    assert row["final_decision"] == "include"
     assert row["place_pool_item"]["status_label"] == "已识别"
 
 
@@ -458,7 +458,7 @@ def test_update_poi_decisions_keeps_anchor_unchanged_when_resolved_chain_changes
     anchor_row = rows[0]
     chain_row = rows[1]
     assert anchor_row["user_override"] == "none"
-    assert anchor_row["final_decision"] == "optional"
+    assert anchor_row["final_decision"] == "include"
     assert chain_row["user_override"] == "must_include"
     assert chain_row["final_decision"] == "include"
 

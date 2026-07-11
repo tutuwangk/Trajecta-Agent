@@ -7,6 +7,7 @@ from app.agents.itinerary_normalizer import normalize_itinerary
 from app.agents.planner import (
     build_copy_context,
     compile_planning_context,
+    _deterministic_blueprint,
     materialize_itinerary_from_skeleton,
     plan_day_blueprint_with_llm,
     replan_day_blueprint_with_llm,
@@ -18,12 +19,6 @@ from app.core import AppError
 
 
 PrepareItinerary = Callable[[dict], None]
-
-
-class PlanningInterventionRequired(AppError):
-    def __init__(self, intervention: dict):
-        super().__init__("路线存在需要你取舍的问题。", code="planning_intervention_required", step="plan")
-        self.intervention = intervention
 
 
 def run_planning_workflow(
@@ -62,8 +57,9 @@ def run_planning_workflow(
     final_itinerary: dict | None = None
     final_hard_validation = {"passed": True, "issues": []}
     final_soft_issues: list[dict] = []
+    auto_fallback_used = False
 
-    for attempt in range(max_replans + 1):
+    for attempt in range(max_replans + 2):
         skeleton_versions.append(deepcopy(skeleton))
         itinerary = materialize_itinerary_from_skeleton(planning_context, skeleton)
         _prepare_itinerary(itinerary, user_profile, runtime_pois, route_matrix, prepare_itinerary)
@@ -78,6 +74,10 @@ def run_planning_workflow(
         if not hard_validation["passed"]:
             factual_issue_history.append(deepcopy(hard_validation))
             if attempt >= max_replans:
+                if not auto_fallback_used:
+                    skeleton = _deterministic_blueprint(planning_context)
+                    auto_fallback_used = True
+                    continue
                 raise AppError(
                     "路线规划失败，存在无法收敛的事实冲突。",
                     code="plan_factual_constraints_unresolved",
@@ -106,7 +106,28 @@ def run_planning_workflow(
             preference_issue_history.append(deepcopy(preference_issues))
         if attempt >= max_replans:
             if preference_issues:
-                raise PlanningInterventionRequired(_build_planning_intervention(preference_issues, planning_context))
+                if not auto_fallback_used:
+                    skeleton = _deterministic_blueprint(planning_context)
+                    auto_fallback_used = True
+                    continue
+                candidate_verification = verify_itinerary(
+                    itinerary,
+                    user_profile,
+                    route_matrix,
+                    runtime_pois,
+                    time_constraints=planning_context.get("time_constraints", []),
+                    order_constraints=planning_context.get("order_constraints", []),
+                )
+                if candidate_verification["passed"]:
+                    final_itinerary = itinerary
+                    final_hard_validation = hard_validation
+                    break
+                raise AppError(
+                    "路线规划失败，自动优先级仍无法满足明确要求。",
+                    code="plan_priority_resolution_failed",
+                    step="plan",
+                    details={"blockers": _issue_blockers(candidate_verification.get("blocking_issues", []))},
+                )
             final_itinerary = itinerary
             final_hard_validation = hard_validation
             break
@@ -142,6 +163,7 @@ def run_planning_workflow(
         "preference_issue_history": preference_issue_history,
         "soft_issue_history": soft_issue_history,
         "repair_attempts": len(factual_issue_history),
+        "auto_fallback_used": auto_fallback_used,
     }
 
 

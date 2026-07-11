@@ -202,6 +202,20 @@ def test_review_preference_conflicts_respects_relax_pace_choice():
     assert "daily_time_over_intensity_limit" not in {issue["type"] for issue in preference_issues}
 
 
+def test_verify_itinerary_treats_intensity_overflow_as_advisory_only():
+    itinerary = {
+        "days": [{"day": 1, "items": [{"poi_id": "p1", "name": "成都欢乐谷", "duration_min": 900}]}]
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "成都欢乐谷", "match_status": "matched", "user_override": "must_include"}
+    ]
+
+    result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "high"}}, [], runtime_pois)
+
+    assert result["passed"] is True
+    assert "daily_time_over_intensity_limit" in {issue["type"] for issue in result["issues"]}
+
+
 def test_verify_itinerary_allows_user_confirmed_ambiguous_map_candidate():
     itinerary = {
         "days": [

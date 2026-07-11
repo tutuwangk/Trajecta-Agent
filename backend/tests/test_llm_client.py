@@ -139,3 +139,31 @@ def test_llm_client_reports_safe_deepseek_error_message(monkeypatch):
     assert exc_info.value.code == "llm_request_failed"
     assert "DeepSeek API 返回 402" in exc_info.value.message
     assert "Insufficient Balance" in exc_info.value.message
+
+
+def test_llm_client_classifies_empty_json_output(monkeypatch):
+    def fake_post(*args, **kwargs):
+        return FakeResponse({"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]})
+
+    monkeypatch.setattr("app.services.llm_client.httpx.post", fake_post)
+    client = LLMClient(api_key="test-key", model="test-model", base_url="https://example.com")
+
+    with pytest.raises(AppError) as exc_info:
+        client.json_chat([{"role": "user", "content": "请输出 JSON"}], step="plan_itinerary_blueprint")
+
+    assert exc_info.value.code == "llm_empty_content"
+    assert exc_info.value.details == {"finish_reason": "stop", "content_length": 0}
+
+
+def test_llm_client_classifies_truncated_json_output(monkeypatch):
+    def fake_post(*args, **kwargs):
+        return FakeResponse({"choices": [{"message": {"content": '{"days": ['}, "finish_reason": "length"}]})
+
+    monkeypatch.setattr("app.services.llm_client.httpx.post", fake_post)
+    client = LLMClient(api_key="test-key", model="test-model", base_url="https://example.com")
+
+    with pytest.raises(AppError) as exc_info:
+        client.json_chat([{"role": "user", "content": "请输出 JSON"}], step="plan_itinerary_blueprint")
+
+    assert exc_info.value.code == "llm_truncated_json"
+    assert exc_info.value.details == {"finish_reason": "length", "content_length": 10}

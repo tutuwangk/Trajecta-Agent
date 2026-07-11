@@ -93,11 +93,7 @@ def _system_decision(raw_poi: dict, grounded_poi: dict, user_profile: dict) -> t
         if grounded_poi.get("is_chain"):
             return "needs_confirmation", "这是连锁品牌，需要先选择具体门店。"
         return "needs_confirmation", ""
-    confidence = float(grounded_poi.get("match_confidence") or raw_poi.get("confidence") or 1)
-    raw_confidence = float(raw_poi.get("confidence") or confidence)
-    if confidence >= 0.8 and raw_confidence >= 0.7:
-        return "include", ""
-    return "optional", ""
+    return "include", ""
 
 
 def _final_decision(system_decision: str, user_override: str) -> FinalDecision:
@@ -108,7 +104,7 @@ def _final_decision(system_decision: str, user_override: str) -> FinalDecision:
     if user_override == "remove":
         return "exclude"
     if system_decision == "include":
-        return "optional"
+        return "include"
     if system_decision == "optional":
         return "optional"
     if system_decision == "exclude":

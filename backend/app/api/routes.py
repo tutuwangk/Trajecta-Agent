@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException
 from app.agents.input_parser import parse_user_profile
 from app.agents.intensity import sync_day_total_time
 from app.agents.itinerary_normalizer import normalize_itinerary
-from app.agents.planning_workflow import PlanningInterventionRequired, run_planning_workflow
+from app.agents.planning_workflow import run_planning_workflow
 from app.agents.poi_extractor import extract_poi_names
 from app.agents.ugc_reader import extract_ugc_items
 from app.core import AppError, api_error, api_success
@@ -289,28 +289,19 @@ def _execute_plan_session(
         )
         normalize_itinerary(itinerary, user_profile, runtime_pois, route_matrix)
 
-    try:
-        final, final_verification, debug = run_planning_workflow(
-            user_profile,
-            runtime_pois,
-            route_matrix,
-            planning_llm,
-            copy_llm,
-            uncertain_pois=uncertain_pois,
-            hotel_anchor=hotel_anchor,
-            order_constraints=order_constraints,
-            time_constraints=time_constraints,
-            planning_decisions=planning_decisions,
-            prepare_itinerary=prepare_itinerary,
-        )
-    except PlanningInterventionRequired as exc:
-        intervention = dict(exc.intervention)
-        intervention_id = store.save_planning_intervention(session_id, intervention)
-        intervention["id"] = intervention_id
-        return (
-            {"status": "needs_user_choice", "planning_intervention": intervention},
-            {"build_route_matrix": "done", "plan_itinerary": "needs_user_choice"},
-        )
+    final, final_verification, debug = run_planning_workflow(
+        user_profile,
+        runtime_pois,
+        route_matrix,
+        planning_llm,
+        copy_llm,
+        uncertain_pois=uncertain_pois,
+        hotel_anchor=hotel_anchor,
+        order_constraints=order_constraints,
+        time_constraints=time_constraints,
+        planning_decisions=planning_decisions,
+        prepare_itinerary=prepare_itinerary,
+    )
 
     logger.info("Planning workflow debug snapshot: %s", debug)
     _assert_publishable(final_verification, run_id=run_id)

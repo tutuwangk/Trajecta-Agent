@@ -585,11 +585,11 @@ def _resolve_anchor_row(rows: list[dict], user_profile: dict, anchor_poi_id: str
 
 
 def _sync_user_override_from_anchor(anchor_row: dict) -> str:
-    if anchor_row.get("user_override") == "must_include" or anchor_row.get("final_decision") == "include":
+    if anchor_row.get("user_override") == "must_include":
         return "must_include"
     if anchor_row.get("user_override") == "optional" or anchor_row.get("final_decision") == "optional":
         return "optional"
-    return "none"
+    return "optional"
 
 
 def _ensure_unresolved_chain_state(grounded: dict) -> dict:

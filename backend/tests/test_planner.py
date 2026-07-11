@@ -6,7 +6,44 @@ from app.agents.planner import (
     materialize_itinerary_from_skeleton,
     plan_day_blueprint_with_llm,
     plan_skeleton_with_llm,
+    _prompt_context,
 )
+
+
+def test_prompt_context_uses_bounded_spatial_summary_instead_of_full_route_matrix():
+    route_matrix = []
+    for origin in range(1, 7):
+        for destination in range(1, 7):
+            if origin == destination:
+                continue
+            route_matrix.append(
+                {
+                    "origin_poi_id": f"p{origin}",
+                    "destination_poi_id": f"p{destination}",
+                    "duration_min": origin + destination,
+                    "distance_m": (origin + destination) * 100,
+                    "relation": "nearby",
+                }
+            )
+    context = {
+        "destination": "成都",
+        "days": 2,
+        "plannable_pois": [{"poi_id": f"p{index}", "district": "锦江区"} for index in range(1, 7)],
+        "route_matrix": route_matrix,
+    }
+
+    prompt_context = _prompt_context(context)
+
+    assert "route_matrix" not in prompt_context
+    assert len(prompt_context["spatial_context"]["neighbor_edges"]) <= 6 * 4
+    assert {edge["origin_poi_id"] for edge in prompt_context["spatial_context"]["neighbor_edges"]} == {
+        "p1",
+        "p2",
+        "p3",
+        "p4",
+        "p5",
+        "p6",
+    }
 
 
 def test_compile_planning_context_groups_candidates_and_excludes_unplannable_rows():
@@ -809,7 +846,7 @@ def test_extract_order_constraints_marks_user_sequence_as_strong_preference():
     assert constraints == [{"before": "IFS", "after": "武侯祠", "strength": "strong_preference", "source": "user_text"}]
 
 
-def test_plan_day_blueprint_rejects_missing_requested_days():
+def test_plan_day_blueprint_falls_back_when_llm_keeps_missing_requested_days():
     class IncompleteDaysLLM:
         def __init__(self):
             self.messages = []
@@ -830,18 +867,15 @@ def test_plan_day_blueprint_rejects_missing_requested_days():
     )
 
     llm = IncompleteDaysLLM()
-    try:
-        plan_day_blueprint_with_llm(context, llm)
-    except AppError as exc:
-        assert exc.code == "llm_invalid_plan_skeleton"
-        assert "完整天数" in exc.message
-    else:
-        raise AssertionError("缺少用户要求的天数时不应接受蓝图")
+    blueprint = plan_day_blueprint_with_llm(context, llm)
+
+    assert [day["day"] for day in blueprint["days"]] == [1, 2, 3, 4]
+    assert blueprint["days"][0]["poi_ids"] == ["p1"]
     prompt_text = "\n".join(message["content"] for attempt in llm.messages for message in attempt)
     assert '"required_day_numbers":[1, 2, 3, 4]' in prompt_text
 
 
-def test_plan_day_blueprint_rejects_duplicate_day_numbers():
+def test_plan_day_blueprint_falls_back_when_llm_keeps_duplicate_day_numbers():
     class DuplicateDaysLLM:
         def json_chat(self, messages, step, temperature=0.2):
             return {
@@ -860,10 +894,7 @@ def test_plan_day_blueprint_rejects_duplicate_day_numbers():
         [],
     )
 
-    try:
-        plan_day_blueprint_with_llm(context, DuplicateDaysLLM())
-    except AppError as exc:
-        assert exc.code == "llm_invalid_plan_skeleton"
-        assert "Day 编号" in exc.message
-    else:
-        raise AssertionError("重复 Day 编号时不应接受蓝图")
+    blueprint = plan_day_blueprint_with_llm(context, DuplicateDaysLLM())
+
+    assert [day["day"] for day in blueprint["days"]] == [1, 2]
+    assert blueprint["days"][0]["poi_ids"] == ["p1"]

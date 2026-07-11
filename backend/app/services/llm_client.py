@@ -43,11 +43,18 @@ class LLMClient:
     def json_chat(self, messages: list[dict[str, str]], step: str, temperature: float = 0.2) -> Any:
         self.require_configured(step)
         response = self._post_with_retries(messages, step, temperature)
-        content = response.json()["choices"][0]["message"]["content"]
+        choice = response.json()["choices"][0]
+        content = str(choice.get("message", {}).get("content") or "")
+        finish_reason = str(choice.get("finish_reason") or "")
+        details = {"finish_reason": finish_reason, "content_length": len(content)}
+        if not content.strip():
+            raise AppError("LLM 返回了空内容。", code="llm_empty_content", step=step, details=details)
         try:
             return parse_json_content(content)
         except json.JSONDecodeError as exc:
-            raise AppError("LLM 返回内容不是有效 JSON。", code="llm_invalid_json", step=step) from exc
+            code = "llm_truncated_json" if finish_reason == "length" or _looks_truncated_json(content) else "llm_invalid_json"
+            message = "LLM 返回的 JSON 内容被截断。" if code == "llm_truncated_json" else "LLM 返回内容不是有效 JSON。"
+            raise AppError(message, code=code, step=step, details=details) from exc
 
     def _post_with_retries(self, messages: list[dict[str, str]], step: str, temperature: float) -> httpx.Response:
         last_error: Exception | None = None
@@ -171,3 +178,11 @@ def _extract_json_candidate(text: str) -> str | None:
             continue
         return text[index : index + end]
     return None
+
+
+def _looks_truncated_json(content: str) -> bool:
+    text = content.strip()
+    if not text or text[0] not in "{[":
+        return False
+    pairs = {"{": "}", "[": "]"}
+    return text[-1] != pairs[text[0]]

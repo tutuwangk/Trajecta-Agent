@@ -1,6 +1,4 @@
-import pytest
-
-from app.agents.planning_workflow import PlanningInterventionRequired, run_planning_workflow
+from app.agents.planning_workflow import run_planning_workflow
 
 
 def test_run_planning_workflow_replans_after_hard_issue_and_generates_copy():
@@ -250,15 +248,13 @@ def test_run_planning_workflow_retries_empty_blueprint_with_plannable_pois():
     assert debug["skeleton_versions"][0]["days"][0]["poi_ids"] == ["p1"]
 
 
-def test_run_planning_workflow_returns_intervention_after_unresolved_major_conflict():
-    class InvalidPlanningLLM:
+def test_run_planning_workflow_automatically_accepts_dense_pace_without_intervention():
+    class DensePlanningLLM:
         def json_chat(self, messages, step, temperature=0.2):
-            if step == "plan_poi_semantics":
-                return {"semantics": []}
             return {
                 "destination": "成都",
-                "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": ["p2"], "risk_tags": []}],
-                "unscheduled": [{"poi_id": "p2", "reason_codes": ["time_over_budget"]}],
+                "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": [], "risk_tags": []}],
+                "unscheduled": [],
                 "risk_tags": [],
             }
 
@@ -266,22 +262,69 @@ def test_run_planning_workflow_returns_intervention_after_unresolved_major_confl
         def json_chat(self, messages, step, temperature=0.2):
             return {"issues": []}
 
-    with pytest.raises(PlanningInterventionRequired) as raised:
-        run_planning_workflow(
-            {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium", "must_visit": ["九眼桥"]}},
-            [
-                {"poi_id": "p1", "standard_name": "成都太古里", "match_status": "matched", "estimated_duration_min": 120, "final_decision": "include"},
-                {"poi_id": "p2", "standard_name": "九眼桥", "match_status": "matched", "estimated_duration_min": 60, "final_decision": "include", "user_override": "must_include"},
-            ],
-            [],
-            InvalidPlanningLLM(),
-            EmptyCopyLLM(),
-            max_replans=1,
-        )
+    itinerary, verification, debug = run_planning_workflow(
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "high"}},
+        [
+            {
+                "poi_id": "p1",
+                "standard_name": "成都欢乐谷",
+                "match_status": "matched",
+                "estimated_duration_min": 900,
+                "final_decision": "include",
+                "user_override": "must_include",
+            }
+        ],
+        [],
+        DensePlanningLLM(),
+        EmptyCopyLLM(),
+        max_replans=1,
+    )
 
-    intervention = raised.value.intervention
-    assert intervention["status"] == "needs_user_choice"
-    assert intervention["options"][0]["id"] == "keep_must_places"
+    assert itinerary["days"][0]["items"][0]["poi_id"] == "p1"
+    assert verification["passed"] is True
+    assert "daily_time_over_intensity_limit" in {issue["type"] for issue in verification["issues"]}
+    assert debug["preference_issue_history"] == []
+
+
+def test_run_planning_workflow_uses_deterministic_blueprint_instead_of_user_choice():
+    class OmitsMustPlanningLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            return {
+                "destination": "成都",
+                "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": ["p2"], "risk_tags": []}],
+                "unscheduled": [{"poi_id": "p2", "reason_codes": ["time_over_budget"]}],
+                "risk_tags": [],
+            }
+
+    class CopyLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            return {"issues": []}
+
+    itinerary, verification, debug = run_planning_workflow(
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "high"}},
+        [
+            {"poi_id": "p1", "standard_name": "成都太古里", "match_status": "matched", "estimated_duration_min": 120, "final_decision": "include"},
+            {
+                "poi_id": "p2",
+                "standard_name": "九眼桥",
+                "match_status": "matched",
+                "estimated_duration_min": 60,
+                "final_decision": "include",
+                "user_override": "must_include",
+            },
+        ],
+        [
+            {"origin_poi_id": "p1", "destination_poi_id": "p2", "duration_min": 15, "distance_m": 2000, "relation": "nearby"},
+            {"origin_poi_id": "p2", "destination_poi_id": "p1", "duration_min": 15, "distance_m": 2000, "relation": "nearby"},
+        ],
+        OmitsMustPlanningLLM(),
+        CopyLLM(),
+        max_replans=1,
+    )
+
+    assert {item["poi_id"] for item in itinerary["days"][0]["items"]} == {"p1", "p2"}
+    assert verification["passed"] is True
+    assert debug["auto_fallback_used"] is True
 
 
 def test_run_planning_workflow_does_not_recompile_facts_after_copy_generation():

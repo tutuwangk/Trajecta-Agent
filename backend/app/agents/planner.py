@@ -180,6 +180,7 @@ def plan_day_blueprint_with_llm(planning_context: dict, llm_client, max_attempts
         planning_context,
         step="plan_itinerary_blueprint",
         max_attempts=max_attempts,
+        fallback_on_failure=True,
     )
 
 
@@ -212,6 +213,7 @@ def replan_day_blueprint_with_llm(
         planning_context,
         step="replan_itinerary_blueprint",
         max_attempts=max_attempts,
+        fallback_on_failure=True,
     )
 
 
@@ -330,7 +332,14 @@ def plan_itinerary(user_profile: dict, runtime_pois: list[dict], route_matrix: l
     return materialize_itinerary_from_skeleton(planning_context, skeleton)
 
 
-def _call_skeleton_llm(llm_client, messages: list[dict[str, str]], planning_context: dict, step: str, max_attempts: int) -> dict:
+def _call_skeleton_llm(
+    llm_client,
+    messages: list[dict[str, str]],
+    planning_context: dict,
+    step: str,
+    max_attempts: int,
+    fallback_on_failure: bool = False,
+) -> dict:
     last_error: AppError | None = None
     current_messages = list(messages)
     for _ in range(max_attempts):
@@ -339,14 +348,16 @@ def _call_skeleton_llm(llm_client, messages: list[dict[str, str]], planning_cont
             return _normalize_skeleton_payload(payload, planning_context, step)
         except AppError as exc:
             last_error = exc
-            if exc.code not in {"llm_invalid_json", "llm_invalid_plan_skeleton"}:
+            if exc.code not in {"llm_empty_content", "llm_truncated_json", "llm_invalid_json", "llm_invalid_plan_skeleton"}:
                 raise
             current_messages = _messages_with_retry_feedback(messages, exc, planning_context)
+    if fallback_on_failure:
+        return _deterministic_blueprint(planning_context, step)
     raise last_error or AppError("LLM 未返回有效路线骨架。", code="llm_invalid_plan_skeleton", step=step)
 
 
 def _messages_with_retry_feedback(messages: list[dict[str, str]], error: AppError, planning_context: dict) -> list[dict[str, str]]:
-    if error.code == "llm_invalid_json":
+    if error.code in {"llm_empty_content", "llm_truncated_json", "llm_invalid_json"}:
         problem = "上次输出不是有效 JSON。"
     else:
         problem = f"上次输出不符合路线骨架协议：{error.message}"
@@ -370,6 +381,98 @@ def _messages_with_retry_feedback(messages: list[dict[str, str]], error: AppErro
             ),
         },
     ]
+
+
+def _deterministic_blueprint(planning_context: dict, step: str = "plan_itinerary_blueprint") -> dict:
+    day_count = _positive_int(planning_context.get("days")) or 1
+    allowed_ids = [str(poi_id) for poi_id in planning_context.get("allowed_poi_ids") or []]
+    priority_ids = [
+        *planning_context.get("must_poi_ids", []),
+        *planning_context.get("preferred_poi_ids", []),
+        *planning_context.get("optional_poi_ids", []),
+        *allowed_ids,
+    ]
+    ordered_ids = list(dict.fromkeys(str(poi_id) for poi_id in priority_ids if str(poi_id) in set(allowed_ids)))
+    day_poi_ids: list[list[str]] = [[] for _ in range(day_count)]
+    day_loads = [0 for _ in range(day_count)]
+    day_districts: list[set[str]] = [set() for _ in range(day_count)]
+    poi_lookup = planning_context.get("poi_lookup") or {}
+    district_groups: OrderedDict[str, list[str]] = OrderedDict()
+    for poi_id in ordered_ids:
+        district = str((poi_lookup.get(poi_id) or {}).get("district") or "未分区")
+        district_groups.setdefault(district, []).append(poi_id)
+    ordered_groups = sorted(
+        district_groups.items(),
+        key=lambda item: -sum(
+            _positive_int((poi_lookup.get(poi_id) or {}).get("estimated_duration_min")) or 90 for poi_id in item[1]
+        ),
+    )
+    for district, poi_ids in ordered_groups:
+        for poi_id in poi_ids:
+            duration = _positive_int((poi_lookup.get(poi_id) or {}).get("estimated_duration_min")) or 90
+            target_day = min(
+                range(day_count),
+                key=lambda index: (
+                    0 if district in day_districts[index] else 1,
+                    day_loads[index],
+                    index,
+                ),
+            )
+            day_poi_ids[target_day].append(poi_id)
+            day_loads[target_day] += duration
+            day_districts[target_day].add(district)
+
+    time_windows = {
+        str(item.get("poi_id") or ""): str(item.get("preferred_window") or "")
+        for item in planning_context.get("time_constraints") or []
+        if item.get("poi_id") and item.get("preferred_window")
+    }
+    raw_days: list[dict] = []
+    for index, poi_ids in enumerate(day_poi_ids):
+        raw_day: dict = {
+            "day": index + 1,
+            "theme_hint": "按地点优先级与移动成本自动安排",
+            "poi_ids": poi_ids,
+            "unscheduled_poi_ids": [],
+            "risk_tags": ["模型输出异常，已使用稳定规划方式完成路线。"],
+        }
+        if poi_ids:
+            meal_slots = []
+            meal_poi_ids = [
+                poi_id
+                for poi_id in poi_ids
+                if (poi_lookup.get(poi_id) or {}).get("meal_capability") == "lunch_dinner"
+            ]
+            for slot_index, slot_name in enumerate(["lunch", "dinner"]):
+                if slot_index < len(meal_poi_ids):
+                    meal_poi_id = meal_poi_ids[slot_index]
+                    meal_slots.append({"slot": slot_name, "requirement": "required", "source": "poi", "poi_id": meal_poi_id})
+                else:
+                    meal_slots.append({"slot": slot_name, "requirement": "required", "source": "fallback_nearby"})
+            raw_day["meal_slots"] = meal_slots
+            raw_day["scheduled_roles"] = {
+                poi_id: "meal_stop" if poi_id in meal_poi_ids[:2] else "anchor_visit" for poi_id in poi_ids
+            }
+        if any(poi_id in time_windows for poi_id in poi_ids):
+            grouped: OrderedDict[str, list[str]] = OrderedDict(
+                (window, []) for window in ["morning", "midday", "afternoon", "evening", "night"]
+            )
+            for poi_id in poi_ids:
+                window = time_windows.get(poi_id) or "afternoon"
+                grouped.setdefault(window, []).append(poi_id)
+            raw_day["segments"] = [
+                {"kind": "outing", "segment_time": window, "poi_ids": values}
+                for window, values in grouped.items()
+                if values
+            ]
+        raw_days.append(raw_day)
+    payload = {
+        "destination": planning_context.get("destination", ""),
+        "days": raw_days,
+        "unscheduled": [],
+        "risk_tags": ["模型输出异常，已使用稳定规划方式完成路线。"],
+    }
+    return _normalize_skeleton_payload(payload, planning_context, step)
 
 
 def _planning_messages(planning_context: dict) -> list[dict[str, str]]:
@@ -749,7 +852,53 @@ def _prompt_context(planning_context: dict) -> dict:
         "meal_candidate_poi_ids": planning_context.get("meal_candidate_poi_ids", []),
         "meal_candidates": planning_context.get("meal_candidates", []),
         "district_summary": planning_context.get("district_summary", []),
-        "route_matrix": planning_context.get("route_matrix", []),
+        "spatial_context": _compact_spatial_context(planning_context),
+    }
+
+
+def _compact_spatial_context(planning_context: dict, max_neighbors: int = 4) -> dict:
+    pois = list(planning_context.get("plannable_pois") or [])
+    clusters: dict[str, list[str]] = {}
+    for poi in pois:
+        district = str(poi.get("district") or "未分区")
+        poi_id = str(poi.get("poi_id") or "")
+        if poi_id:
+            clusters.setdefault(district, []).append(poi_id)
+
+    edges_by_origin: dict[str, list[dict]] = {}
+    far_edges: list[dict] = []
+    for edge in planning_context.get("route_matrix") or []:
+        origin = str(edge.get("origin_poi_id") or "")
+        destination = str(edge.get("destination_poi_id") or "")
+        if not origin or not destination:
+            continue
+        compact_edge = {
+            "origin_poi_id": origin,
+            "destination_poi_id": destination,
+            "duration_min": edge.get("duration_min"),
+            "distance_m": edge.get("distance_m"),
+            "relation": edge.get("relation"),
+        }
+        edges_by_origin.setdefault(origin, []).append(compact_edge)
+        if edge.get("relation") == "separate_day":
+            far_edges.append(compact_edge)
+
+    neighbor_edges: list[dict] = []
+    for origin in sorted(edges_by_origin):
+        ranked = sorted(
+            edges_by_origin[origin],
+            key=lambda item: (
+                item.get("duration_min") is None,
+                item.get("duration_min") if item.get("duration_min") is not None else 10**9,
+                item.get("distance_m") if item.get("distance_m") is not None else 10**9,
+            ),
+        )
+        neighbor_edges.extend(ranked[:max_neighbors])
+
+    return {
+        "district_clusters": [{"district": district, "poi_ids": poi_ids} for district, poi_ids in sorted(clusters.items())],
+        "neighbor_edges": neighbor_edges,
+        "far_edges": far_edges[: max(8, len(pois))],
     }
 
 

@@ -1,7 +1,7 @@
 from app.agents.place_organizer import organize_place
 
 
-def test_organize_place_defaults_stable_matched_visit_to_optional():
+def test_organize_place_defaults_stable_matched_visit_to_include():
     raw_poi = {"raw_name": "IFS", "contexts": ["太古里附近拍照"], "experience_tags": ["拍照"], "confidence": 0.9}
     grounded_poi = {
         "raw_name": "IFS",
@@ -15,10 +15,10 @@ def test_organize_place_defaults_stable_matched_visit_to_optional():
 
     assert result["system_decision"] == "include"
     assert result["user_override"] == "none"
-    assert result["final_decision"] == "optional"
+    assert result["final_decision"] == "include"
     assert result["inferred_role"] == "visit"
     assert result["place_pool_item"]["display_name"] == "成都IFS国际金融中心"
-    assert result["place_pool_item"]["decision_label"] == "待定"
+    assert result["place_pool_item"]["decision_label"] == "已纳入"
     assert result["place_pool_item"]["needs_attention"] is False
 
 

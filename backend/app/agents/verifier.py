@@ -25,6 +25,14 @@ PREFERENCE_ISSUE_TYPES = {
     "order_constraint_violated",
 }
 
+RELEASE_BLOCKING_TYPES = FACTUAL_ISSUE_TYPES | {
+    "must_visit_missing",
+    "avoid_visit_scheduled",
+    "empty_day_with_available_places",
+    "time_constraint_violated",
+    "order_constraint_violated",
+}
+
 
 def verify_itinerary(
     itinerary: dict,
@@ -42,8 +50,7 @@ def verify_itinerary(
         time_constraints=time_constraints,
         order_constraints=order_constraints,
     )
-    blocking_types = FACTUAL_ISSUE_TYPES | PREFERENCE_ISSUE_TYPES
-    blocking_issues = [issue for issue in issues if issue.get("type") in blocking_types]
+    blocking_issues = [issue for issue in issues if issue.get("type") in RELEASE_BLOCKING_TYPES]
     return {"passed": not blocking_issues, "issues": issues, "blocking_issues": blocking_issues}
 
 

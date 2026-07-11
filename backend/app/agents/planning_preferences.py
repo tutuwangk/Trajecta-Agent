@@ -8,9 +8,17 @@ PREFERENCE_DOMAINS = {
     "meal_arrangement",
 }
 
+DEFAULT_PLANNING_PREFERENCES = {
+    "must_places": "keep_must_places",
+    "time_preferences": "keep_time_preferences",
+    "order_preferences": "keep_order_preferences",
+    "pace": "relax_pace",
+    "meal_arrangement": "use_nearby_meal",
+}
+
 
 def build_planning_preferences(planning_decisions: list[dict] | None = None) -> dict:
-    preferences: dict[str, str] = {}
+    preferences: dict[str, str] = dict(DEFAULT_PLANNING_PREFERENCES)
     for decision in planning_decisions or []:
         choice_id = str(decision.get("choice_id") or "").strip()
         domain = str(decision.get("domain") or _infer_domain_from_choice(choice_id)).strip()

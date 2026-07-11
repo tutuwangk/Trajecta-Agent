@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from difflib import SequenceMatcher
+import re
 
 
 def ground_pois(raw_pois: list[dict], user_profile: dict, amap_client, llm_client=None) -> list[dict]:
@@ -232,11 +233,13 @@ def _is_chain_place(raw_poi: dict, candidates: list[dict]) -> bool:
 def _is_branch_candidate(raw_name: str, candidate: dict) -> bool:
     name = str(candidate.get("name") or "")
     category = str(candidate.get("type") or "")
-    if raw_name.lower() not in name.lower():
+    if any(token in category for token in ["超级市场", "仓储会员店"]):
+        return False
+    if _normalized_entity_name(raw_name) not in _normalized_entity_name(name):
         return False
     if any(token in category for token in ["道路名", "交通地名", "风景名胜", "公园广场"]):
         return False
-    if any(token in name for token in ["服务台", "停车场", "出入口", "东街", "西街", "南街", "北街"]):
+    if _is_auxiliary_candidate(candidate):
         return False
     branch_name = any(token in name for token in ["(", "（", "店", "分店", "旗舰店"])
     branch_category = any(token in category for token in ["餐饮服务", "咖啡厅", "茶饮", "购物服务", "生活服务"])
@@ -258,25 +261,30 @@ def _is_landmark_candidate(raw_name: str, candidate: dict) -> bool:
 def _score_candidate(raw_poi: dict, candidate: dict, city: str | None) -> float:
     raw_name = raw_poi.get("raw_name", "")
     candidate_name = candidate.get("name", "")
-    name_similarity = SequenceMatcher(None, raw_name.lower(), candidate_name.lower()).ratio()
-    if raw_name and raw_name.lower() in candidate_name.lower():
+    normalized_raw_name = _normalized_entity_name(str(raw_name))
+    normalized_candidate_name = _normalized_entity_name(str(candidate_name))
+    name_similarity = SequenceMatcher(None, normalized_raw_name, normalized_candidate_name).ratio()
+    if normalized_raw_name and normalized_raw_name in normalized_candidate_name:
         name_similarity = max(name_similarity, 0.92)
     city_match = 1.0 if city and city in str(candidate.get("cityname", "")) else 0.5 if not city else 0.0
     category_match = _category_matches(raw_poi.get("possible_category", ""), candidate.get("type", ""))
     context_match = 0.7 if raw_poi.get("contexts") else 0.4
     district_match = 0.7 if candidate.get("adname") else 0.4
-    return (
+    score = (
         0.35 * name_similarity
         + 0.25 * city_match
         + 0.15 * category_match
         + 0.15 * context_match
         + 0.10 * district_match
     )
+    if _is_auxiliary_candidate(candidate):
+        score -= 0.45
+    return max(0.0, score)
 
 
 def _is_primary_candidate(raw_poi: dict, candidate: dict) -> bool:
-    raw_name = str(raw_poi.get("raw_name") or "").strip().lower()
-    candidate_name = str(candidate.get("name") or "").strip().lower()
+    raw_name = _normalized_entity_name(str(raw_poi.get("raw_name") or ""))
+    candidate_name = _normalized_entity_name(str(candidate.get("name") or ""))
     category = str(candidate.get("type") or "")
     if not raw_name or raw_name not in candidate_name:
         return False
@@ -298,6 +306,21 @@ def _is_primary_candidate(raw_poi: dict, candidate: dict) -> bool:
     if any(token in candidate_name for token in auxiliary_tokens):
         return False
     return not any(token in category for token in ["道路名", "公交车站", "地铁站", "停车场"])
+
+
+def _normalized_entity_name(value: str) -> str:
+    normalized = value.strip().lower().replace("会员超市", "会员").replace("会员商店", "会员").replace("会员店", "会员")
+    normalized = normalized.replace("超市", "").replace("商店", "")
+    return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", normalized)
+
+
+def _is_auxiliary_candidate(candidate: dict) -> bool:
+    name = str(candidate.get("name") or "")
+    category = str(candidate.get("type") or "")
+    return any(
+        token in name
+        for token in ["收货部", "配送部", "服务台", "服务中心", "停车场", "出入口", "售票处", "礼宾台", "东街", "西街", "南街", "北街"]
+    ) or any(token in category for token in ["停车场", "公交车站", "地铁站"])
 
 
 def _category_matches(expected: str, amap_type: str) -> float:
