@@ -2,10 +2,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { createSession, planTrip, recognizePlaces, updatePlaceOverrides } from "@/lib/api";
+import { createSession, planTrip, recognizePlaces, submitPlanningDecision, updatePlaceOverrides } from "@/lib/api";
+import { planningControlsDisabled, resolvePlanningFlow } from "@/lib/planning-flow";
 import { InfoTip } from "./InfoTip";
+import { PlanningInterventionCard } from "./PlanningInterventionCard";
 import { PlacePool } from "./PlacePool";
-import type { PoiRow, UserProfile } from "@/lib/types";
+import type { PlanningIntervention, PoiRow, UserProfile } from "@/lib/types";
 
 const preferenceOptions = ["美食", "拍照", "城市漫步", "购物", "历史文化", "休闲"];
 const intensityOptions = [
@@ -27,26 +29,28 @@ export function TripInputForm() {
   const [routeGoal, setRouteGoal] = useState("");
   const [preferences, setPreferences] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
-  const [status, setStatus] = useState("");
+  const [busyMessage, setBusyMessage] = useState("");
   const [error, setError] = useState("");
   const [routeError, setRouteError] = useState("");
   const [sessionId, setSessionId] = useState("");
   const [pois, setPois] = useState<PoiRow[]>([]);
+  const [planningIntervention, setPlanningIntervention] = useState<PlanningIntervention | null>(null);
   const [shouldScrollToPlaces, setShouldScrollToPlaces] = useState(false);
   const placePoolRef = useRef<HTMLDivElement | null>(null);
-  const recognizing = status === "正在识别地点" || status === "正在确认位置";
-  const generatingRoute = status === "正在整理路线";
+  const isBusy = planningControlsDisabled(busyMessage);
+  const recognizing = busyMessage === "正在识别地点" || busyMessage === "正在确认位置";
+  const generatingRoute = busyMessage === "正在整理路线";
 
   useEffect(() => {
-    if (!shouldScrollToPlaces || !sessionId || status) return;
+    if (!shouldScrollToPlaces || !sessionId || isBusy) return;
     placePoolRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     setShouldScrollToPlaces(false);
-  }, [sessionId, shouldScrollToPlaces, status]);
+  }, [isBusy, sessionId, shouldScrollToPlaces]);
 
   async function recognize() {
     setError("");
     setRouteError("");
-    setStatus("正在识别地点");
+    setBusyMessage("正在识别地点");
     const rawInput = [
       destination ? `目的地：${destination}` : "",
       days ? `计划 ${days} 天。` : "",
@@ -78,20 +82,21 @@ export function TripInputForm() {
     });
     if (!created.ok || !created.data) {
       setError(created.error?.message || "创建行程失败");
-      setStatus("");
+      setBusyMessage("");
       return;
     }
     setSessionId(created.data.session_id);
-    setStatus("正在确认位置");
+    setBusyMessage("正在确认位置");
     const extracted = await recognizePlaces(created.data.session_id);
     if (!extracted.ok) {
       setError(extracted.error?.message || "地点识别失败。行程已创建，可进入详情页后重试。");
-      setStatus("");
+      setBusyMessage("");
       return;
     }
     const nextPois = Array.isArray(extracted.data?.pois) ? (extracted.data.pois as PoiRow[]) : [];
     setPois(nextPois);
-    setStatus("");
+    setPlanningIntervention(null);
+    setBusyMessage("");
     setShouldScrollToPlaces(true);
   }
 
@@ -99,28 +104,58 @@ export function TripInputForm() {
     if (!sessionId) return;
     setError("");
     setRouteError("");
-    setStatus("正在保存地点调整");
+    setBusyMessage("正在保存地点调整");
     const result = await updatePlaceOverrides(sessionId, decisions);
     if (!result.ok || !result.data) {
       setError(result.error?.message || "保存地点调整失败");
-      setStatus("");
+      setBusyMessage("");
       return;
     }
     setPois(result.data.pois);
-    setStatus("");
+    setPlanningIntervention(null);
+    setBusyMessage("");
   }
 
   async function generateRoute() {
     if (!sessionId) return;
     setRouteError("");
     setError("");
-    setStatus("正在整理路线");
-    const result = await planTrip(sessionId);
-    if (!result.ok) {
-      setRouteError(result.error?.message || "路线生成失败");
-      setStatus("");
+    setBusyMessage("正在整理路线");
+    const outcome = resolvePlanningFlow(await planTrip(sessionId), "路线生成失败");
+    if (outcome.kind === "failed") {
+      setRouteError(outcome.message);
+      setBusyMessage("");
       return;
     }
+    if (outcome.kind === "needs_user_choice") {
+      setPlanningIntervention(outcome.result.planning_intervention);
+      setBusyMessage("");
+      return;
+    }
+    setPlanningIntervention(null);
+    router.push(`/trip/${sessionId}`);
+  }
+
+  async function handlePlanningChoice(choiceId: string) {
+    if (!sessionId || !planningIntervention) return;
+    setRouteError("");
+    setError("");
+    setBusyMessage("正在按你的选择调整路线");
+    const outcome = resolvePlanningFlow(
+      await submitPlanningDecision(sessionId, planningIntervention.id, choiceId),
+      "路线调整失败"
+    );
+    if (outcome.kind === "failed") {
+      setRouteError(outcome.message);
+      setBusyMessage("");
+      return;
+    }
+    if (outcome.kind === "needs_user_choice") {
+      setPlanningIntervention(outcome.result.planning_intervention);
+      setBusyMessage("");
+      return;
+    }
+    setPlanningIntervention(null);
     router.push(`/trip/${sessionId}`);
   }
 
@@ -256,11 +291,11 @@ export function TripInputForm() {
             onChange={(event) => setNotes(event.target.value)}
             placeholder="粘贴攻略、笔记、地点清单、餐厅推荐、酒店地址或你的旅行想法。"
           />
-          <button className="btn-primary mt-4 w-full gap-2" onClick={recognize} disabled={!destination || !notes || Boolean(status)}>
+          <button className="btn-primary mt-4 w-full gap-2" onClick={recognize} disabled={!destination || !notes || isBusy}>
             {recognizing && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />}
             {recognizing ? "正在识别" : "识别地点"}
           </button>
-          {status && <p className="mt-3 rounded-2xl bg-surface px-4 py-3 text-sm text-ink">{status}</p>}
+          {busyMessage && <p className="mt-3 rounded-2xl bg-surface px-4 py-3 text-sm text-ink">{busyMessage}</p>}
           {error && (
             <div className="mt-3 rounded-2xl border border-line bg-white px-4 py-3 text-sm text-ink">
               <p>{error}</p>
@@ -275,12 +310,13 @@ export function TripInputForm() {
       </div>
       {Boolean(sessionId) && (
         <div ref={placePoolRef}>
+          <PlanningInterventionCard intervention={planningIntervention} disabled={isBusy} onChoose={handlePlanningChoice} />
           <PlacePool
             pois={pois}
             onChange={handlePlaceChange}
             onGenerateRoute={generateRoute}
             generateLoading={generatingRoute}
-            generateDisabled={!pois.length || Boolean(status)}
+            generateDisabled={!pois.length || isBusy}
             generateError={routeError}
           />
         </div>

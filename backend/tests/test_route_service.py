@@ -1,4 +1,4 @@
-from app.services.route_service import build_route_matrix, classify_relation
+from app.services.route_service import build_route_matrix, build_spatial_route_matrix, classify_relation
 
 
 def test_classify_relation_uses_duration_and_mode():
@@ -9,7 +9,7 @@ def test_classify_relation_uses_duration_and_mode():
     assert classify_relation("walking", None) == "unknown"
 
 
-def test_build_route_matrix_does_not_label_long_walk_as_walking():
+def test_build_route_matrix_uses_walking_within_two_km_even_if_it_takes_longer():
     runtime_pois = [_poi("p1"), _poi("p2")]
 
     matrix = build_route_matrix(
@@ -19,12 +19,12 @@ def test_build_route_matrix_does_not_label_long_walk_as_walking():
     )
 
     edge = matrix[0]
-    assert edge["mode"] == "taxi"
-    assert edge["duration_min"] == 12
-    assert edge["distance_m"] == 2500
+    assert edge["mode"] == "walking"
+    assert edge["duration_min"] == 30
+    assert edge["distance_m"] == 1700
 
 
-def test_build_route_matrix_respects_public_transport_preference_when_available():
+def test_build_route_matrix_uses_walking_within_two_km_before_public_transport_preference():
     runtime_pois = [_poi("p1"), _poi("p2")]
 
     matrix = build_route_matrix(
@@ -34,9 +34,38 @@ def test_build_route_matrix_respects_public_transport_preference_when_available(
     )
 
     edge = matrix[0]
+    assert edge["mode"] == "walking"
+    assert edge["duration_min"] == 22
+    assert edge["distance_m"] == 1200
+
+
+def test_build_route_matrix_defaults_to_taxi_beyond_two_km_without_user_preference():
+    runtime_pois = [_poi("p1"), _poi("p2")]
+
+    matrix = build_route_matrix(
+        runtime_pois,
+        FakeAmap(walking=(35, 2100), driving=(9, 2600), transit=(21, 2400)),
+        user_profile={},
+    )
+
+    edge = matrix[0]
+    assert edge["mode"] == "taxi"
+    assert edge["duration_min"] == 9
+    assert edge["distance_m"] == 2600
+
+
+def test_build_route_matrix_respects_public_transport_preference_beyond_two_km():
+    runtime_pois = [_poi("p1"), _poi("p2")]
+
+    matrix = build_route_matrix(
+        runtime_pois,
+        FakeAmap(walking=(35, 2100), driving=(8, 2600), transit=(18, 2300)),
+        user_profile={"transport_preference": ["public_transport", "taxi"]},
+    )
+
+    edge = matrix[0]
     assert edge["mode"] == "public_transport"
     assert edge["duration_min"] == 18
-    assert edge["distance_m"] == 1600
 
 
 def test_build_route_matrix_includes_user_confirmed_ambiguous_map_candidate():
@@ -79,6 +108,17 @@ def test_build_route_matrix_excludes_unresolved_chain_even_if_it_has_coordinates
     )
 
     assert matrix == []
+
+
+def test_build_spatial_route_matrix_uses_coordinates_without_direction_api_calls():
+    runtime_pois = [_poi("p1"), _poi("p2")]
+
+    matrix = build_spatial_route_matrix(runtime_pois, user_profile={"transport_preference": ["taxi"]})
+
+    assert len(matrix) == 2
+    assert all(edge["source"] == "spatial_estimate" for edge in matrix)
+    assert all(edge["distance_m"] > 0 for edge in matrix)
+    assert all(edge["duration_min"] > 0 for edge in matrix)
 
 
 def _poi(poi_id: str) -> dict:

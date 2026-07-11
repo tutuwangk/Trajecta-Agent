@@ -4,6 +4,7 @@ from app.agents.planner import (
     compile_planning_context,
     enrich_planning_semantics_with_llm,
     materialize_itinerary_from_skeleton,
+    plan_day_blueprint_with_llm,
     plan_skeleton_with_llm,
 )
 
@@ -142,9 +143,11 @@ def test_plan_skeleton_with_llm_retries_invalid_json_once():
     class FlakyLLM:
         def __init__(self):
             self.calls = 0
+            self.messages = []
 
         def json_chat(self, messages, step, temperature=0.2):
             self.calls += 1
+            self.messages.append(messages)
             if self.calls == 1:
                 raise AppError("LLM 返回内容不是有效 JSON。", code="llm_invalid_json", step=step)
             return {
@@ -160,9 +163,13 @@ def test_plan_skeleton_with_llm_retries_invalid_json_once():
         [],
     )
 
-    skeleton = plan_skeleton_with_llm(context, FlakyLLM())
+    llm = FlakyLLM()
+    skeleton = plan_skeleton_with_llm(context, llm)
 
     assert skeleton["days"][0]["poi_ids"] == ["p1"]
+    retry_prompt = llm.messages[1][-1]["content"]
+    assert "上次输出不是有效 JSON" in retry_prompt
+    assert "<output_schema>" in retry_prompt
 
 
 def test_materialize_itinerary_from_skeleton_keeps_removed_reason_codes_for_copy_stage():
@@ -228,18 +235,13 @@ def test_compile_planning_context_collects_meal_candidates_with_suitability_hint
     )
 
     assert context["meal_candidate_poi_ids"] == ["p1"]
-    assert context["meal_candidates"] == [
-        {
-            "poi_id": "p1",
-            "name": "园里火锅",
-            "district": "武侯区",
-            "estimated_duration_min": 90,
-            "final_decision": "include",
-            "must_keep": False,
-            "meal_suitability_hint": ["lunch", "dinner"],
-            "route_fit_context": ["午餐想吃火锅", "晚上也可以去"],
-        }
-    ]
+    candidate = context["meal_candidates"][0]
+    assert candidate["poi_id"] == "p1"
+    assert candidate["poi_role"] == "full_meal"
+    assert candidate["meal_capability"] == "lunch_dinner"
+    assert candidate["time_advice"] == ["midday", "evening"]
+    assert candidate["meal_suitability_hint"] == ["lunch", "dinner"]
+    assert candidate["route_fit_context"] == ["午餐想吃火锅", "晚上也可以去"]
 
 
 def test_enrich_planning_semantics_with_llm_attaches_route_only_semantics():
@@ -496,6 +498,101 @@ def test_plan_skeleton_prompt_no_longer_mentions_branch_selection():
     assert "selected_branch_ids" not in prompt
 
 
+def test_plan_skeleton_with_llm_normalizes_common_protocol_variants():
+    class VariantLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            return {
+                "destination": "成都",
+                "days": [
+                    {
+                        "day": "1",
+                        "segments": [
+                            {"kind": "visit", "segment_time": "上午", "poi_ids": "p1"},
+                            {"kind": "hotel-rest", "duration_min": "180", "reason": "回酒店休息"},
+                            {"kind": "outing", "segment_time": "晚上", "poi_ids": ["p2"]},
+                        ],
+                        "meal_slots": [
+                            {"slot": "午餐", "requirement": "must", "source": "restaurant", "poi_id": "p1"},
+                            {"slot": "晚餐", "requirement": "needed", "source": "nearby"},
+                        ],
+                        "scheduled_roles": {"p1": "anchor", "p2": "meal"},
+                        "unscheduled_poi_ids": "",
+                        "risk_tags": "must_places_dense, cross_area",
+                    }
+                ],
+                "unscheduled": [],
+                "risk_tags": "meal_conflict, cross_area",
+            }
+
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
+        [
+            {"poi_id": "p1", "standard_name": "园里火锅", "match_status": "matched", "estimated_duration_min": 90, "final_decision": "include", "category": "restaurant"},
+            {"poi_id": "p2", "standard_name": "九眼桥", "match_status": "matched", "estimated_duration_min": 90, "final_decision": "include"},
+        ],
+        [],
+    )
+
+    skeleton = plan_skeleton_with_llm(context, VariantLLM())
+
+    assert skeleton["days"][0]["segments"] == [
+        {"kind": "outing", "segment_time": "morning", "poi_ids": ["p1"]},
+        {"kind": "hotel_rest", "duration_min": 180, "reason": "回酒店休息"},
+        {"kind": "outing", "segment_time": "evening", "poi_ids": ["p2"]},
+    ]
+    assert skeleton["days"][0]["meal_slots"] == [
+        {"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p1"},
+        {"slot": "dinner", "requirement": "required", "source": "fallback_nearby"},
+    ]
+    assert skeleton["days"][0]["scheduled_roles"] == {"p1": "anchor_visit", "p2": "meal_stop"}
+    assert skeleton["days"][0]["risk_tags"] == ["must_places_dense", "cross_area"]
+    assert skeleton["risk_tags"] == ["meal_conflict", "cross_area"]
+
+
+def test_plan_skeleton_with_llm_drops_invalid_optional_llm_hints():
+    class HintyLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            return {
+                "destination": "成都",
+                "days": [
+                    {
+                        "day": 1,
+                        "poi_ids": ["p1"],
+                        "selected_branch_ids": {"p1": "missing-branch", "ghost": "B2"},
+                        "scheduled_roles": {"p1": "totally_unknown_role", "ghost": "anchor"},
+                        "meal_slots": [{"slot": "lunch", "requirement": "required", "source": "onsite", "within_poi_id": "p1"}],
+                        "unscheduled_poi_ids": [],
+                        "risk_tags": [],
+                    }
+                ],
+                "unscheduled": [],
+                "risk_tags": [],
+            }
+
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
+        [
+            {
+                "poi_id": "p1",
+                "standard_name": "太古里店内餐厅",
+                "match_status": "matched",
+                "estimated_duration_min": 90,
+                "final_decision": "include",
+                "route_branch_options": [{"branch_id": "B1", "name": "太古里店"}],
+            }
+        ],
+        [],
+    )
+
+    skeleton = plan_skeleton_with_llm(context, HintyLLM())
+
+    assert skeleton["days"][0]["selected_branch_ids"] == {}
+    assert skeleton["days"][0]["scheduled_roles"] == {}
+    assert skeleton["days"][0]["meal_slots"] == [
+        {"slot": "lunch", "requirement": "required", "source": "inside_poi", "within_poi_id": "p1"}
+    ]
+
+
 def test_materialize_itinerary_from_skeleton_uses_resolved_chain_as_normal_poi():
     context = compile_planning_context(
         {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
@@ -710,3 +807,63 @@ def test_extract_order_constraints_marks_user_sequence_as_strong_preference():
     )
 
     assert constraints == [{"before": "IFS", "after": "武侯祠", "strength": "strong_preference", "source": "user_text"}]
+
+
+def test_plan_day_blueprint_rejects_missing_requested_days():
+    class IncompleteDaysLLM:
+        def __init__(self):
+            self.messages = []
+
+        def json_chat(self, messages, step, temperature=0.2):
+            self.messages.append(messages)
+            return {
+                "destination": "成都",
+                "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": [], "risk_tags": []}],
+                "unscheduled": [],
+                "risk_tags": [],
+            }
+
+    context = compile_planning_context(
+        {"destination": "成都", "days": 4, "constraints": {"physical_intensity": "high"}},
+        [{"poi_id": "p1", "standard_name": "武侯祠", "match_status": "matched", "final_decision": "include"}],
+        [],
+    )
+
+    llm = IncompleteDaysLLM()
+    try:
+        plan_day_blueprint_with_llm(context, llm)
+    except AppError as exc:
+        assert exc.code == "llm_invalid_plan_skeleton"
+        assert "完整天数" in exc.message
+    else:
+        raise AssertionError("缺少用户要求的天数时不应接受蓝图")
+    prompt_text = "\n".join(message["content"] for attempt in llm.messages for message in attempt)
+    assert '"required_day_numbers":[1, 2, 3, 4]' in prompt_text
+
+
+def test_plan_day_blueprint_rejects_duplicate_day_numbers():
+    class DuplicateDaysLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            return {
+                "destination": "成都",
+                "days": [
+                    {"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": [], "risk_tags": []},
+                    {"day": 1, "poi_ids": [], "unscheduled_poi_ids": [], "risk_tags": []},
+                ],
+                "unscheduled": [],
+                "risk_tags": [],
+            }
+
+    context = compile_planning_context(
+        {"destination": "成都", "days": 2, "constraints": {"physical_intensity": "medium"}},
+        [{"poi_id": "p1", "standard_name": "武侯祠", "match_status": "matched", "final_decision": "include"}],
+        [],
+    )
+
+    try:
+        plan_day_blueprint_with_llm(context, DuplicateDaysLLM())
+    except AppError as exc:
+        assert exc.code == "llm_invalid_plan_skeleton"
+        assert "Day 编号" in exc.message
+    else:
+        raise AssertionError("重复 Day 编号时不应接受蓝图")

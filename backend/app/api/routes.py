@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import logging
 import re
+from time import perf_counter
 
 from fastapi import APIRouter, HTTPException
 
@@ -10,21 +12,18 @@ from app.agents.intensity import sync_day_total_time
 from app.agents.itinerary_normalizer import normalize_itinerary
 from app.agents.planning_workflow import PlanningInterventionRequired, run_planning_workflow
 from app.agents.poi_extractor import extract_poi_names
-from app.agents.reviser import revise_from_user_instruction, revise_itinerary
 from app.agents.ugc_reader import extract_ugc_items
-from app.agents.verifier import verify_itinerary
+from app.core import AppError, api_error, api_success
 from app.agents.visit_duration_estimator import estimate_visit_durations
-from app.core import api_error, api_success
 from app.schemas.models import PlanningDecisionRequest, PoiDecisionUpdate, RevisionRequest, SessionCreate, UserProfile
 from app.services.amap_client import default_amap_client
-from app.services.cache_service import CacheService
 from app.services.chain_arranger import arrange_chain_to_anchor
 from app.services.database import default_store
 from app.services.link_builder import build_navigation_link, build_poi_link
 from app.services.llm_client import default_copy_llm_client, default_llm_client, default_planning_llm_client
 from app.services.poi_enricher import enrich_pois
 from app.services.poi_grounder import ground_pois, ground_single_poi
-from app.services.route_service import build_route_edge, build_route_matrix
+from app.services.route_service import build_route_edge, build_spatial_route_matrix
 
 
 router = APIRouter()
@@ -57,6 +56,7 @@ def get_session(session_id: str):
             "pois": store.list_pois(session_id),
             "itinerary_state": store.get_itinerary(session_id),
             "planning_intervention": store.get_open_planning_intervention(session_id),
+            "latest_planning_run": store.get_latest_planning_run(session_id),
             "revision_history": store.list_revisions(session_id),
         }
     )
@@ -74,8 +74,8 @@ def recognize_places(session_id: str):
         llm_client = default_llm_client()
         amap_client = default_amap_client()
         ugc_items = extract_ugc_items(session["notes"] or session["raw_input"], llm_client)
-        raw_pois = extract_poi_names(ugc_items, session["raw_input"])
-        grounded_pois = ground_pois(raw_pois, session["user_profile"], amap_client, llm_client)
+        raw_pois = extract_poi_names(ugc_items, f"{session['raw_input']}\n{session['notes']}")
+        grounded_pois = ground_pois(raw_pois, session["user_profile"], amap_client)
         store.save_pois(session_id, raw_pois, grounded_pois, session["user_profile"])
         pois = store.list_pois(session_id)
         return api_success(
@@ -146,27 +146,152 @@ def update_place_overrides(session_id: str, payload: PoiDecisionUpdate):
 def create_plan(session_id: str):
     try:
         session = _require_session(session_id)
-        pois = store.list_pois(session_id)
-        accepted_grounded = _planning_grounded_pois(pois)
-        uncertain_pois = enrich_pois(_uncertain_grounded_pois(pois), [])
-        planning_llm = default_planning_llm_client()
-        copy_llm = default_copy_llm_client()
-        amap_client = default_amap_client()
-        hotel_anchor = _hotel_anchor(session["user_profile"], amap_client)
-        runtime_pois = estimate_visit_durations(enrich_pois(accepted_grounded, []), planning_llm)
-        route_matrix = build_route_matrix(runtime_pois, amap_client, CacheService(store), session["user_profile"])
-        order_constraints = _extract_order_constraints(session["raw_input"], session["notes"], runtime_pois)
-        time_constraints = _extract_time_constraints(session["raw_input"], session["notes"], runtime_pois)
-        planning_decisions = store.list_resolved_planning_decisions(session_id)
+        data, step_status = _plan_session(session_id, session)
+        return api_success(data, step_status)
+    except Exception as exc:
+        return api_error(exc, {"plan": "failed"})
 
-        def prepare_itinerary(itinerary: dict) -> None:
-            _sync_precise_transport_edges(itinerary, runtime_pois, route_matrix, session["user_profile"], amap_client)
-            _sync_hotel_transport_edges(itinerary, runtime_pois, session["user_profile"], amap_client)
-            _sync_hotel_rest_breaks(itinerary, runtime_pois, session["user_profile"], amap_client)
-            normalize_itinerary(itinerary, session["user_profile"], runtime_pois, route_matrix)
 
-        final, final_verification, _debug = run_planning_workflow(
-            session["user_profile"],
+@router.post("/sessions/{session_id}/planning-decisions")
+def submit_planning_decision(session_id: str, payload: PlanningDecisionRequest):
+    try:
+        session = _require_session(session_id)
+        provisional_decision = store.preview_planning_decision(session_id, payload.intervention_id, payload.choice_id)
+        data, step_status = _plan_session(
+            session_id,
+            session,
+            provisional_planning_decision=provisional_decision,
+        )
+        if data.get("status") == "completed":
+            store.resolve_planning_intervention(session_id, payload.intervention_id, payload.choice_id)
+        return api_success(data, {"planning_decision": "done", **step_status})
+    except Exception as exc:
+        return api_error(exc, {"planning_decision": "failed"})
+
+
+@router.post("/sessions/{session_id}/revise")
+def revise_plan(session_id: str, payload: RevisionRequest):
+    try:
+        session = _require_session(session_id)
+        instruction = payload.quick_action or payload.instruction
+        state = store.get_itinerary(session_id)
+        if not state:
+            raise HTTPException(status_code=400, detail="itinerary not found")
+        revision_intent = _compile_revision_intent(instruction, store.list_pois(session_id))
+        data, step_status = _plan_session(session_id, session, revision_intent=revision_intent)
+        return api_success(data, {"revise_itinerary": "done", **step_status})
+    except Exception as exc:
+        return api_error(exc, {"revise": "failed"})
+
+
+def _plan_session(
+    session_id: str,
+    session: dict,
+    revision_intent: dict | None = None,
+    provisional_planning_decision: dict | None = None,
+) -> tuple[dict, dict]:
+    run_id = store.start_planning_run(session_id)
+    started_at = perf_counter()
+    store.update_planning_run(run_id, status="running", stage="planning")
+    try:
+        data, step_status = _execute_plan_session(
+            session_id,
+            session,
+            revision_intent=revision_intent,
+            provisional_planning_decision=provisional_planning_decision,
+            run_id=run_id,
+        )
+        run_debug = data.pop("_run_debug", {})
+        data["run_id"] = run_id
+        if data.get("status") == "needs_user_choice":
+            store.update_planning_run(
+                run_id,
+                status="needs_user_choice",
+                stage="preference_resolution",
+                attempt_count=1,
+                duration_ms=round((perf_counter() - started_at) * 1000),
+            )
+        else:
+            store.update_planning_run(
+                run_id,
+                status="completed",
+                stage="completed",
+                attempt_count=int(run_debug.get("attempt_count") or 1),
+                duration_ms=round((perf_counter() - started_at) * 1000),
+                debug=run_debug,
+            )
+        return data, step_status
+    except Exception as exc:
+        code = exc.code if isinstance(exc, AppError) else "internal_error"
+        stage = exc.step if isinstance(exc, AppError) and exc.step else "planning"
+        message = exc.message if isinstance(exc, AppError) else str(exc)
+        debug = exc.details if isinstance(exc, AppError) else {}
+        store.update_planning_run(
+            run_id,
+            status="failed",
+            stage=stage,
+            error_code=code,
+            error_message=message,
+            attempt_count=1,
+            duration_ms=round((perf_counter() - started_at) * 1000),
+            debug=debug,
+        )
+        if isinstance(exc, AppError):
+            exc.details.setdefault("run_id", run_id)
+        raise
+
+
+def _execute_plan_session(
+    session_id: str,
+    session: dict,
+    revision_intent: dict | None = None,
+    provisional_planning_decision: dict | None = None,
+    run_id: str | None = None,
+) -> tuple[dict, dict]:
+    pois = store.list_pois(session_id)
+    accepted_grounded = _planning_grounded_pois(pois)
+    user_profile = _planning_user_profile(session["user_profile"], revision_intent)
+    planning_llm = default_planning_llm_client()
+    copy_llm = default_copy_llm_client()
+    amap_client = default_amap_client()
+    uncertain_pois = enrich_pois(_uncertain_grounded_pois(pois), [])
+    hotel_anchor = _hotel_anchor(user_profile, amap_client)
+    runtime_pois = estimate_visit_durations(enrich_pois(accepted_grounded, []))
+    route_matrix = build_spatial_route_matrix(runtime_pois, user_profile)
+    order_constraints = _extract_order_constraints(session["raw_input"], session["notes"], runtime_pois)
+    time_constraints = _extract_time_constraints(session["raw_input"], session["notes"], runtime_pois)
+    planning_decisions = store.list_resolved_planning_decisions(session_id)
+    if provisional_planning_decision:
+        planning_decisions.append(provisional_planning_decision)
+    if revision_intent:
+        order_constraints.extend(_revision_order_constraints(revision_intent, runtime_pois))
+        time_constraints.extend(_revision_time_constraints(revision_intent, runtime_pois))
+        planning_decisions.extend(revision_intent.get("planning_decisions") or [])
+    precise_edge_cache: dict[tuple[str, str], dict] = {}
+
+    def prepare_itinerary(itinerary: dict) -> None:
+        _sync_precise_transport_edges(itinerary, runtime_pois, route_matrix, user_profile, amap_client)
+        _sync_hotel_transport_edges(
+            itinerary,
+            runtime_pois,
+            user_profile,
+            amap_client,
+            hotel=hotel_anchor,
+            edge_cache=precise_edge_cache,
+        )
+        _sync_hotel_rest_breaks(
+            itinerary,
+            runtime_pois,
+            user_profile,
+            amap_client,
+            hotel=hotel_anchor,
+            edge_cache=precise_edge_cache,
+        )
+        normalize_itinerary(itinerary, user_profile, runtime_pois, route_matrix)
+
+    try:
+        final, final_verification, debug = run_planning_workflow(
+            user_profile,
             runtime_pois,
             route_matrix,
             planning_llm,
@@ -178,70 +303,173 @@ def create_plan(session_id: str):
             planning_decisions=planning_decisions,
             prepare_itinerary=prepare_itinerary,
         )
-        logger.info("Planning workflow debug snapshot: %s", _debug)
-        _clean_final_messages(final, final_verification)
-        _attach_links(final, runtime_pois)
-        store.save_itinerary(session_id, runtime_pois, route_matrix, final, final_verification)
-        return api_success(
-            {"status": "completed", "runtime_pois": runtime_pois, "route_matrix": route_matrix, "itinerary": final, "verification": final_verification},
-            {"build_route_matrix": "done", "plan_itinerary": "done", "verify_itinerary": "done"},
-        )
     except PlanningInterventionRequired as exc:
         intervention = dict(exc.intervention)
         intervention_id = store.save_planning_intervention(session_id, intervention)
         intervention["id"] = intervention_id
-        return api_success(
+        return (
             {"status": "needs_user_choice", "planning_intervention": intervention},
             {"build_route_matrix": "done", "plan_itinerary": "needs_user_choice"},
         )
-    except Exception as exc:
-        return api_error(exc, {"plan": "failed"})
+
+    logger.info("Planning workflow debug snapshot: %s", debug)
+    _assert_publishable(final_verification, run_id=run_id)
+    _clean_final_messages(final, final_verification)
+    _attach_links(final, runtime_pois)
+    store.save_itinerary(session_id, runtime_pois, route_matrix, final, final_verification)
+    if revision_intent and revision_intent.get("instruction"):
+        store.add_revision(session_id, revision_intent["instruction"], final)
+    return (
+        {
+            "status": "completed",
+            "runtime_pois": runtime_pois,
+            "route_matrix": route_matrix,
+            "itinerary": final,
+            "verification": final_verification,
+            "_run_debug": {
+                "attempt_count": len(debug.get("skeleton_versions") or []) or 1,
+                "repair_attempts": debug.get("repair_attempts", 0),
+            },
+        },
+        {"build_route_matrix": "done", "plan_itinerary": "done", "verify_itinerary": "done"},
+    )
 
 
-@router.post("/sessions/{session_id}/planning-decisions")
-def submit_planning_decision(session_id: str, payload: PlanningDecisionRequest):
-    try:
-        _require_session(session_id)
-        store.resolve_planning_intervention(session_id, payload.intervention_id, payload.choice_id)
-        return api_success({"status": "accepted"}, {"planning_decision": "done"})
-    except Exception as exc:
-        return api_error(exc, {"planning_decision": "failed"})
+def _assert_publishable(verification: dict, run_id: str | None = None) -> None:
+    if verification.get("passed"):
+        return
+    issues = list(verification.get("issues") or [])
+    raise AppError(
+        "路线未通过发布校验，系统没有保存这次不完整结果。",
+        code="itinerary_publish_blocked",
+        step="verify_itinerary",
+        details={"issues": issues, **({"run_id": run_id} if run_id else {})},
+    )
 
 
-@router.post("/sessions/{session_id}/revise")
-def revise_plan(session_id: str, payload: RevisionRequest):
-    try:
-        session = _require_session(session_id)
-        state = store.get_itinerary(session_id)
-        if not state:
-            raise HTTPException(status_code=400, detail="itinerary not found")
-        instruction = payload.quick_action or payload.instruction
-        revised = revise_from_user_instruction(
-            state["itinerary"],
-            instruction,
-            session["user_profile"],
-            state["runtime_pois"],
-            state["route_matrix"],
-            default_planning_llm_client(),
+def _planning_user_profile(base_user_profile: dict, revision_intent: dict | None = None) -> dict:
+    user_profile = deepcopy(base_user_profile)
+    constraints = dict(user_profile.get("constraints") or {})
+    user_profile["constraints"] = constraints
+    if revision_intent:
+        avoid_visit_names = list(constraints.get("avoid_visit") or [])
+        must_visit_names = [str(name) for name in constraints.get("must_visit") or []]
+        for name in revision_intent.get("avoid_visit_names") or []:
+            if name not in avoid_visit_names:
+                avoid_visit_names.append(name)
+            must_visit_names = [item for item in must_visit_names if item != name]
+        if revision_intent.get("pace_mode") == "slow_down":
+            constraints["avoid_too_tired"] = True
+            constraints["physical_intensity"] = "low"
+        constraints["avoid_visit"] = avoid_visit_names
+        constraints["must_visit"] = must_visit_names
+    return user_profile
+
+
+def _compile_revision_intent(instruction: str, pois: list[dict]) -> dict:
+    text = str(instruction or "").strip()
+    if not text:
+        raise AppError("请告诉我想怎么改路线。", code="invalid_revision_instruction", step="revise")
+    if _looks_like_unsupported_revision_scope(text):
+        raise AppError(
+            "这类调整会改变酒店、天数、交通偏好或资料事实，请回到行程设置修改后重新生成路线。",
+            code="unsupported_revision_scope",
+            step="revise",
         )
-        _sync_precise_transport_edges(revised, state["runtime_pois"], state["route_matrix"], session["user_profile"], default_amap_client())
-        _sync_hotel_transport_edges(revised, state["runtime_pois"], session["user_profile"], default_amap_client())
-        _sync_hotel_rest_breaks(revised, state["runtime_pois"], session["user_profile"], default_amap_client())
-        normalize_itinerary(revised, session["user_profile"], state["runtime_pois"], state["route_matrix"])
-        verification = verify_itinerary(revised, session["user_profile"], state["route_matrix"], state["runtime_pois"])
-        final = revise_itinerary(revised, verification, session["user_profile"], runtime_pois=state["runtime_pois"], instruction=instruction)
-        _sync_precise_transport_edges(final, state["runtime_pois"], state["route_matrix"], session["user_profile"], default_amap_client())
-        _sync_hotel_transport_edges(final, state["runtime_pois"], session["user_profile"], default_amap_client())
-        _sync_hotel_rest_breaks(final, state["runtime_pois"], session["user_profile"], default_amap_client())
-        normalize_itinerary(final, session["user_profile"], state["runtime_pois"], state["route_matrix"])
-        final_verification = verify_itinerary(final, session["user_profile"], state["route_matrix"], state["runtime_pois"])
-        _clean_final_messages(final, final_verification)
-        _attach_links(final, state["runtime_pois"])
-        store.save_itinerary(session_id, state["runtime_pois"], state["route_matrix"], final, final_verification)
-        store.add_revision(session_id, instruction, final)
-        return api_success({"itinerary": final, "verification": final_verification}, {"revise_itinerary": "done"})
-    except Exception as exc:
-        return api_error(exc, {"revise": "failed"})
+    intent = {
+        "instruction": text,
+        "avoid_visit_names": _extract_revision_avoid_names(text, pois),
+        "planning_decisions": [],
+        "extract_order_constraints": _has_order_signal(text),
+        "extract_time_constraints": _has_time_signal(text),
+        "pace_mode": "slow_down" if _has_slow_pace_signal(text) else "",
+    }
+    if not intent["avoid_visit_names"] and not intent["extract_order_constraints"] and not intent["extract_time_constraints"] and not intent["pace_mode"]:
+        raise AppError(
+            "这次只支持删点、调整先后顺序、晨间/夜间偏好和节奏调整。酒店、天数、交通或资料修改请回到行程设置处理。",
+            code="unsupported_revision_scope",
+            step="revise",
+        )
+    return intent
+
+
+def _revision_order_constraints(revision_intent: dict, runtime_pois: list[dict]) -> list[dict]:
+    if not revision_intent.get("extract_order_constraints"):
+        return []
+    return _extract_order_constraints(revision_intent.get("instruction", ""), "", runtime_pois)
+
+
+def _revision_time_constraints(revision_intent: dict, runtime_pois: list[dict]) -> list[dict]:
+    constraints: list[dict] = []
+    if revision_intent.get("extract_time_constraints"):
+        constraints.extend(_extract_time_constraints(revision_intent.get("instruction", ""), "", runtime_pois))
+    constraints.extend(_extract_single_place_revision_constraints(revision_intent.get("instruction", ""), runtime_pois))
+    return constraints
+
+
+def _extract_revision_avoid_names(text: str, pois: list[dict]) -> list[str]:
+    if not any(token in text for token in ["不要", "别去", "避开", "删掉", "删除", "去掉"]):
+        return []
+    names: list[str] = []
+    for row in pois:
+        for name in _poi_constraint_names(_grounded_with_decision(row)):
+            if name and name in text and name not in names:
+                names.append(name)
+                break
+    return names
+
+
+def _extract_single_place_revision_constraints(text: str, runtime_pois: list[dict]) -> list[dict]:
+    constraints: list[dict] = []
+    for poi in runtime_pois:
+        poi_id = str(poi.get("poi_id") or "").strip()
+        for name in _poi_constraint_names(poi):
+            if not name or name not in text:
+                continue
+            if any(token in text for token in [f"把{name}放前面", f"{name}放前面", f"前置{name}"]):
+                constraints.append({"poi_id": poi_id, "name": name, "preferred_window": "morning", "strength": "quasi_hard", "source_text": f"前置{name}"})
+                break
+            if any(token in text for token in [f"把{name}放后面", f"{name}放后面", f"后置{name}"]):
+                constraints.append({"poi_id": poi_id, "name": name, "preferred_window": "evening", "strength": "quasi_hard", "source_text": f"后置{name}"})
+                break
+    return constraints
+
+
+def _looks_like_unsupported_revision_scope(text: str) -> bool:
+    unsupported_patterns = [
+        r"酒店",
+        r"住在",
+        r"换酒店",
+        r"改.*天",
+        r"多住",
+        r"少住",
+        r"增加.*天",
+        r"减少.*天",
+        r"交通偏好",
+        r"只坐地铁",
+        r"只打车",
+        r"自驾",
+        r"公共交通",
+        r"资料",
+        r"笔记",
+        r"结构化",
+    ]
+    return any(re.search(pattern, text) for pattern in unsupported_patterns)
+
+
+def _has_order_signal(text: str) -> bool:
+    tokens = ["先去", "先逛", "第一站", "再去", "接着去", "然后去", "最后去", "收尾去", "前置", "后置", "放前面", "放后面"]
+    return any(token in text for token in tokens)
+
+
+def _has_time_signal(text: str) -> bool:
+    tokens = ["白天", "上午", "早上", "午后", "下午", "傍晚", "晚上", "夜里", "夜晚", "夜间"]
+    return any(token in text for token in tokens)
+
+
+def _has_slow_pace_signal(text: str) -> bool:
+    tokens = ["放慢节奏", "慢一点", "轻松一点", "别太赶", "不要太赶", "宽松一点"]
+    return any(token in text for token in tokens)
 
 
 def _require_session(session_id: str) -> dict:
@@ -291,6 +519,10 @@ def _sync_transport_edges(itinerary: dict, route_matrix: list[dict]) -> None:
 
 
 def _sync_precise_transport_edges(itinerary: dict, runtime_pois: list[dict], route_matrix: list[dict], user_profile: dict, amap_client) -> None:
+    route_index_by_pair = {
+        (edge.get("origin_poi_id"), edge.get("destination_poi_id")): index
+        for index, edge in enumerate(route_matrix)
+    }
     route_by_pair = {(edge.get("origin_poi_id"), edge.get("destination_poi_id")): edge for edge in route_matrix}
     by_id = {poi.get("poi_id"): poi for poi in runtime_pois}
     for day in itinerary.get("days", []):
@@ -306,13 +538,25 @@ def _sync_precise_transport_edges(itinerary: dict, runtime_pois: list[dict], rou
                 continue
             origin = _resolved_runtime_poi(by_id.get(item.get("poi_id")), item)
             destination = _resolved_runtime_poi(by_id.get(next_item.get("poi_id")), next_item)
-            edge = None
-            if origin and destination and (item.get("selected_branch_id") or next_item.get("selected_branch_id")) and _has_location(origin) and _has_location(destination):
+            pair = (item.get("poi_id"), next_item.get("poi_id"))
+            edge = route_by_pair.get(pair)
+            if (
+                origin
+                and destination
+                and _has_location(origin)
+                and _has_location(destination)
+                and (not edge or edge.get("source") != "amap_direction_api")
+            ):
                 precise_edge = build_route_edge(origin, destination, amap_client, user_profile)
                 if precise_edge.get("duration_min") is not None:
                     edge = precise_edge
-            if edge is None:
-                edge = route_by_pair.get((item.get("poi_id"), next_item.get("poi_id")))
+                    route_by_pair[pair] = precise_edge
+                    matrix_index = route_index_by_pair.get(pair)
+                    if matrix_index is None:
+                        route_index_by_pair[pair] = len(route_matrix)
+                        route_matrix.append(precise_edge)
+                    else:
+                        route_matrix[matrix_index] = precise_edge
             if not edge:
                 item.pop("transport_to_next", None)
                 continue
@@ -323,8 +567,15 @@ def _sync_precise_transport_edges(itinerary: dict, runtime_pois: list[dict], rou
             }
 
 
-def _sync_hotel_transport_edges(itinerary: dict, runtime_pois: list[dict], user_profile: dict, amap_client) -> None:
-    hotel = _hotel_anchor(user_profile, amap_client)
+def _sync_hotel_transport_edges(
+    itinerary: dict,
+    runtime_pois: list[dict],
+    user_profile: dict,
+    amap_client,
+    hotel: dict | None = None,
+    edge_cache: dict[tuple[str, str], dict] | None = None,
+) -> None:
+    hotel = hotel if hotel is not None else _hotel_anchor(user_profile, amap_client)
     if not hotel:
         return
     by_id = {poi.get("poi_id"): poi for poi in runtime_pois}
@@ -335,17 +586,24 @@ def _sync_hotel_transport_edges(itinerary: dict, runtime_pois: list[dict], user_
         first = _resolved_runtime_poi(by_id.get(items[0].get("poi_id")), items[0])
         last = _resolved_runtime_poi(by_id.get(items[-1].get("poi_id")), items[-1])
         if first and _has_location(first):
-            edge = build_route_edge(hotel, first, amap_client, user_profile)
+            edge = _cached_precise_edge(hotel, first, amap_client, user_profile, edge_cache)
             if edge.get("duration_min") is not None:
                 day["hotel_departure_transport_min"] = edge["duration_min"]
         if last and _has_location(last):
-            edge = build_route_edge(last, hotel, amap_client, user_profile)
+            edge = _cached_precise_edge(last, hotel, amap_client, user_profile, edge_cache)
             if edge.get("duration_min") is not None:
                 day["hotel_return_transport_min"] = edge["duration_min"]
 
 
-def _sync_hotel_rest_breaks(itinerary: dict, runtime_pois: list[dict], user_profile: dict, amap_client) -> None:
-    hotel = _hotel_anchor(user_profile, amap_client)
+def _sync_hotel_rest_breaks(
+    itinerary: dict,
+    runtime_pois: list[dict],
+    user_profile: dict,
+    amap_client,
+    hotel: dict | None = None,
+    edge_cache: dict[tuple[str, str], dict] | None = None,
+) -> None:
+    hotel = hotel if hotel is not None else _hotel_anchor(user_profile, amap_client)
     if not hotel:
         return
     by_id = {poi.get("poi_id"): poi for poi in runtime_pois}
@@ -367,8 +625,8 @@ def _sync_hotel_rest_breaks(itinerary: dict, runtime_pois: list[dict], user_prof
             before_poi = _resolved_runtime_poi(by_id.get(before_poi_id), before_item)
             if not after_poi or not before_poi:
                 continue
-            return_edge = build_route_edge(after_poi, hotel, amap_client, user_profile)
-            depart_edge = build_route_edge(hotel, before_poi, amap_client, user_profile)
+            return_edge = _cached_precise_edge(after_poi, hotel, amap_client, user_profile, edge_cache)
+            depart_edge = _cached_precise_edge(hotel, before_poi, amap_client, user_profile, edge_cache)
             day["hotel_rest_breaks"].append(
                 {
                     "after_poi_id": after_poi_id,
@@ -379,6 +637,27 @@ def _sync_hotel_rest_breaks(itinerary: dict, runtime_pois: list[dict], user_prof
                     "depart_from_hotel_transport_min": depart_edge.get("duration_min") or 0,
                 }
             )
+
+
+def _cached_precise_edge(
+    origin: dict,
+    destination: dict,
+    amap_client,
+    user_profile: dict,
+    edge_cache: dict[tuple[str, str], dict] | None,
+) -> dict:
+    origin_location = origin.get("location") or {}
+    destination_location = destination.get("location") or {}
+    key = (
+        f"{origin_location.get('lng')},{origin_location.get('lat')}",
+        f"{destination_location.get('lng')},{destination_location.get('lat')}",
+    )
+    if edge_cache is not None and key in edge_cache:
+        return edge_cache[key]
+    edge = build_route_edge(origin, destination, amap_client, user_profile)
+    if edge_cache is not None:
+        edge_cache[key] = edge
+    return edge
 
 
 def _hotel_anchor(user_profile: dict, amap_client) -> dict | None:
@@ -607,8 +886,9 @@ def _poi_constraint_names(poi: dict) -> list[str]:
 def _time_constraint_for_name(text: str, name: str) -> tuple[str, str] | None:
     patterns = [
         ("evening", [f"晚上去{name}", f"夜里去{name}", f"夜晚去{name}", f"傍晚去{name}", f"最后去{name}", f"收尾去{name}"]),
-        ("morning", [f"上午去{name}", f"早上去{name}", f"第一站{name}", f"上午先去{name}"]),
+        ("morning", [f"上午去{name}", f"早上去{name}", f"先去{name}", f"第一站{name}", f"上午先去{name}"]),
         ("afternoon", [f"下午去{name}", f"午后去{name}"]),
+        ("midday", [f"白天去{name}", f"白天逛{name}"]),
     ]
     for window, phrases in patterns:
         for phrase in phrases:
@@ -617,6 +897,7 @@ def _time_constraint_for_name(text: str, name: str) -> tuple[str, str] | None:
     suffix_patterns = [
         ("evening", [f"{name}晚上", f"{name}夜景", f"{name}夜生活"]),
         ("morning", [f"{name}上午", f"{name}早上"]),
+        ("midday", [f"{name}白天"]),
         ("afternoon", [f"{name}下午"]),
     ]
     for window, phrases in suffix_patterns:
@@ -655,7 +936,7 @@ def _resolved_runtime_poi(runtime_poi: dict | None, item: dict | None) -> dict |
 def _order_rank_for_text(text: str, name: str) -> int | None:
     if not name:
         return None
-    if any(token in text for token in [f"先去{name}", f"先逛{name}", f"第一站{name}", f"上午先去{name}"]):
+    if any(token in text for token in [f"先去{name}", f"先{name}", f"先逛{name}", f"第一站{name}", f"上午先去{name}"]):
         return 0
     if any(token in text for token in [f"再去{name}", f"接着去{name}", f"然后去{name}", f"下一站{name}"]):
         return 1

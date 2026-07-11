@@ -75,6 +75,19 @@ class SQLiteStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS planning_runs (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    error_code TEXT,
+                    error_message TEXT,
+                    attempt_count INTEGER NOT NULL DEFAULT 0,
+                    duration_ms INTEGER NOT NULL DEFAULT 0,
+                    debug TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS route_cache (
                     cache_key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
@@ -83,6 +96,7 @@ class SQLiteStore:
                 """
             )
             self._ensure_poi_columns(connection)
+            self._ensure_planning_run_columns(connection)
 
     def _ensure_poi_columns(self, connection) -> None:
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(pois)").fetchall()}
@@ -92,6 +106,16 @@ class SQLiteStore:
             "final_decision": "ALTER TABLE pois ADD COLUMN final_decision TEXT NOT NULL DEFAULT 'include'",
             "inferred_role": "ALTER TABLE pois ADD COLUMN inferred_role TEXT NOT NULL DEFAULT 'visit'",
             "decision_reason": "ALTER TABLE pois ADD COLUMN decision_reason TEXT NOT NULL DEFAULT ''",
+        }
+        for column, statement in migrations.items():
+            if column not in columns:
+                connection.execute(statement)
+
+    def _ensure_planning_run_columns(self, connection) -> None:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(planning_runs)").fetchall()}
+        migrations = {
+            "attempt_count": "ALTER TABLE planning_runs ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+            "duration_ms": "ALTER TABLE planning_runs ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0",
         }
         for column, statement in migrations.items():
             if column not in columns:
@@ -323,6 +347,25 @@ class SQLiteStore:
         payload["id"] = row["id"]
         return payload
 
+    def preview_planning_decision(self, session_id: str, intervention_id: str, choice_id: str) -> dict:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM planning_interventions WHERE session_id = ? AND id = ? AND status = 'open'",
+                (session_id, intervention_id),
+            ).fetchone()
+        if not row:
+            raise ValueError("planning intervention not found")
+        payload = json.loads(row["payload"])
+        choice = next((option for option in payload.get("options") or [] if option.get("id") == choice_id), None)
+        if not choice:
+            raise ValueError("planning intervention choice not found")
+        return {
+            "intervention_id": intervention_id,
+            "domain": payload.get("domain"),
+            "choice_id": choice_id,
+            "choice_label": choice.get("label") or choice_id,
+        }
+
     def resolve_planning_intervention(self, session_id: str, intervention_id: str, choice_id: str) -> None:
         with self.connect() as connection:
             row = connection.execute(
@@ -348,7 +391,7 @@ class SQLiteStore:
         with self.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, choice_id, choice_label
+                SELECT id, payload, choice_id, choice_label
                 FROM planning_interventions
                 WHERE session_id = ? AND status = 'resolved'
                 ORDER BY updated_at
@@ -358,11 +401,70 @@ class SQLiteStore:
         return [
             {
                 "intervention_id": row["id"],
+                "domain": json.loads(row["payload"]).get("domain"),
                 "choice_id": row["choice_id"],
                 "choice_label": row["choice_label"],
             }
             for row in rows
         ]
+
+    def start_planning_run(self, session_id: str) -> str:
+        run_id = str(uuid.uuid4())
+        now = _now()
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO planning_runs (id, session_id, status, stage, debug, created_at, updated_at)
+                VALUES (?, ?, 'running', 'initialize', '{}', ?, ?)
+                """,
+                (run_id, session_id, now, now),
+            )
+        return run_id
+
+    def update_planning_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        stage: str,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        attempt_count: int | None = None,
+        duration_ms: int | None = None,
+        debug: dict | None = None,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                UPDATE planning_runs
+                SET status = ?, stage = ?, error_code = ?, error_message = ?,
+                    attempt_count = COALESCE(?, attempt_count), duration_ms = COALESCE(?, duration_ms),
+                    debug = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (status, stage, error_code, error_message, attempt_count, duration_ms, _json(debug or {}), _now(), run_id),
+            )
+
+    def get_latest_planning_run(self, session_id: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM planning_runs WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "status": row["status"],
+            "stage": row["stage"],
+            "error_code": row["error_code"],
+            "error_message": row["error_message"],
+            "attempt_count": row["attempt_count"],
+            "duration_ms": row["duration_ms"],
+            "debug": json.loads(row["debug"] or "{}"),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
 
     def _invalidate_itinerary_state(self, connection, session_id: str) -> None:
         connection.execute("DELETE FROM itineraries WHERE session_id = ?", (session_id,))

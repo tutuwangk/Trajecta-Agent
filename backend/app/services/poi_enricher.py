@@ -53,6 +53,43 @@ def _duration_for_category(category: str) -> int:
     }.get(category, 60)
 
 
+def _semantics(
+    *,
+    poi_role: str,
+    meal_capability: str,
+    time_advice: list[str],
+    planning_function: str,
+    relaxed_min: int,
+    intense_min: int,
+    planning_notes: str,
+    experience_type: str,
+    outing_role: str,
+    quick_stop_eligible: bool = False,
+    meal_stop_min: int | None = None,
+    poi: dict,
+) -> dict:
+    base_profiles = {"visit": relaxed_min}
+    if quick_stop_eligible:
+        base_profiles["quick_stop"] = 15
+    if meal_stop_min is not None:
+        base_profiles["meal_stop"] = meal_stop_min
+    return {
+        "poi_role": poi_role,
+        "meal_capability": meal_capability,
+        "time_advice": time_advice,
+        "planning_function": planning_function,
+        "duration_profile": {"relaxed_min": relaxed_min, "intense_min": intense_min},
+        "planning_notes": planning_notes,
+        # Legacy fields kept for existing normalizer/planner code paths.
+        "experience_type": experience_type,
+        "time_suitability": _legacy_time_suitability(time_advice),
+        "outing_role": outing_role,
+        "quick_stop_eligible": quick_stop_eligible,
+        "base_duration_profiles": base_profiles,
+        "chain_resolution_mode": _chain_resolution_mode(poi),
+    }
+
+
 def _planning_semantics(poi: dict, category: str) -> dict:
     texts = [
         str(poi.get("raw_name") or ""),
@@ -63,78 +100,172 @@ def _planning_semantics(poi: dict, category: str) -> dict:
     ]
     text = " ".join(texts)
     tags = poi.get("experience_tags") or []
+    if any(token in text for token in ["酒店", "住宿", "hotel"]):
+        return _semantics(
+            poi_role="hotel_anchor",
+            meal_capability="none",
+            time_advice=["flexible"],
+            planning_function="rest",
+            relaxed_min=0,
+            intense_min=0,
+            planning_notes="住宿锚点，只用于出发、回程和休息分段。",
+            experience_type="hotel_anchor",
+            outing_role="filler",
+            poi=poi,
+        )
+    if any(token in text for token in ["机场", "车站", "火车站", "高铁站", "码头", "地铁站"]):
+        return _semantics(
+            poi_role="transport_anchor",
+            meal_capability="none",
+            time_advice=["flexible"],
+            planning_function="transfer",
+            relaxed_min=30,
+            intense_min=20,
+            planning_notes="交通节点，只用于到达、离开或换乘，不作为游玩目的地。",
+            experience_type="transport_anchor",
+            outing_role="filler",
+            poi=poi,
+        )
     if any(token in text for token in ["酒吧", "bar", "cocktail", "livehouse", "兰桂坊", "夜店"]):
-        return {
-            "experience_type": "nightlife",
-            "time_suitability": ["evening", "night"],
-            "outing_role": "anchor",
-            "meal_capability": "dinner_only",
-            "quick_stop_eligible": False,
-            "base_duration_profiles": {"visit": 120, "meal_stop": 60},
-            "chain_resolution_mode": _chain_resolution_mode(poi),
-        }
-    if any(token in text for token in ["夜景"]) and category != "restaurant":
-        return {
-            "experience_type": "evening_view",
-            "time_suitability": ["evening", "night"],
-            "outing_role": "anchor",
-            "meal_capability": "none",
-            "quick_stop_eligible": False,
-            "base_duration_profiles": {"visit": 90},
-            "chain_resolution_mode": _chain_resolution_mode(poi),
-        }
+        return _semantics(
+            poi_role="nightlife",
+            meal_capability="none",
+            time_advice=["evening", "night"],
+            planning_function="ending",
+            relaxed_min=120,
+            intense_min=90,
+            planning_notes="夜生活地点，只适合晚上或夜间，可作为当天收尾。",
+            experience_type="nightlife",
+            outing_role="anchor",
+            meal_stop_min=60,
+            poi=poi,
+        )
+    if any(token in text for token in ["夜景", "灯光", "夜游"]) and category != "restaurant":
+        return _semantics(
+            poi_role="evening_view",
+            meal_capability="none",
+            time_advice=["evening", "night"],
+            planning_function="ending",
+            relaxed_min=90,
+            intense_min=60,
+            planning_notes="夜景或灯光体验，优先安排在傍晚后。",
+            experience_type="evening_view",
+            outing_role="anchor",
+            poi=poi,
+        )
     if any(token in text for token in ["喜茶", "奈雪", "茶百道", "星巴克", "咖啡", "奶茶", "茶饮", "甜品", "果汁"]):
-        return {
-            "experience_type": "light_drink",
-            "time_suitability": ["morning", "afternoon", "evening"],
-            "outing_role": "filler",
-            "meal_capability": "none",
-            "quick_stop_eligible": True,
-            "base_duration_profiles": {"visit": 45, "quick_stop": 15},
-            "chain_resolution_mode": _chain_resolution_mode(poi),
-        }
+        return _semantics(
+            poi_role="drink_stop",
+            meal_capability="drink_only",
+            time_advice=["morning", "afternoon", "evening"],
+            planning_function="filler",
+            relaxed_min=45,
+            intense_min=15,
+            planning_notes="饮品补给点，只适合短暂停靠，不承接正式午餐或晚餐。",
+            experience_type="light_drink",
+            outing_role="filler",
+            quick_stop_eligible=True,
+            poi=poi,
+        )
     if category == "restaurant" and any(token in text for token in ["小吃", "冰粉", "蛋烘糕", "早餐", "早饭", "包子", "面包"]):
-        return {
-            "experience_type": "snack",
-            "time_suitability": ["morning", "midday", "afternoon", "evening"],
-            "outing_role": "filler",
-            "meal_capability": "breakfast_lunch" if any(token in text for token in ["早餐", "早饭", "包子", "面包"]) else "lunch_dinner",
-            "quick_stop_eligible": True,
-            "base_duration_profiles": {"visit": 45, "quick_stop": 15, "meal_stop": 45},
-            "chain_resolution_mode": _chain_resolution_mode(poi),
-        }
+        is_breakfast = any(token in text for token in ["早餐", "早饭", "包子", "面包"])
+        return _semantics(
+            poi_role="breakfast_meal" if is_breakfast else "snack_light_meal",
+            meal_capability="breakfast" if is_breakfast else "snack_only",
+            time_advice=["morning", "midday", "afternoon"] if is_breakfast else ["midday", "afternoon", "evening"],
+            planning_function="meal" if is_breakfast else "filler",
+            relaxed_min=45,
+            intense_min=30,
+            planning_notes="早餐点可承接早餐；小吃甜品默认只作轻食或补充，非正式午晚餐。",
+            experience_type="snack",
+            outing_role="filler",
+            quick_stop_eligible=not is_breakfast,
+            meal_stop_min=45,
+            poi=poi,
+        )
     if category == "restaurant":
-        time_suitability = ["midday", "evening"]
+        is_breakfast = any(token in text for token in ["早餐", "早饭", "brunch", "早午餐"])
+        time_advice = ["morning", "midday"] if is_breakfast else ["midday", "evening"]
         if any(token in text for token in ["早餐", "早饭"]):
-            time_suitability = ["morning", "midday"]
-        return {
-            "experience_type": "full_meal",
-            "time_suitability": time_suitability,
-            "outing_role": "anchor" if any(token in text for token in ["必吃", "专门", "晚餐", "午餐"]) else "filler",
-            "meal_capability": "breakfast_lunch" if time_suitability == ["morning", "midday"] else "lunch_dinner",
-            "quick_stop_eligible": False,
-            "base_duration_profiles": {"visit": 75, "meal_stop": 60},
-            "chain_resolution_mode": _chain_resolution_mode(poi),
-        }
-    if "拍照" in tags:
-        return {
-            "experience_type": "daytime_visit",
-            "time_suitability": ["afternoon", "evening"],
-            "outing_role": "anchor",
-            "meal_capability": "none",
-            "quick_stop_eligible": False,
-            "base_duration_profiles": {"visit": 90},
-            "chain_resolution_mode": _chain_resolution_mode(poi),
-        }
-    return {
-        "experience_type": "daytime_visit",
-        "time_suitability": ["morning", "afternoon"],
-        "outing_role": "anchor",
-        "meal_capability": "none",
-        "quick_stop_eligible": False,
-        "base_duration_profiles": {"visit": 120},
-        "chain_resolution_mode": _chain_resolution_mode(poi),
+            time_advice = ["morning", "midday"]
+        return _semantics(
+            poi_role="breakfast_meal" if is_breakfast else "full_meal",
+            meal_capability="breakfast" if is_breakfast else "lunch_dinner",
+            time_advice=time_advice,
+            planning_function="meal",
+            relaxed_min=75,
+            intense_min=60,
+            planning_notes="正餐地点，优先由 LLM 安排到合适的早餐、午餐或晚餐时段。",
+            experience_type="full_meal",
+            outing_role="anchor" if any(token in text for token in ["必吃", "专门", "晚餐", "午餐"]) else "filler",
+            meal_stop_min=60,
+            poi=poi,
+        )
+    if "拍照" in tags or any(token in text for token in ["拍照", "打卡", "出片"]):
+        return _semantics(
+            poi_role="photo_spot",
+            meal_capability="none",
+            time_advice=["daylight", "morning", "afternoon", "evening"],
+            planning_function="anchor",
+            relaxed_min=90,
+            intense_min=60,
+            planning_notes="拍照打卡点，优先安排在自然光较好的上午、下午或黄昏。",
+            experience_type="daytime_visit",
+            outing_role="anchor",
+            poi=poi,
+        )
+    if category in {"shopping_mall"} or any(token in text for token in ["商场", "商圈", "购物中心", "太古里", "IFS"]):
+        return _semantics(
+            poi_role="shopping_rest",
+            meal_capability="none",
+            time_advice=["flexible", "afternoon", "evening"],
+            planning_function="rest",
+            relaxed_min=90,
+            intense_min=60,
+            planning_notes="商场或商圈，可承担休息、避雨、购物和串联周边地点。",
+            experience_type="daytime_visit",
+            outing_role="anchor",
+            poi=poi,
+        )
+    if category in {"citywalk"} or any(token in text for token in ["街", "巷", "citywalk", "步行"]):
+        return _semantics(
+            poi_role="citywalk_area",
+            meal_capability="none",
+            time_advice=["daylight", "morning", "afternoon", "evening"],
+            planning_function="anchor",
+            relaxed_min=120,
+            intense_min=75,
+            planning_notes="步行街区，适合串联附近地点，避开过晚时段。",
+            experience_type="daytime_visit",
+            outing_role="anchor",
+            poi=poi,
+        )
+    return _semantics(
+        poi_role="scenic_anchor",
+        meal_capability="none",
+        time_advice=["open_hours", "morning", "afternoon"],
+        planning_function="anchor",
+        relaxed_min=150 if category in {"museum", "park"} else 120,
+        intense_min=90 if category in {"museum", "park"} else 75,
+        planning_notes="核心游玩点，需安排在开放时间内，通常承担半天或主要游玩目的。",
+        experience_type="daytime_visit",
+        outing_role="anchor",
+        poi=poi,
+    )
+
+
+def _legacy_time_suitability(time_advice: list[str]) -> list[str]:
+    mapping = {
+        "open_hours": ["morning", "afternoon"],
+        "daylight": ["morning", "afternoon", "evening"],
+        "flexible": ["morning", "midday", "afternoon", "evening"],
     }
+    result: list[str] = []
+    for item in time_advice:
+        for value in mapping.get(item, [item]):
+            if value not in result:
+                result.append(value)
+    return result
 
 
 def _chain_resolution_mode(poi: dict) -> str:

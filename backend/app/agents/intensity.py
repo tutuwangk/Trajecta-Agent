@@ -84,7 +84,7 @@ def timeline_time_minutes(day: dict) -> int | None:
     items = day.get("items") or []
     if not items:
         return None
-    first_arrival = _first_arrival_minutes(items)
+    first_arrival = _first_activity_minutes(day)
     last_active_end = _last_active_end_minutes(day)
     if first_arrival is None or last_active_end is None:
         return None
@@ -127,6 +127,20 @@ def _first_arrival_minutes(items: list[dict]) -> int | None:
         if arrival is not None:
             return arrival
     return None
+
+
+def _first_activity_minutes(day: dict) -> int | None:
+    starts = []
+    item_start = _first_arrival_minutes(day.get("items") or [])
+    if item_start is not None:
+        starts.append(item_start)
+    for meal in day.get("meal_breaks") or []:
+        if meal.get("included_in_item_duration"):
+            continue
+        meal_start = _parse_time(meal.get("start_time"))
+        if meal_start is not None:
+            starts.append(meal_start)
+    return min(starts) if starts else None
 
 
 def _last_active_end_minutes(day: dict) -> int | None:

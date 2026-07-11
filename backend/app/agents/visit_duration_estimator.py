@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.core import AppError
+
 
 TEXT_DURATION_RULES = [
     ("胡同", 75, "胡同街区适合轻量游逛。"),
@@ -63,12 +65,13 @@ def estimate_visit_durations(runtime_pois: list[dict], llm_client=None) -> list[
 
 
 def _llm_duration_estimates(runtime_pois: list[dict], llm_client) -> dict[str, dict]:
-    payload = llm_client.json_chat(
-        [
-            {"role": "system", "content": "你是旅行景点游玩时长估计助手。只输出 JSON，不输出解释性正文。"},
-            {
-                "role": "user",
-                "content": f"""请为每个地点估计两档“正常人在这个地方玩一次要多久”。
+    try:
+        payload = llm_client.json_chat(
+            [
+                {"role": "system", "content": "你是旅行景点游玩时长估计助手。只输出 JSON，不输出解释性正文。"},
+                {
+                    "role": "user",
+                    "content": f"""请为每个地点估计两档“正常人在这个地方玩一次要多久”。
 估计口径：只估计地点内的正常游玩、参观、排队和休息时间，不包含酒店往返和点间交通；不要为了迁就用户选择的行程强度而压缩时长；大型景区、主题乐园、动物园、植物园、博物馆群、古镇、山岳景区应按实际游玩体量给出半天或全天估计。
 输出两档时间：`relaxed_duration_min` 表示轻松但正常的游玩时长，`intense_duration_min` 表示更完整但仍然常规的深度游玩时长。两档差距要合理，通常控制在 15-120 分钟内；`relaxed_duration_min` 必须小于等于 `intense_duration_min`，且都不能离谱偏短。
 
@@ -77,11 +80,15 @@ def _llm_duration_estimates(runtime_pois: list[dict], llm_client) -> dict[str, d
 
 地点：{_duration_prompt_pois(runtime_pois)}
 """,
-            },
-        ],
-        step="estimate_visit_duration",
-        temperature=0.1,
-    )
+                },
+            ],
+            step="estimate_visit_duration",
+            temperature=0.1,
+        )
+    except AppError as exc:
+        if exc.code == "llm_invalid_json":
+            return {}
+        raise
     values = payload.get("durations") if isinstance(payload, dict) else []
     estimates: dict[str, dict] = {}
     for value in values or []:

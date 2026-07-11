@@ -1,3 +1,4 @@
+from app.core import AppError
 from app.agents.visit_duration_estimator import estimate_visit_durations
 
 
@@ -131,3 +132,24 @@ def test_estimate_visit_durations_uses_llm_for_unlisted_large_place():
     }
     assert estimated[0]["duration_confidence"] == "high"
     assert "正常人在这个地方玩一次" in llm.messages[1]["content"]
+
+
+def test_estimate_visit_durations_falls_back_when_llm_returns_invalid_json():
+    class InvalidJsonLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            raise AppError("LLM 返回内容不是有效 JSON。", code="llm_invalid_json", step=step)
+
+    estimated = estimate_visit_durations(
+        [
+            {
+                "poi_id": "p1",
+                "standard_name": "国家动物园",
+                "category": "attraction",
+                "estimated_duration_min": 75,
+            }
+        ],
+        InvalidJsonLLM(),
+    )
+
+    assert estimated[0]["estimated_duration_min"] >= 210
+    assert estimated[0]["duration_reason"] == "动物园通常需要完整半天游玩。"

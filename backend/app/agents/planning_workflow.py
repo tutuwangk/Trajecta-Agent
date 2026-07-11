@@ -7,13 +7,13 @@ from app.agents.itinerary_normalizer import normalize_itinerary
 from app.agents.planner import (
     build_copy_context,
     compile_planning_context,
-    enrich_planning_semantics_with_llm,
     materialize_itinerary_from_skeleton,
     plan_day_blueprint_with_llm,
     replan_day_blueprint_with_llm,
 )
-from app.agents.reviser import generate_copy, rule_repair
-from app.agents.verifier import review_soft_quality, validate_hard_constraints, verify_itinerary
+from app.agents.planning_preferences import build_planning_preferences
+from app.agents.reviser import generate_copy
+from app.agents.verifier import review_preference_conflicts, review_soft_quality, validate_hard_constraints, verify_itinerary
 from app.core import AppError
 
 
@@ -38,7 +38,7 @@ def run_planning_workflow(
     time_constraints: list[dict] | None = None,
     planning_decisions: list[dict] | None = None,
     prepare_itinerary: PrepareItinerary | None = None,
-    max_replans: int = 2,
+    max_replans: int = 1,
 ) -> tuple[dict, dict, dict]:
     planning_context = compile_planning_context(
         user_profile,
@@ -50,11 +50,12 @@ def run_planning_workflow(
         time_constraints=time_constraints,
         planning_decisions=planning_decisions,
     )
-    planning_context = enrich_planning_semantics_with_llm(planning_context, planning_llm)
-    runtime_pois = _runtime_with_route_semantics(runtime_pois, planning_context)
+    planning_preferences = dict(planning_context.get("planning_preferences") or build_planning_preferences(planning_decisions))
     planning_context["runtime_pois"] = runtime_pois
+    planning_context["planning_preferences"] = planning_preferences
     skeleton_versions: list[dict] = []
-    hard_issue_history: list[dict] = []
+    factual_issue_history: list[dict] = []
+    preference_issue_history: list[list[dict]] = []
     soft_issue_history: list[list[dict]] = []
 
     skeleton = plan_day_blueprint_with_llm(planning_context, planning_llm)
@@ -72,49 +73,44 @@ def run_planning_workflow(
             route_matrix,
             runtime_pois,
             time_constraints=planning_context.get("time_constraints", []),
+            order_constraints=planning_context.get("order_constraints", []),
         )
-        if hard_validation["passed"]:
-            soft_issues = review_soft_quality(
-                itinerary,
-                user_profile,
-                route_matrix,
-                runtime_pois,
-                time_constraints=planning_context.get("time_constraints", []),
-                llm_client=copy_llm,
-            )
-            blocking_soft_issues = _blocking_soft_issues(soft_issues)
-            if not blocking_soft_issues:
-                final_itinerary = itinerary
-                final_hard_validation = hard_validation
-                final_soft_issues = soft_issues
-                break
-            soft_issue_history.append(deepcopy(blocking_soft_issues))
+        if not hard_validation["passed"]:
+            factual_issue_history.append(deepcopy(hard_validation))
             if attempt >= max_replans:
-                final_itinerary = itinerary
-                final_hard_validation = hard_validation
-                final_soft_issues = soft_issues
-                break
-            skeleton = replan_day_blueprint_with_llm(planning_context, skeleton, {"issues": blocking_soft_issues}, planning_llm)
+                raise AppError(
+                    "路线规划失败，存在无法收敛的事实冲突。",
+                    code="plan_factual_constraints_unresolved",
+                    step="plan",
+                    details={"blockers": _issue_blockers(hard_validation.get("issues", []))},
+                )
+            skeleton = replan_day_blueprint_with_llm(planning_context, skeleton, hard_validation, planning_llm)
             continue
 
-        hard_issue_history.append(deepcopy(hard_validation))
-        repaired = rule_repair(itinerary, hard_validation, user_profile, runtime_pois=runtime_pois)
-        _prepare_itinerary(repaired, user_profile, runtime_pois, route_matrix, prepare_itinerary)
-        repaired_validation = validate_hard_constraints(
-            repaired,
+        preference_issues = review_preference_conflicts(
+            itinerary,
             user_profile,
             route_matrix,
             runtime_pois,
             time_constraints=planning_context.get("time_constraints", []),
+            order_constraints=planning_context.get("order_constraints", []),
+            planning_preferences=planning_preferences,
         )
-        if repaired_validation["passed"]:
-            final_itinerary = repaired
-            final_hard_validation = repaired_validation
+        replan_issues = list(preference_issues)
+        if not replan_issues:
+            final_itinerary = itinerary
+            final_hard_validation = hard_validation
             break
 
+        if preference_issues:
+            preference_issue_history.append(deepcopy(preference_issues))
         if attempt >= max_replans:
-            raise PlanningInterventionRequired(_build_planning_intervention(repaired_validation, planning_context))
-        skeleton = replan_day_blueprint_with_llm(planning_context, skeleton, repaired_validation, planning_llm)
+            if preference_issues:
+                raise PlanningInterventionRequired(_build_planning_intervention(preference_issues, planning_context))
+            final_itinerary = itinerary
+            final_hard_validation = hard_validation
+            break
+        skeleton = replan_day_blueprint_with_llm(planning_context, skeleton, {"issues": replan_issues}, planning_llm)
 
     if final_itinerary is None:
         raise AppError("路线规划失败，未生成有效结果。", code="plan_constraints_unresolved", step="plan")
@@ -126,18 +122,26 @@ def run_planning_workflow(
             route_matrix,
             runtime_pois,
             time_constraints=planning_context.get("time_constraints", []),
+            order_constraints=planning_context.get("order_constraints", []),
             llm_client=copy_llm,
         )
     copy_context = build_copy_context(planning_context, final_itinerary, final_hard_validation, final_soft_issues)
     final = generate_copy(final_itinerary, copy_context, user_profile, copy_llm)
-    _prepare_itinerary(final, user_profile, runtime_pois, route_matrix, prepare_itinerary)
-    verification = verify_itinerary(final, user_profile, route_matrix, runtime_pois, time_constraints=planning_context.get("time_constraints", []))
+    verification = verify_itinerary(
+        final,
+        user_profile,
+        route_matrix,
+        runtime_pois,
+        time_constraints=planning_context.get("time_constraints", []),
+        order_constraints=planning_context.get("order_constraints", []),
+    )
     return final, verification, {
         "planning_context_snapshot": _context_snapshot(planning_context),
         "skeleton_versions": skeleton_versions,
-        "hard_issue_history": hard_issue_history,
+        "hard_issue_history": factual_issue_history,
+        "preference_issue_history": preference_issue_history,
         "soft_issue_history": soft_issue_history,
-        "repair_attempts": len(hard_issue_history),
+        "repair_attempts": len(factual_issue_history),
     }
 
 
@@ -201,30 +205,50 @@ def _runtime_with_route_semantics(runtime_pois: list[dict], planning_context: di
     return enriched
 
 
-def _blocking_soft_issues(issues: list[dict]) -> list[dict]:
-    return [
-        issue
-        for issue in issues
-        if str(issue.get("severity") or "").lower() in {"high", "critical"}
-        and str(issue.get("type") or "") in {"night_place_too_early", "formal_meal_invalid", "meal_too_late", "explicit_preference_lost"}
-    ]
+def _issue_blockers(issues: list[dict]) -> list[dict]:
+    blockers = []
+    for issue in issues:
+        blockers.append(
+            {
+                "type": issue.get("type"),
+                "message": issue.get("message"),
+                "action_hint": issue.get("suggestion"),
+                "affected_day": issue.get("day"),
+                "affected_poi_name": issue.get("poi_name") or issue.get("name"),
+            }
+        )
+    return blockers
 
 
-def _build_planning_intervention(validation: dict, planning_context: dict) -> dict:
-    issues = list(validation.get("issues") or [])
+def _build_planning_intervention(issues: list[dict], planning_context: dict) -> dict:
     issue_types = {issue.get("type") for issue in issues}
-    if "must_visit_missing" in issue_types or "time_constraint_violated" in issue_types:
+    domains = [str(issue.get("domain") or "") for issue in issues]
+    primary_domain = _intervention_domain(domains)
+    if primary_domain in {"must_places", "time_preferences"}:
         question = "有些必去或指定时段的安排互相挤压，你想优先保留哪种安排？"
         options = [
             {"id": "keep_must_places", "label": "优先保留必去地点", "description": "路线可能更满，待定地点会减少。"},
             {"id": "keep_time_preferences", "label": "优先保留指定时段", "description": "不适合该时段的地点会进入备选。"},
             {"id": "relax_pace", "label": "放宽节奏", "description": "当天可能更接近特种兵。"},
         ]
-    elif "meal_slot_missing" in issue_types:
+    elif primary_domain == "order_preferences":
+        question = "当前顺序偏好和其他安排有冲突，你想优先保留哪种安排？"
+        options = [
+            {"id": "keep_order_preferences", "label": "优先保留先后顺序", "description": "其他地点可能后移、改天或进入备选。"},
+            {"id": "keep_must_places", "label": "优先保留核心地点", "description": "必要时放宽这条先后顺序。"},
+            {"id": "relax_pace", "label": "接受更满一点", "description": "通过更紧凑的节奏尽量兼顾顺序。"},
+        ]
+    elif primary_domain == "meal_arrangement" or "meal_slot_missing" in issue_types:
         question = "当天缺少合适的正餐安排，你想怎么处理？"
         options = [
             {"id": "use_nearby_meal", "label": "就近用餐", "description": "不强行把轻食当正餐。"},
             {"id": "drop_optional_for_meal", "label": "减少待定地点", "description": "优先腾出正常午餐或晚餐时间。"},
+        ]
+    elif primary_domain == "pace":
+        question = "当前路线节奏偏满，你想优先保留哪种安排？"
+        options = [
+            {"id": "relax_pace", "label": "接受更满一点", "description": "尽量保住当前地点，只放宽节奏要求。"},
+            {"id": "keep_must_places", "label": "只保留核心地点", "description": "允许删减待定地点来压缩路线。"},
         ]
     else:
         question = "当前路线存在需要取舍的问题，你想优先保留哪种安排？"
@@ -234,11 +258,37 @@ def _build_planning_intervention(validation: dict, planning_context: dict) -> di
         ]
     return {
         "status": "needs_user_choice",
+        "domain": primary_domain,
         "question": question,
         "options": options,
         "issues": issues,
+        "display_issues": _display_issues(issues),
         "context_summary": {
             "destination": planning_context.get("destination", ""),
             "days": planning_context.get("days", 1),
         },
     }
+
+
+def _intervention_domain(domains: list[str]) -> str:
+    for domain in domains:
+        if domain:
+            return domain
+    return "planning_preference"
+
+
+def _display_issues(issues: list[dict]) -> list[dict]:
+    display_items: list[dict] = []
+    for issue in issues[:3]:
+        display_items.append(
+            {
+                "type": issue.get("type"),
+                "domain": issue.get("domain"),
+                "message": issue.get("message"),
+                "suggestion": issue.get("suggestion"),
+                "evidence": issue.get("evidence"),
+                "day": issue.get("day"),
+                "poi_name": issue.get("poi_name"),
+            }
+        )
+    return display_items

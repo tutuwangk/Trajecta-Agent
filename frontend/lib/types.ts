@@ -1,8 +1,21 @@
 export type ApiResponse<T> = {
   ok: boolean;
   data: T | null;
-  error: { code: string; message: string; step?: string | null } | null;
+  error: {
+    code: string;
+    message: string;
+    step?: string | null;
+    blockers?: PlanningBlocker[];
+  } | null;
   step_status: Record<string, string>;
+};
+
+export type PlanningBlocker = {
+  type?: string;
+  message?: string;
+  action_hint?: string;
+  affected_day?: number;
+  affected_poi_name?: string;
 };
 
 export type UserProfile = {
@@ -93,23 +106,51 @@ export type SessionData = {
   revision_history: Array<Record<string, unknown>>;
 };
 
+export type PlanningInterventionIssue = {
+  type: string;
+  domain?: string;
+  message: string;
+  suggestion?: string;
+  evidence?: string;
+  day?: number;
+  poi_name?: string;
+};
+
 export type PlanningIntervention = {
   id: string;
   status: "needs_user_choice";
+  domain?: string;
   question: string;
   options: Array<{
     id: string;
     label: string;
     description?: string;
   }>;
+  issues?: PlanningInterventionIssue[];
+  display_issues?: PlanningInterventionIssue[];
   context_summary?: Record<string, unknown>;
 };
+
+export type PlanCompletedResult = {
+  status: "completed";
+  runtime_pois: RuntimePoi[];
+  route_matrix: Array<Record<string, unknown>>;
+  itinerary: Itinerary;
+  verification: ItineraryState["verification"];
+};
+
+export type PlanNeedsChoiceResult = {
+  status: "needs_user_choice";
+  planning_intervention: PlanningIntervention;
+};
+
+export type PlanResult = PlanCompletedResult | PlanNeedsChoiceResult;
 
 export type ItineraryState = {
   runtime_pois: RuntimePoi[];
   route_matrix: Array<Record<string, unknown>>;
   itinerary: Itinerary;
-  verification: { passed: boolean; issues: Array<{ type: string; severity: string; message: string; suggestion?: string }> };
+  verification: { passed: boolean; issues: Array<{ type: string; severity: string; message: string; suggestion?: string; day?: number; poi_name?: string }> };
 };
 
 export type RuntimePoi = {

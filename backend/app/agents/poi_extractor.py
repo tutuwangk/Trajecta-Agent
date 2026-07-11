@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 NON_PLACE_WORDS = {
     "冰粉",
     "蛋烘糕",
@@ -48,6 +50,32 @@ def extract_poi_names(ugc_items: list[dict], user_input: str = "") -> list[dict]
                 if tag not in bucket["experience_tags"]:
                     bucket["experience_tags"].append(tag)
             bucket["confidence"] = max(bucket["confidence"], float(mention.get("confidence") or 0.75))
+    for raw_name, meal_slot in re.findall(
+        r"(?:^|[，。；;、\n])\s*([^，。；;、\n]{2,20}?)(?:很)?适合安排为?(早餐|午餐|晚餐)",
+        user_input,
+    ):
+        normalized_name = raw_name.strip(" ，。；;、")
+        if not _is_valid_place_name(normalized_name):
+            continue
+        canonical = ALIASES.get(normalized_name, normalized_name)
+        bucket = grouped.setdefault(
+            canonical,
+            {
+                "raw_name": canonical,
+                "source": "user_input",
+                "contexts": [],
+                "experience_tags": [],
+                "possible_category": "restaurant",
+                "confidence": 0.9,
+            },
+        )
+        context = f"明确希望作为{meal_slot}"
+        if context not in bucket["contexts"]:
+            bucket["contexts"].append(context)
+        if "美食" not in bucket["experience_tags"]:
+            bucket["experience_tags"].append("美食")
+        bucket["possible_category"] = "restaurant"
+        bucket["confidence"] = max(float(bucket.get("confidence") or 0), 0.9)
     return list(grouped.values())
 
 

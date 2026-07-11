@@ -24,3 +24,14 @@ def test_extract_poi_names_merges_aliases_and_filters_non_places():
     ifs = next(poi for poi in raw_pois if poi["raw_name"] == "IFS")
     assert "爬墙熊猫适合拍照" in ifs["contexts"]
     assert "地标" in ifs["experience_tags"]
+
+
+def test_extract_poi_names_recovers_explicit_meal_place_from_original_text():
+    raw_pois = extract_poi_names(
+        [{"note_id": "note_001", "mentioned_pois": []}],
+        "上午逛博物馆。叶婆婆钵钵鸡适合安排为午餐。晚上去九眼桥。",
+    )
+
+    meal = next(poi for poi in raw_pois if poi["raw_name"] == "叶婆婆钵钵鸡")
+    assert meal["possible_category"] == "restaurant"
+    assert meal["contexts"] == ["明确希望作为午餐"]

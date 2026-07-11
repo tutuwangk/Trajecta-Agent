@@ -66,12 +66,17 @@ def ground_single_poi(raw_poi: dict, user_profile: dict, amap_client, llm_client
             selection_mode="llm_candidate_selection",
         )
 
-    scored = sorted(
+    score, best = max(
         ((_score_candidate(raw_poi, candidate, city), candidate) for candidate in candidates),
         key=lambda item: item[0],
     )
-    score, best = scored[-1]
-    status = "matched" if score >= 0.8 else "ambiguous" if score >= 0.55 else "unmatched"
+    status = (
+        "matched"
+        if score >= 0.8 or (score >= 0.72 and _is_primary_candidate(raw_poi, best))
+        else "ambiguous"
+        if score >= 0.55
+        else "unmatched"
+    )
     if status == "unmatched":
         return _unmatched(
             raw_poi,
@@ -267,6 +272,32 @@ def _score_candidate(raw_poi: dict, candidate: dict, city: str | None) -> float:
         + 0.15 * context_match
         + 0.10 * district_match
     )
+
+
+def _is_primary_candidate(raw_poi: dict, candidate: dict) -> bool:
+    raw_name = str(raw_poi.get("raw_name") or "").strip().lower()
+    candidate_name = str(candidate.get("name") or "").strip().lower()
+    category = str(candidate.get("type") or "")
+    if not raw_name or raw_name not in candidate_name:
+        return False
+    auxiliary_tokens = [
+        "服务中心",
+        "售票处",
+        "停车",
+        "出入口",
+        "地铁站",
+        "公交站",
+        "礼宾台",
+        "速写",
+        "雕塑庭院",
+        "东街",
+        "西街",
+        "南街",
+        "北街",
+    ]
+    if any(token in candidate_name for token in auxiliary_tokens):
+        return False
+    return not any(token in category for token in ["道路名", "公交车站", "地铁站", "停车场"])
 
 
 def _category_matches(expected: str, amap_type: str) -> float:

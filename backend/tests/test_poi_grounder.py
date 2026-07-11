@@ -162,6 +162,7 @@ def test_ground_single_poi_does_not_mark_landmark_variants_as_chain():
 
     assert grounded["match_status"] == "matched"
     assert grounded["standard_name"] == "武侯祠"
+    assert grounded["amap_id"] == "GOOD2"
     assert grounded["is_chain"] is False
 
 
@@ -205,3 +206,35 @@ def test_ground_single_poi_handles_equal_score_candidates():
 
     assert grounded["match_status"] == "matched"
     assert grounded["standard_name"] == "武侯祠"
+    assert grounded["amap_id"] == "B001"
+
+
+def test_ground_single_poi_accepts_primary_landmark_name_with_city_prefix():
+    raw_poi = {"raw_name": "武侯祠", "possible_category": "景点", "contexts": ["想去"]}
+    client = FakeAmapClient(
+        [
+            {
+                "id": "MAIN",
+                "name": "成都武侯祠博物馆",
+                "address": "武侯祠大街231号",
+                "location": "104.047,30.646",
+                "cityname": "成都市",
+                "adname": "武侯区",
+                "type": "科教文化服务;博物馆;博物馆",
+            },
+            {
+                "id": "ROAD",
+                "name": "武侯祠东街",
+                "address": "武侯区",
+                "location": "104.046,30.643",
+                "cityname": "成都市",
+                "adname": "武侯区",
+                "type": "地名地址信息;交通地名;道路名",
+            },
+        ]
+    )
+
+    grounded = ground_single_poi(raw_poi, {"destination": "成都"}, client)
+
+    assert grounded["amap_id"] == "MAIN"
+    assert grounded["match_status"] == "matched"

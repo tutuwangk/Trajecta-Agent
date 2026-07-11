@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.agents.intensity import daily_time_limit_minutes, daily_time_minutes, sync_day_total_time
+from app.agents.intensity import daily_time_minutes, sync_day_total_time
 from app.agents.meal_rules import required_meal_slots
 
 DEFAULT_RELAXED_FIRST_ARRIVAL_MIN = 10 * 60
@@ -22,16 +22,10 @@ def normalize_itinerary(
 ) -> None:
     runtime_by_id = {poi.get("poi_id"): poi for poi in runtime_pois}
     route_by_pair = {(edge.get("origin_poi_id"), edge.get("destination_poi_id")): edge for edge in route_matrix}
-    limit_minutes = daily_time_limit_minutes(user_profile)
-    must_visit = user_profile.get("constraints", {}).get("must_visit", [])
 
     itinerary.setdefault("global_risks", [])
     for day in itinerary.get("days", []):
         _remove_unplannable(day, runtime_by_id)
-        _sync_day_segments(day)
-        _sync_day_transports(day, route_by_pair)
-        _rebuild_timing(day, runtime_by_id, _is_high_intensity(user_profile))
-        _trim_optional_items(day, itinerary, runtime_by_id, route_by_pair, must_visit, limit_minutes)
         _sync_day_segments(day)
         _sync_day_transports(day, route_by_pair)
         _rebuild_timing(day, runtime_by_id, _is_high_intensity(user_profile))
@@ -167,34 +161,13 @@ def _rebuild_timing(day: dict, runtime_by_id: dict, high_intensity: bool) -> Non
         _rebuild_timing_from_meal_slots(day, runtime_by_id, current)
         sync_day_total_time(day)
         return
-    meal_breaks: list[dict] = []
-    lunch_done = False
-    dinner_done = False
     for index, item in enumerate(items):
         item["arrival_time"] = _format_time(current)
-        start = current
         duration = _int(item.get("duration_min"))
-        end = start + duration
-        poi = runtime_by_id.get(item.get("poi_id"), {})
-        if duration >= LARGE_PLACE_MIN:
-            if _overlaps(start, end, *LUNCH_WINDOW):
-                meal_breaks.append(_inside_meal("午餐", "12:00", item))
-                lunch_done = True
-            if _overlaps(start, end, *DINNER_WINDOW):
-                meal_breaks.append(_inside_meal("晚餐", "18:00", item))
-                dinner_done = True
-        current = end
-        if not lunch_done and _should_insert_external_meal(current, *LUNCH_WINDOW) and not _is_meal_poi(item, poi):
-            meal_breaks.append({"label": "午餐", "start_time": _format_time(max(current, LUNCH_WINDOW[0])), "duration_min": MEAL_BREAK_MIN})
-            current = max(current, LUNCH_WINDOW[0]) + MEAL_BREAK_MIN
-            lunch_done = True
-        if not dinner_done and _should_insert_external_meal(current, *DINNER_WINDOW) and not _is_meal_poi(item, poi):
-            meal_breaks.append({"label": "晚餐", "start_time": _format_time(max(current, DINNER_WINDOW[0])), "duration_min": MEAL_BREAK_MIN})
-            current = max(current, DINNER_WINDOW[0]) + MEAL_BREAK_MIN
-            dinner_done = True
+        current += duration
         if index < len(items) - 1:
             current += _int((item.get("transport_to_next") or {}).get("duration_min"))
-    day["meal_breaks"] = meal_breaks
+    day["meal_breaks"] = []
     sync_day_total_time(day)
 
 
@@ -308,9 +281,6 @@ def _sync_day_segments(day: dict) -> None:
         if not filtered:
             continue
         segment_time = str(raw_segment.get("segment_time") or "").strip().lower()
-        if synced and synced[-1].get("kind") == "outing":
-            synced[-1]["poi_ids"].extend(filtered)
-            continue
         synced.append({"kind": "outing", "segment_time": segment_time, "poi_ids": filtered})
 
     remaining = [poi_id for poi_id in ordered_poi_ids if poi_id not in seen]
@@ -372,11 +342,38 @@ def _rebuild_timing_from_meal_slots(day: dict, runtime_by_id: dict, current: int
         [slot for slot in meal_slots if slot.get("source") == "fallback_nearby"],
         key=lambda slot: _slot_preferred_time(slot.get("slot")),
     )
+    current = _meal_aligned_outing_start(
+        current,
+        current,
+        [str(item.get("poi_id") or "") for item in items],
+        {str(item.get("poi_id") or ""): item for item in items},
+        meal_slots,
+    )
+    pending_fallbacks = sorted(
+        [slot for slot in meal_slots if slot.get("source") == "fallback_nearby"],
+        key=lambda slot: _slot_preferred_time(slot.get("slot")),
+    )
     fallback_index = 0
 
     for index, item in enumerate(items):
+        item_duration = _int(item.get("duration_min"))
+        while fallback_index < len(pending_fallbacks):
+            pending = pending_fallbacks[fallback_index]
+            preferred = _slot_preferred_time(pending.get("slot"))
+            _, window_end = _meal_slot_window(str(pending.get("slot") or ""))
+            if current > window_end:
+                fallback_index += 1
+                continue
+            if current < preferred and current + item_duration <= window_end:
+                break
+            start = max(current, preferred)
+            meal_breaks.append(_fallback_meal_break(pending, start))
+            current = start + MEAL_BREAK_MIN
+            fallback_index += 1
+
+        current = _align_poi_meal_start(current, item, meal_slots)
         item["arrival_time"] = _format_time(current)
-        current += _int(item.get("duration_min"))
+        current += item_duration
         _apply_poi_meal_roles(item, meal_slots)
         meal_breaks.extend(_build_inside_meals(item, meal_slots))
 
@@ -390,13 +387,22 @@ def _rebuild_timing_from_meal_slots(day: dict, runtime_by_id: dict, current: int
             current += _int((item.get("transport_to_next") or {}).get("duration_min"))
 
     while fallback_index < len(pending_fallbacks):
-        start = max(current, _slot_preferred_time(pending_fallbacks[fallback_index].get("slot")))
+        preferred = _slot_preferred_time(pending_fallbacks[fallback_index].get("slot"))
+        _, window_end = _meal_slot_window(str(pending_fallbacks[fallback_index].get("slot") or ""))
+        if current > window_end:
+            fallback_index += 1
+            continue
+        return_transport = _int(day.get("hotel_return_transport_min") or day.get("last_to_hotel_transport_min"))
+        if preferred > current + return_transport:
+            break
+        start = max(current, preferred)
         meal_breaks.append(_fallback_meal_break(pending_fallbacks[fallback_index], start))
         current = start + MEAL_BREAK_MIN
         fallback_index += 1
 
     day["meal_breaks"] = meal_breaks
     _drop_stale_required_meals(day)
+    _drop_unrealized_optional_meals(day)
     sync_day_total_time(day)
 
 
@@ -415,17 +421,66 @@ def _rebuild_segmented_timing(day: dict, runtime_by_id: dict, current: int) -> N
         key=lambda slot: _slot_preferred_time(slot.get("slot")),
     )
     fallback_index = 0
+    has_completed_outing = False
+    previous_last_poi_id: str | None = None
+    previous_returned_to_hotel = False
 
     for segment in day.get("segments") or []:
         if segment.get("kind") != "outing":
             continue
-        current = max(current, _segment_start_time(segment, runtime_by_id, items_by_id, current))
+        if has_completed_outing and previous_last_poi_id and not previous_returned_to_hotel:
+            cross_segment_transfer = _int(
+                (items_by_id.get(previous_last_poi_id, {}).get("transport_to_next") or {}).get("duration_min")
+            )
+            current += cross_segment_transfer
+            total_minutes += cross_segment_transfer
+        # The first segment label is a soft blueprint hint.  A designated meal
+        # inside that segment may require an earlier departure; later segments
+        # still cannot overlap an outing that has already completed.
+        minimum_start = current if has_completed_outing else 7 * 60
+        current = max(
+            current,
+            _segment_start_time(
+                segment,
+                runtime_by_id,
+                items_by_id,
+                current,
+                honor_segment_label=not has_completed_outing,
+            ),
+        )
+        current = _meal_aligned_outing_start(
+            current,
+            minimum_start,
+            [str(poi_id or "") for poi_id in segment.get("poi_ids") or []],
+            {str(key or ""): value for key, value in items_by_id.items()},
+            meal_slots,
+        )
+        for slot in meal_slots:
+            if slot.get("source") == "fallback_nearby" and slot not in pending_fallbacks:
+                pending_fallbacks.append(slot)
+        pending_fallbacks.sort(key=lambda slot: _slot_preferred_time(slot.get("slot")))
         for index, poi_id in enumerate(segment.get("poi_ids") or []):
             item = items_by_id.get(poi_id)
             if not item:
                 continue
-            item["arrival_time"] = _format_time(current)
             duration = _int(item.get("duration_min"))
+            while fallback_index < len(pending_fallbacks):
+                pending = pending_fallbacks[fallback_index]
+                preferred = _slot_preferred_time(pending.get("slot"))
+                _, window_end = _meal_slot_window(str(pending.get("slot") or ""))
+                if current > window_end:
+                    fallback_index += 1
+                    continue
+                if current < preferred and current + duration <= window_end:
+                    break
+                start = max(current, preferred)
+                meal_breaks.append(_fallback_meal_break(pending, start))
+                total_minutes += MEAL_BREAK_MIN
+                current = start + MEAL_BREAK_MIN
+                fallback_index += 1
+
+            current = _align_poi_meal_start(current, item, meal_slots)
+            item["arrival_time"] = _format_time(current)
             current += duration
             total_minutes += duration
             _apply_poi_meal_roles(item, meal_slots)
@@ -452,9 +507,20 @@ def _rebuild_segmented_timing(day: dict, runtime_by_id: dict, current: int) -> N
             total_minutes += _int(hotel_break.get("return_to_hotel_transport_min")) + _int(hotel_break.get("depart_from_hotel_transport_min"))
             current += _int(hotel_break.get("depart_from_hotel_transport_min"))
             hotel_break["next_departure_time"] = _format_time(current)
+        has_completed_outing = True
+        previous_last_poi_id = str(last_poi_id or "") or None
+        previous_returned_to_hotel = bool(hotel_break)
 
     while fallback_index < len(pending_fallbacks):
-        start = max(current, _slot_preferred_time(pending_fallbacks[fallback_index].get("slot")))
+        preferred = _slot_preferred_time(pending_fallbacks[fallback_index].get("slot"))
+        _, window_end = _meal_slot_window(str(pending_fallbacks[fallback_index].get("slot") or ""))
+        if current > window_end:
+            fallback_index += 1
+            continue
+        return_transport = _int(day.get("hotel_return_transport_min") or day.get("last_to_hotel_transport_min"))
+        if preferred > current + return_transport:
+            break
+        start = max(current, preferred)
         meal_breaks.append(_fallback_meal_break(pending_fallbacks[fallback_index], start))
         total_minutes += MEAL_BREAK_MIN
         current = start + MEAL_BREAK_MIN
@@ -462,6 +528,7 @@ def _rebuild_segmented_timing(day: dict, runtime_by_id: dict, current: int) -> N
 
     day["meal_breaks"] = meal_breaks
     _drop_stale_required_meals(day)
+    _drop_unrealized_optional_meals(day)
     day["total_outing_min"] = total_minutes
 
 
@@ -499,11 +566,11 @@ def _resolve_day_meal_slots(day: dict, items: list[dict], runtime_by_id: dict) -
                     slot = {"slot": slot.get("slot"), "requirement": "required", "source": "fallback_nearby"}
                 else:
                     continue
-        if source == "fallback_nearby" and slot.get("requirement") == "required":
+        if slot.get("source") == "fallback_nearby":
             replacement = _replacement_meal_slot(slot_name, items, runtime_by_id, reserved_poi_ids)
             if replacement is not None:
                 slot = replacement
-                reserved_poi_ids.add(str(replacement.get("poi_id") or replacement.get("within_poi_id") or ""))
+                reserved_poi_ids.add(str(replacement.get("poi_id") or ""))
         if slot.get("source") == "poi":
             reserved_poi_ids.add(str(slot.get("poi_id") or ""))
         if slot.get("source") == "inside_poi":
@@ -593,6 +660,12 @@ def _downgrade_invalid_meal_stops(items: list[dict], runtime_by_id: dict, meal_s
 def _meal_capability_supports_slot(meal_capability: str, slot_name: str) -> bool:
     mapping = {
         "none": set(),
+        "breakfast": {"breakfast"},
+        "lunch": {"lunch"},
+        "dinner": {"dinner"},
+        "lunch_dinner": {"lunch", "dinner"},
+        "snack_only": set(),
+        "drink_only": set(),
         "breakfast_only": {"breakfast"},
         "lunch_only": {"lunch"},
         "dinner_only": {"dinner"},
@@ -659,6 +732,30 @@ def _drop_stale_required_meals(day: dict) -> None:
             item.pop("meal_roles", None)
 
 
+def _drop_unrealized_optional_meals(day: dict) -> None:
+    realized = {
+        (str(meal.get("slot") or ""), str(meal.get("source") or ""), str(meal.get("within_poi_id") or ""))
+        for meal in day.get("meal_breaks") or []
+    }
+    for item in day.get("items") or []:
+        for role in item.get("meal_roles") or []:
+            realized.add((str(role), "poi", str(item.get("poi_id") or "")))
+
+    def is_realized(slot: dict) -> bool:
+        source = str(slot.get("source") or "")
+        slot_name = str(slot.get("slot") or "")
+        target = str(slot.get("poi_id") or slot.get("within_poi_id") or "")
+        if source == "fallback_nearby":
+            return any(key[0] == slot_name and key[1] == source for key in realized)
+        return (slot_name, source, target) in realized
+
+    day["meal_slots"] = [
+        slot
+        for slot in day.get("meal_slots") or []
+        if slot.get("requirement") != "optional" or is_realized(slot)
+    ]
+
+
 def _apply_poi_meal_roles(item: dict, meal_slots: list[dict]) -> None:
     roles = [
         str(slot.get("slot"))
@@ -667,6 +764,65 @@ def _apply_poi_meal_roles(item: dict, meal_slots: list[dict]) -> None:
     ]
     if roles:
         item["meal_roles"] = list(dict.fromkeys(roles))
+
+
+def _align_poi_meal_start(current: int, item: dict, meal_slots: list[dict]) -> int:
+    slot = next(
+        (
+            candidate
+            for candidate in meal_slots
+            if candidate.get("source") == "poi" and candidate.get("poi_id") == item.get("poi_id")
+        ),
+        None,
+    )
+    if not slot:
+        return current
+    _, window_end = _meal_slot_window(str(slot.get("slot") or ""))
+    if current > window_end:
+        return current
+    return max(current, _slot_preferred_time(slot.get("slot")))
+
+
+def _meal_aligned_outing_start(
+    current: int,
+    minimum_start: int,
+    poi_ids: list[str],
+    items_by_id: dict[str, dict],
+    meal_slots: list[dict],
+) -> int:
+    prefix_minutes = 0
+    for index, poi_id in enumerate(poi_ids):
+        item = items_by_id.get(poi_id)
+        if not item:
+            continue
+        meal_slot = next(
+            (
+                slot
+                for slot in meal_slots
+                if slot.get("source") == "poi" and str(slot.get("poi_id") or "") == poi_id
+            ),
+            None,
+        )
+        if meal_slot:
+            slot_name = str(meal_slot.get("slot") or "")
+            _, window_end = _meal_slot_window(slot_name)
+            projected_arrival = current + prefix_minutes
+            if projected_arrival > window_end:
+                desired_start = _meal_target_time(slot_name) - prefix_minutes
+                if desired_start >= max(minimum_start, 7 * 60):
+                    return desired_start
+                # The selected POI cannot physically reach this meal window
+                # even with an early departure. Keep the route order, but use
+                # the explicit nearby-meal fallback instead of publishing a
+                # nominal lunch or dinner several hours late.
+                meal_slot["source"] = "fallback_nearby"
+                meal_slot.pop("poi_id", None)
+                return max(minimum_start, DEFAULT_HIGH_FIRST_ARRIVAL_MIN)
+            return current
+        prefix_minutes += _int(item.get("duration_min"))
+        if index < len(poi_ids) - 1:
+            prefix_minutes += _int((item.get("transport_to_next") or {}).get("duration_min"))
+    return current
 
 
 def _build_inside_meals(item: dict, meal_slots: list[dict]) -> list[dict]:
@@ -724,6 +880,14 @@ def _slot_inside_time(slot: str | None) -> int:
     return 12 * 60
 
 
+def _meal_target_time(slot: str | None) -> int:
+    if slot == "breakfast":
+        return 8 * 60
+    if slot == "dinner":
+        return 18 * 60 + 30
+    return 12 * 60 + 30
+
+
 def _default_start_time(day: dict, items: list[dict], runtime_by_id: dict, high_intensity: bool) -> int:
     explicit = _parse_time(items[0].get("arrival_time"))
     if explicit is not None:
@@ -743,26 +907,34 @@ def _default_start_time(day: dict, items: list[dict], runtime_by_id: dict, high_
     return DEFAULT_HIGH_FIRST_ARRIVAL_MIN if high_intensity else DEFAULT_RELAXED_FIRST_ARRIVAL_MIN
 
 
-def _segment_start_time(segment: dict, runtime_by_id: dict, items_by_id: dict, fallback_current: int | None) -> int:
+def _segment_start_time(
+    segment: dict,
+    runtime_by_id: dict,
+    items_by_id: dict,
+    fallback_current: int | None,
+    *,
+    honor_segment_label: bool = True,
+) -> int:
     segment_time = str(segment.get("segment_time") or "").strip().lower()
-    if segment_time == "night":
+    if honor_segment_label and segment_time == "night":
         return 18 * 60
-    if segment_time == "evening":
+    if honor_segment_label and segment_time == "evening":
         return 18 * 60
-    if segment_time == "afternoon":
+    if honor_segment_label and segment_time == "afternoon":
         return 14 * 60
-    if segment_time == "midday":
+    if honor_segment_label and segment_time == "midday":
         return 11 * 60 + 30
-    if segment_time == "morning":
+    if honor_segment_label and segment_time == "morning":
         return 10 * 60
     first_poi_id = (segment.get("poi_ids") or [None])[0]
     poi = runtime_by_id.get(first_poi_id, {})
-    suitability = _time_suitability(poi)
+    item = items_by_id.get(first_poi_id, {})
+    suitability = list(dict.fromkeys([*_time_suitability(poi), *(item.get("preferred_time_windows") or [])]))
     if "night" in suitability:
         return 18 * 60
-    if "evening" in suitability:
+    if "evening" in suitability and not any(value in suitability for value in {"morning", "midday", "afternoon"}):
         return 18 * 60
-    if "midday" in suitability:
+    if "midday" in suitability and "morning" not in suitability:
         return 11 * 60 + 30
     if "afternoon" in suitability and "morning" not in suitability:
         return 14 * 60

@@ -26,12 +26,14 @@ export function PlacePool({
 }) {
   const [editingId, setEditingId] = useState<string>("");
   const [arrangingId, setArrangingId] = useState<string>("");
+  const [showExcluded, setShowExcluded] = useState(false);
   const [manualNames, setManualNames] = useState<Record<string, string>>({});
   const [selectedAnchors, setSelectedAnchors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState<Record<string, string>>({});
-  const visiblePois = pois.filter((row) => row.final_decision !== "exclude");
+  const groupedPois = groupPois(pois);
+  const visibleCount = pois.length;
 
-  if (!visiblePois.length) {
+  if (!visibleCount) {
     return (
       <section className="panel">
         <h2 className="text-2xl font-semibold tracking-[-0.02em]">识别出的地点</h2>
@@ -67,14 +69,37 @@ export function PlacePool({
 
   return (
     <section className="panel">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-[-0.02em]">识别出的地点</h2>
         </div>
-        <span className="rounded-full bg-surface px-3 py-1 text-sm text-muted">{visiblePois.length} 个地点</span>
+        <span className="rounded-full bg-surface px-3 py-1 text-sm text-muted">{visibleCount} 个地点</span>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {visiblePois.map((row) => {
+      <div className="space-y-5">
+        {groupedPois.map((group) => {
+          if (group.key === "excluded" && !showExcluded) {
+            return (
+              <section key={group.key} className="rounded-3xl border border-line bg-white/60 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-base font-semibold text-ink">{group.label}</div>
+                    <div className="mt-1 text-sm text-muted">这些地点目前不会进入正式路线，但你随时可以恢复。</div>
+                  </div>
+                  <button className="btn-secondary px-3 py-1.5" onClick={() => setShowExcluded(true)}>
+                    展开 {group.rows.length} 个地点
+                  </button>
+                </div>
+              </section>
+            );
+          }
+          return (
+            <section key={group.key}>
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="text-base font-semibold text-ink">{group.label}</div>
+                <span className="rounded-full bg-surface px-3 py-1 text-xs text-muted">{group.rows.length} 个</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {group.rows.map((row) => {
           const item = row.place_pool_item;
           const id = placeId(row);
           const value = manualNames[id] ?? row.manual_name ?? item.display_name;
@@ -90,7 +115,7 @@ export function PlacePool({
           const canMarkOptional = item.primary_actions.includes("待定");
           const canRemove = item.primary_actions.includes("移除");
           const canRename = item.primary_actions.includes("改名");
-          const anchorOptions = buildAnchorOptions(visiblePois, row, hotelName);
+          const anchorOptions = buildAnchorOptions(pois, row, hotelName);
           return (
             <article key={row.id} className={`rounded-3xl bg-white/70 p-4 ${cardClass(isMust, isOptional)}`}>
               <div className="flex items-start justify-between gap-3">
@@ -179,11 +204,16 @@ export function PlacePool({
                   </button>
                 )}
               </div>
+              {row.decision_reason && <div className="mt-3 text-sm text-muted">{row.decision_reason}</div>}
               {row.grounded_poi.chain_status !== "resolved" && row.grounded_poi.is_chain && <div className="mt-3 text-sm text-muted">还没有确定具体门店</div>}
               {row.grounded_poi.chain_status === "resolved" && row.grounded_poi.resolved_from_anchor_name && (
                 <div className="mt-3 text-sm text-muted">按“{row.grounded_poi.resolved_from_anchor_name}”顺路匹配</div>
               )}
             </article>
+          );
+                })}
+              </div>
+            </section>
           );
         })}
       </div>
@@ -197,6 +227,15 @@ export function PlacePool({
       )}
     </section>
   );
+}
+
+function groupPois(pois: PoiRow[]) {
+  return [
+    { key: "included", label: "已纳入", rows: pois.filter((row) => row.final_decision === "include") },
+    { key: "optional", label: "待定", rows: pois.filter((row) => row.final_decision === "optional") },
+    { key: "unresolved", label: "需确认", rows: pois.filter((row) => row.final_decision === "unresolved") },
+    { key: "excluded", label: "未纳入", rows: pois.filter((row) => row.final_decision === "exclude") },
+  ].filter((group) => group.rows.length);
 }
 
 function GenerateButtonLabel({ loading }: { loading: boolean }) {

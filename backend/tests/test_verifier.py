@@ -1,4 +1,4 @@
-from app.agents.verifier import verify_itinerary
+from app.agents.verifier import review_preference_conflicts, verify_itinerary
 
 
 def test_verify_itinerary_flags_unmatched_and_daily_time_over_low_intensity_limit():
@@ -32,6 +32,33 @@ def test_verify_itinerary_flags_unmatched_and_daily_time_over_low_intensity_limi
     assert "daily_time_over_intensity_limit" in issue_types
     assert "unmatched_poi_scheduled" in issue_types
     assert "must_visit_missing" in issue_types
+
+
+def test_verify_itinerary_flags_missing_user_must_include_runtime_poi():
+    itinerary = {"days": []}
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "成都杜甫草堂博物馆",
+            "match_status": "matched",
+            "final_decision": "include",
+            "user_override": "must_include",
+        }
+    ]
+
+    result = verify_itinerary(itinerary, {"constraints": {}}, [], runtime_pois)
+
+    assert result["passed"] is False
+    issue_types = {issue["type"] for issue in result["issues"]}
+    assert "no_places_scheduled" in issue_types
+    assert {
+        "type": "must_visit_missing",
+        "severity": "high",
+        "poi_id": "p1",
+        "poi_name": "成都杜甫草堂博物馆",
+        "message": "必去地点 成都杜甫草堂博物馆 未进入路线。",
+        "suggestion": "重新排序并优先安排该地点。",
+    } in result["issues"]
 
 
 def test_verify_itinerary_flags_daily_time_over_relaxed_limit():
@@ -95,7 +122,7 @@ def test_verify_itinerary_counts_hotel_transport_and_meals_as_outing_time():
     assert "daily_time_over_intensity_limit" in {issue["type"] for issue in result["issues"]}
 
 
-def test_verify_itinerary_uses_intensity_outing_minutes_for_intensity_classification():
+def test_verify_itinerary_uses_total_outing_minutes_for_intensity_classification():
     itinerary = {
         "days": [
             {
@@ -123,10 +150,29 @@ def test_verify_itinerary_uses_intensity_outing_minutes_for_intensity_classifica
         runtime_pois,
     )
 
-    assert "daily_time_over_intensity_limit" not in {issue["type"] for issue in result["issues"]}
+    assert "daily_time_over_intensity_limit" in {issue["type"] for issue in result["issues"]}
 
 
-def test_verify_itinerary_allows_relaxed_day_to_exceed_limit_for_must_places():
+def test_verify_itinerary_rejects_lunch_poi_that_starts_after_lunch_window():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "meal_slots": [{"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p1"}],
+                "items": [
+                    {"poi_id": "p1", "name": "钵钵鸡", "arrival_time": "14:30", "duration_min": 60, "meal_roles": ["lunch"]}
+                ],
+            }
+        ]
+    }
+    runtime_pois = [{"poi_id": "p1", "standard_name": "钵钵鸡", "match_status": "matched", "category": "restaurant"}]
+
+    result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, [], runtime_pois)
+
+    assert "meal_time_invalid" in {issue["type"] for issue in result["issues"]}
+
+
+def test_review_preference_conflicts_respects_relax_pace_choice():
     itinerary = {
         "days": [
             {
@@ -144,8 +190,16 @@ def test_verify_itinerary_allows_relaxed_day_to_exceed_limit_for_must_places():
     ]
 
     result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, [], runtime_pois)
+    preference_issues = review_preference_conflicts(
+        itinerary,
+        {"constraints": {"physical_intensity": "medium"}},
+        [],
+        runtime_pois,
+        planning_preferences={"pace": "relax_pace"},
+    )
 
-    assert "daily_time_over_intensity_limit" not in {issue["type"] for issue in result["issues"]}
+    assert "daily_time_over_intensity_limit" in {issue["type"] for issue in result["issues"]}
+    assert "daily_time_over_intensity_limit" not in {issue["type"] for issue in preference_issues}
 
 
 def test_verify_itinerary_allows_user_confirmed_ambiguous_map_candidate():
@@ -400,6 +454,96 @@ def test_verify_itinerary_flags_explicit_evening_time_constraint_when_scheduled_
 
     issue_types = {issue["type"] for issue in result["issues"]}
     assert "time_constraint_violated" in issue_types
+
+
+def test_verify_itinerary_requires_evening_visit_to_start_in_the_evening_window():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [{"poi_id": "p1", "name": "九眼桥", "arrival_time": "17:11", "duration_min": 60}],
+            }
+        ]
+    }
+    runtime_pois = [{"poi_id": "p1", "standard_name": "九眼桥", "match_status": "matched", "category": "attraction"}]
+
+    result = verify_itinerary(
+        itinerary,
+        {"constraints": {"physical_intensity": "medium"}},
+        [],
+        runtime_pois,
+        time_constraints=[
+            {"poi_id": "p1", "preferred_window": "evening", "strength": "quasi_hard", "source_text": "晚上去九眼桥"}
+        ],
+    )
+
+    assert "time_constraint_violated" in {issue["type"] for issue in result["issues"]}
+
+
+def test_verify_itinerary_rejects_inherently_night_only_poi_scheduled_in_afternoon():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [{"poi_id": "p1", "name": "九眼桥夜景", "arrival_time": "16:30", "duration_min": 90}],
+            }
+        ]
+    }
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "九眼桥夜景",
+            "match_status": "matched",
+            "category": "attraction",
+            "planning_semantics": {"poi_role": "evening_view", "time_advice": ["evening", "night"]},
+        }
+    ]
+
+    result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, [], runtime_pois)
+
+    assert "time_constraint_violated" in {issue["type"] for issue in result["issues"]}
+
+
+def test_verify_itinerary_rejects_compiled_time_outside_blueprint_segment():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "segments": [{"kind": "outing", "segment_time": "morning", "poi_ids": ["p1"]}],
+                "items": [{"poi_id": "p1", "name": "成都博物馆", "arrival_time": "12:30", "duration_min": 150}],
+            }
+        ]
+    }
+    runtime_pois = [{"poi_id": "p1", "standard_name": "成都博物馆", "match_status": "matched", "category": "museum"}]
+
+    result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, [], runtime_pois)
+
+    assert "segment_time_violated" in {issue["type"] for issue in result["issues"]}
+    assert result["passed"] is True
+
+
+def test_verify_itinerary_rejects_empty_day_when_there_are_enough_scheduled_places():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "items": [
+                    {"poi_id": "p1", "name": "武侯祠", "arrival_time": "10:00", "duration_min": 90, "transport_to_next": {"duration_min": 15}},
+                    {"poi_id": "p2", "name": "锦里", "arrival_time": "11:45", "duration_min": 75},
+                ],
+            },
+            {"day": 2, "items": []},
+        ]
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "standard_name": "武侯祠", "match_status": "matched"},
+        {"poi_id": "p2", "standard_name": "锦里", "match_status": "matched", "category": "restaurant"},
+    ]
+
+    result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, [], runtime_pois)
+
+    assert "empty_day_with_available_places" in {issue["type"] for issue in result["issues"]}
+    assert result["passed"] is False
 
 
 def test_verify_itinerary_respects_hotel_rest_segments_for_transfers_but_still_requires_lunch():

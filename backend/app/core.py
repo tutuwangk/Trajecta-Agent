@@ -6,11 +6,12 @@ logger = logging.getLogger(__name__)
 
 
 class AppError(Exception):
-    def __init__(self, message: str, code: str = "app_error", step: str | None = None):
+    def __init__(self, message: str, code: str = "app_error", step: str | None = None, details: dict | None = None):
         super().__init__(message)
         self.message = message
         self.code = code
         self.step = step
+        self.details = details or {}
 
 
 class MissingConfigurationError(AppError):
@@ -25,6 +26,8 @@ def api_success(data: dict | list | None = None, step_status: dict | None = None
 def api_error(error: Exception, step_status: dict | None = None) -> dict:
     if isinstance(error, AppError):
         payload = {"code": error.code, "message": error.message, "step": error.step}
+        if error.details:
+            payload.update(error.details)
     else:
         logger.exception("Unexpected error while handling request", exc_info=error)
         payload = {"code": "internal_error", "message": "服务处理失败，请稍后重试。", "step": None}

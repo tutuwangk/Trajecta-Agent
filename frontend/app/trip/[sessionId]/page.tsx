@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { getSession, planTrip, recognizePlaces, reviseTrip, submitPlanningDecision, updatePlaceOverrides } from "@/lib/api";
-import type { PlanningIntervention, PoiDecisionInput, SessionData } from "@/lib/types";
+import { planningControlsDisabled, resolvePlanningFlow } from "@/lib/planning-flow";
+import type { PlanningBlocker, PlanningIntervention, PoiDecisionInput, SessionData } from "@/lib/types";
 import { ItineraryCard } from "@/components/ItineraryCard";
 import { PlanningInterventionCard } from "@/components/PlanningInterventionCard";
 import { PlacePool } from "@/components/PlacePool";
@@ -14,11 +15,13 @@ export default function TripPage() {
   const sessionId = params.sessionId;
   const [session, setSession] = useState<SessionData | null>(null);
   const [planningIntervention, setPlanningIntervention] = useState<PlanningIntervention | null>(null);
-  const [status, setStatus] = useState("");
+  const [busyMessage, setBusyMessage] = useState("");
+  const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const hasItinerary = Boolean(session?.itinerary_state?.itinerary);
-  const recognizing = status === "正在识别地点";
-  const generatingRoute = status === "正在生成路线";
+  const isBusy = planningControlsDisabled(busyMessage);
+  const recognizing = busyMessage === "正在识别地点";
+  const generatingRoute = busyMessage === "正在生成路线";
 
   async function load() {
     const result = await getSession(sessionId);
@@ -37,75 +40,96 @@ export default function TripPage() {
 
   async function handlePoiChange(decisions: PoiDecisionInput[]) {
     const hadItinerary = Boolean(session?.itinerary_state?.itinerary);
-    setStatus("正在保存地点选择");
+    setBusyMessage("正在保存地点选择");
     const result = await updatePlaceOverrides(sessionId, decisions);
     if (!result.ok) {
       setError(result.error?.message || "保存失败");
-      setStatus("");
+      setBusyMessage("");
       return;
     }
     await load();
-    setStatus(hadItinerary ? "地点已更新，请重新生成路线" : "");
+    setBusyMessage("");
+    setNotice(hadItinerary ? "地点已更新，请重新生成路线" : "");
   }
 
   async function handlePlan() {
-    setStatus("正在生成路线");
+    setBusyMessage("正在生成路线");
+    setNotice("");
     setError("");
-    const result = await planTrip(sessionId);
-    if (!result.ok) {
-      setError(result.error?.message || "路线生成失败");
-      setStatus("");
+    const outcome = resolvePlanningFlow(await planTrip(sessionId), "路线生成失败");
+    if (outcome.kind === "failed") {
+      setError(formatPlanningError(outcome.message, outcome.blockers));
+      setBusyMessage("");
       return;
     }
-    if (result.data?.status === "needs_user_choice" && result.data.planning_intervention) {
-      setPlanningIntervention(result.data.planning_intervention);
-      setStatus("");
+    if (outcome.kind === "needs_user_choice") {
+      setPlanningIntervention(outcome.result.planning_intervention);
+      setBusyMessage("");
       return;
     }
     setPlanningIntervention(null);
     await load();
-    setStatus("");
+    setBusyMessage("");
   }
 
   async function handlePlanningChoice(choiceId: string) {
     if (!planningIntervention) return;
-    setStatus("正在按你的选择调整路线");
+    setBusyMessage("正在按你的选择调整路线");
+    setNotice("");
     setError("");
-    const result = await submitPlanningDecision(sessionId, planningIntervention.id, choiceId);
-    if (!result.ok) {
-      setError(result.error?.message || "保存选择失败");
-      setStatus("");
+    const outcome = resolvePlanningFlow(
+      await submitPlanningDecision(sessionId, planningIntervention.id, choiceId),
+      "保存选择失败"
+    );
+    if (outcome.kind === "failed") {
+      setError(formatPlanningError(outcome.message, outcome.blockers));
+      setBusyMessage("");
+      return;
+    }
+    if (outcome.kind === "needs_user_choice") {
+      setPlanningIntervention(outcome.result.planning_intervention);
+      setBusyMessage("");
       return;
     }
     setPlanningIntervention(null);
-    await handlePlan();
+    await load();
+    setBusyMessage("");
   }
 
   async function handleExtract() {
     const hadItinerary = Boolean(session?.itinerary_state?.itinerary);
-    setStatus("正在识别地点");
+    setBusyMessage("正在识别地点");
+    setNotice("");
     setError("");
     const result = await recognizePlaces(sessionId);
     if (!result.ok) {
       setError(result.error?.message || "地点识别失败");
-      setStatus("");
+      setBusyMessage("");
       return;
     }
     await load();
-    setStatus(hadItinerary ? "地点已更新，请重新生成路线" : "");
+    setBusyMessage("");
+    setNotice(hadItinerary ? "地点已更新，请重新生成路线" : "");
   }
 
   async function handleRevise(instruction: string) {
-    setStatus("正在调整路线");
+    setBusyMessage("正在调整路线");
+    setNotice("");
     setError("");
-    const result = await reviseTrip(sessionId, instruction);
-    if (!result.ok) {
-      setError(result.error?.message || "调整失败");
-      setStatus("");
+    const outcome = resolvePlanningFlow(await reviseTrip(sessionId, instruction), "调整失败");
+    if (outcome.kind === "failed") {
+      setError(formatPlanningError(outcome.message, outcome.blockers));
+      setBusyMessage("");
       return;
     }
+    if (outcome.kind === "needs_user_choice") {
+      setPlanningIntervention(outcome.result.planning_intervention);
+      setBusyMessage("");
+      return;
+    }
+    setPlanningIntervention(null);
     await load();
-    setStatus("");
+    setBusyMessage("");
   }
 
   if (!session) {
@@ -141,21 +165,21 @@ export default function TripPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <button className="btn-secondary gap-2" onClick={handleExtract} disabled={Boolean(status)}>
+            <button className="btn-secondary gap-2" onClick={handleExtract} disabled={isBusy}>
               <LoadingButtonLabel loading={recognizing} label="识别地点" loadingLabel="正在识别" dark={false} />
             </button>
-            <button className="btn-primary gap-2" onClick={handlePlan} disabled={Boolean(status)}>
+            <button className="btn-primary gap-2" onClick={handlePlan} disabled={isBusy}>
               <LoadingButtonLabel loading={generatingRoute} label="生成路线" loadingLabel="正在生成" dark />
             </button>
           </div>
         </div>
-        {status && <p className="mt-4 rounded-2xl bg-surface px-4 py-3 text-sm text-ink">{status}</p>}
+        {(busyMessage || notice) && <p className="mt-4 rounded-2xl bg-surface px-4 py-3 text-sm text-ink">{busyMessage || notice}</p>}
         {error && <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-800">{error}</p>}
       </section>
 
       <PlanningInterventionCard
         intervention={planningIntervention}
-        disabled={Boolean(status)}
+        disabled={isBusy}
         onChoose={handlePlanningChoice}
       />
 
@@ -172,11 +196,23 @@ export default function TripPage() {
       )}
       <RevisionPanel
         onRevise={handleRevise}
-        disabled={!session.itinerary_state || Boolean(status)}
+        disabled={!session.itinerary_state || isBusy}
         showSuccess={Boolean(session.revision_history?.length)}
       />
     </main>
   );
+}
+
+function formatPlanningError(message: string, blockers?: PlanningBlocker[]) {
+  const visibleBlockers = (blockers || []).filter((blocker) => blocker.message || blocker.action_hint).slice(0, 2);
+  if (!visibleBlockers.length) return message;
+  const details = visibleBlockers
+    .map((blocker) => {
+      const place = blocker.affected_poi_name ? `${blocker.affected_poi_name}：` : "";
+      return `${place}${blocker.message || blocker.action_hint}`;
+    })
+    .join("；");
+  return `${message} ${details}`;
 }
 
 function LoadingButtonLabel({

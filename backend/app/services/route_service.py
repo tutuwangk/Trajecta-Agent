@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from itertools import permutations
+from math import asin, ceil, cos, radians, sin, sqrt
 
 from app.core import AppError
 
-MAX_WALKING_DISTANCE_M = 1500
-MAX_WALKING_DURATION_MIN = 25
-DEFAULT_TRANSPORT_PREFERENCES = ["walking", "taxi", "public_transport"]
+MAX_WALKING_DISTANCE_M = 2000
+DEFAULT_TRANSPORT_PREFERENCES = ["taxi", "public_transport"]
 
 
 def classify_relation(mode: str, duration_min: int | None) -> str:
@@ -42,6 +42,48 @@ def build_route_matrix(runtime_pois: list[dict], amap_client, cache_service=None
     return matrix
 
 
+def build_spatial_route_matrix(runtime_pois: list[dict], user_profile: dict | None = None) -> list[dict]:
+    """Build cheap planning-time edges; selected edges are replaced with Amap facts before publishing."""
+    matched = [poi for poi in runtime_pois if _is_routable_poi(poi)]
+    preferences = _transport_preferences(user_profile)
+    return [_spatial_edge(origin, destination, preferences) for origin, destination in permutations(matched, 2)]
+
+
+def _spatial_edge(origin: dict, destination: dict, preferences: list[str]) -> dict:
+    distance_m = max(1, round(_haversine_distance_m(origin, destination)))
+    if distance_m <= MAX_WALKING_DISTANCE_M:
+        mode = "walking"
+        duration_min = max(1, ceil(distance_m / 75))
+    else:
+        mode = next((item for item in preferences if item in {"taxi", "public_transport"}), "taxi")
+        if mode == "public_transport":
+            duration_min = max(10, ceil(distance_m / 300) + 8)
+        else:
+            duration_min = max(8, ceil(distance_m / 420) + 5)
+    return {
+        "origin_poi_id": origin["poi_id"],
+        "destination_poi_id": destination["poi_id"],
+        "mode": mode,
+        "distance_m": distance_m,
+        "duration_min": duration_min,
+        "relation": classify_relation(mode, duration_min),
+        "source": "spatial_estimate",
+    }
+
+
+def _haversine_distance_m(origin: dict, destination: dict) -> float:
+    origin_location = origin.get("location") or {}
+    destination_location = destination.get("location") or {}
+    origin_lng = radians(float(origin_location["lng"]))
+    origin_lat = radians(float(origin_location["lat"]))
+    destination_lng = radians(float(destination_location["lng"]))
+    destination_lat = radians(float(destination_location["lat"]))
+    delta_lng = destination_lng - origin_lng
+    delta_lat = destination_lat - origin_lat
+    value = sin(delta_lat / 2) ** 2 + cos(origin_lat) * cos(destination_lat) * sin(delta_lng / 2) ** 2
+    return 2 * 6_371_000 * asin(sqrt(value))
+
+
 def build_route_edge(origin: dict, destination: dict, amap_client, user_profile: dict | None = None) -> dict:
     preferences = _transport_preferences(user_profile)
     candidates = _route_candidates(origin, destination, amap_client, preferences)
@@ -63,11 +105,10 @@ def _route_candidates(origin: dict, destination: dict, amap_client, preferences:
     origin_coord = _coord(origin)
     dest_coord = _coord(destination)
     candidates: list[dict] = []
-    if "walking" in preferences:
-        walking = amap_client.walking_direction(origin_coord, dest_coord)
-        candidate = _candidate("walking", walking)
-        if candidate and _is_reasonable_walk(candidate):
-            candidates.append(candidate)
+    walking = amap_client.walking_direction(origin_coord, dest_coord)
+    candidate = _candidate("walking", walking)
+    if candidate:
+        candidates.append(candidate)
     if "taxi" in preferences:
         driving = amap_client.driving_direction(origin_coord, dest_coord)
         candidate = _candidate("taxi", driving)
@@ -87,7 +128,12 @@ def _select_candidate(candidates: list[dict], preferences: list[str]) -> dict:
     if not candidates:
         return {"mode": "unknown", "distance_m": None, "duration_min": None}
     by_mode = {candidate["mode"]: candidate for candidate in candidates}
+    walking = by_mode.get("walking")
+    if walking and _is_short_walk(walking):
+        return walking
     for mode in preferences:
+        if mode == "walking":
+            continue
         candidate = by_mode.get(mode)
         if candidate:
             return candidate
@@ -102,14 +148,9 @@ def _candidate(mode: str, response: dict | None) -> dict | None:
     return {"mode": mode, "distance_m": distance_m, "duration_min": duration_min}
 
 
-def _is_reasonable_walk(candidate: dict) -> bool:
+def _is_short_walk(candidate: dict) -> bool:
     distance_m = candidate.get("distance_m")
-    duration_min = candidate.get("duration_min")
-    return (
-        isinstance(duration_min, int)
-        and duration_min <= MAX_WALKING_DURATION_MIN
-        and (distance_m is None or distance_m <= MAX_WALKING_DISTANCE_M)
-    )
+    return isinstance(distance_m, int) and distance_m <= MAX_WALKING_DISTANCE_M
 
 
 def _optional_transit_direction(amap_client, origin: str, destination: str, city: str) -> dict | None:

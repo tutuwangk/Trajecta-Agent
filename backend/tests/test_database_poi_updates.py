@@ -489,7 +489,30 @@ def test_store_saves_and_resolves_planning_intervention(tmp_path):
     assert resolved == [
         {
             "intervention_id": intervention_id,
+            "domain": None,
             "choice_id": "keep_time",
             "choice_label": "保留九眼桥晚上去",
         }
     ]
+
+
+def test_store_tracks_failed_planning_run_with_stage_and_error(tmp_path):
+    store = SQLiteStore(str(tmp_path / "travel.sqlite3"))
+    session_id = store.create_session("成都四日游", "", {"destination": "成都", "days": 4, "constraints": {}})
+
+    run_id = store.start_planning_run(session_id)
+    store.update_planning_run(
+        run_id,
+        status="failed",
+        stage="verify_itinerary",
+        error_code="itinerary_publish_blocked",
+        error_message="路线未通过发布校验",
+        debug={"issue_types": ["meal_time_invalid"]},
+    )
+
+    run = store.get_latest_planning_run(session_id)
+    assert run["id"] == run_id
+    assert run["status"] == "failed"
+    assert run["stage"] == "verify_itinerary"
+    assert run["error_code"] == "itinerary_publish_blocked"
+    assert run["debug"] == {"issue_types": ["meal_time_invalid"]}

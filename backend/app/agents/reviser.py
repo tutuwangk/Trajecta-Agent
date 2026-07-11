@@ -275,7 +275,7 @@ def _copy_messages(copy_context: dict) -> list[dict[str, str]]:
                 "## Role\n"
                 "你是旅行路线文案助手。\n\n"
                 "## Mission\n"
-                "只根据给定事实写 route_summary、day summary、item reason、removed reason、risk notes。\n\n"
+                "只根据给定事实写 route_summary、day summary、item reason、removed reason、risk notes，输出严格 JSON。\n\n"
                 "## Hard Rules\n"
                 "- 不得新增地点、时间、交通、风险结论。\n"
                 "- 不得改动 poi_id、day、事实字段。\n"

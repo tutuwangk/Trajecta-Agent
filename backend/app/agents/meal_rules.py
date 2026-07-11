@@ -29,6 +29,14 @@ def _linear_window(day: dict, items: list[dict]) -> tuple[int, int] | None:
     last_end = _last_item_end_minutes(items)
     if first_arrival is None or last_end is None:
         return None
+    for meal in day.get("meal_breaks") or []:
+        if meal.get("included_in_item_duration"):
+            continue
+        meal_start = _parse_time(meal.get("start_time"))
+        if meal_start is None:
+            continue
+        first_arrival = min(first_arrival, meal_start)
+        last_end = max(last_end, meal_start + _int(meal.get("duration_min") or meal.get("duration_minutes")))
     departure_transport = _int(day.get("hotel_departure_transport_min") or day.get("hotel_to_first_transport_min"))
     return_transport = _int(day.get("hotel_return_transport_min") or day.get("last_to_hotel_transport_min"))
     return (first_arrival - departure_transport, last_end + return_transport)
@@ -65,6 +73,13 @@ def _segmented_windows(day: dict, items: list[dict]) -> list[tuple[int, int]]:
         else:
             return_transport = _int(hotel_breaks_by_after.get(poi_ids[-1], {}).get("return_to_hotel_transport_min"))
         windows.append((first_arrival - departure_transport, last_end + return_transport))
+    for meal in day.get("meal_breaks") or []:
+        if meal.get("included_in_item_duration"):
+            continue
+        meal_start = _parse_time(meal.get("start_time"))
+        if meal_start is None:
+            continue
+        windows.append((meal_start, meal_start + _int(meal.get("duration_min") or meal.get("duration_minutes"))))
     return windows
 
 
