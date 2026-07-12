@@ -492,6 +492,31 @@ def test_verify_itinerary_requires_evening_visit_to_start_in_the_evening_window(
     )
 
     assert "time_constraint_violated" in {issue["type"] for issue in result["issues"]}
+    assert result["publishable"] is True
+
+
+def test_verify_itinerary_blocks_objective_fixed_time_conflict():
+    itinerary = {"days": [{"day": 1, "items": [{"poi_id": "p1", "name": "演出", "arrival_time": "17:00", "duration_min": 90}]}]}
+    runtime_pois = [{"poi_id": "p1", "standard_name": "演出", "match_status": "matched"}]
+
+    result = verify_itinerary(
+        itinerary,
+        {"constraints": {}},
+        [],
+        runtime_pois,
+        time_constraints=[
+            {
+                "poi_id": "p1",
+                "preferred_window": "night",
+                "strength": "hard",
+                "appointment_time": "19:30",
+                "source_text": "19:30预约演出",
+            }
+        ],
+    )
+
+    assert result["publishable"] is False
+    assert {issue["type"] for issue in result["blocking_issues"]} == {"fixed_time_constraint_violated"}
 
 
 def test_verify_itinerary_rejects_inherently_night_only_poi_scheduled_in_afternoon():
@@ -557,7 +582,9 @@ def test_verify_itinerary_rejects_empty_day_when_there_are_enough_scheduled_plac
     result = verify_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, [], runtime_pois)
 
     assert "empty_day_with_available_places" in {issue["type"] for issue in result["issues"]}
-    assert result["passed"] is False
+    assert result["passed"] is True
+    assert result["publishable"] is True
+    assert result["blocking_issues"] == []
 
 
 def test_verify_itinerary_respects_hotel_rest_segments_for_transfers_but_still_requires_lunch():

@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 
+// Route planning can include bounded LLM retries and live map lookups.
+// Keep the proxy alive longer than the backend's normal worst-case workflow.
+export const maxDuration = 600;
+
 const configuredBackendBase = process.env.BACKEND_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL;
 
 type RouteContext = {
@@ -55,14 +59,16 @@ async function proxy(request: Request, context: RouteContext) {
       }
     });
   } catch {
+    const isPlanningRequest = path.at(-1) === "plan";
     return NextResponse.json(
       {
         ok: false,
         data: null,
         error: {
           code: "network_error",
-          message:
-            process.env.NODE_ENV === "production"
+          message: isPlanningRequest
+            ? "路线生成连接意外中断，请稍后重试；服务端可能仍在处理。"
+            : process.env.NODE_ENV === "production"
               ? "无法连接后端服务，请检查 BACKEND_API_BASE_URL 是否指向可访问的后端地址。"
               : "整理服务暂时不可用，请确认本地服务已启动后再重试。"
         },

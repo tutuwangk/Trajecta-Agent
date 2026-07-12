@@ -11,7 +11,7 @@ from app.core import AppError
 
 
 SKELETON_OUTPUT_SCHEMA = (
-    '{"destination":"...","days":[{"day":1,"theme_hint":"...","segments":[{"kind":"outing","segment_time":"morning","poi_ids":["..."]},{"kind":"hotel_rest","duration_min":180,"reason":"回酒店休息"},{"kind":"outing","segment_time":"night","poi_ids":["..."]}],"poi_ids":["..."],"scheduled_roles":{"poi_id":"quick_stop|meal_stop|anchor_visit|filler_visit|nightlife_stop"},"meal_slots":[{"slot":"breakfast|lunch|dinner","requirement":"required","source":"poi","poi_id":"..."},{"slot":"lunch","requirement":"required","source":"fallback_nearby"}],"unscheduled_poi_ids":["..."],"drop_reason_codes":{"poi_id":["time_window_conflict"]},"risk_tags":["..."]}],"unscheduled":[{"poi_id":"...","reason_codes":["far_detour"]}],"risk_tags":["..."]}'
+    '{"destination":"...","days":[{"day":1,"theme_hint":"...","day_strategy":"continuous|late_start|split_day","strategy_reason":"...","night_anchor_poi_id":"...","night_anchor_period":"evening|night","early_anchor_poi_id":"...或空字符串","segments":[{"kind":"outing","segment_time":"morning","poi_ids":["..."]},{"kind":"hotel_rest","rest_until":"evening_departure","reason":"回酒店休整"},{"kind":"outing","segment_time":"night","poi_ids":["..."]}],"poi_ids":["..."],"scheduled_roles":{"poi_id":"quick_stop|meal_stop|anchor_visit|filler_visit|nightlife_stop"},"meal_slots":[{"slot":"breakfast|lunch|dinner","requirement":"required","source":"poi","poi_id":"..."},{"slot":"lunch","requirement":"required","source":"fallback_nearby"}],"unscheduled_poi_ids":["..."],"drop_reason_codes":{"poi_id":["time_window_conflict"]},"risk_tags":["..."]}],"unscheduled":[{"poi_id":"...","reason_codes":["far_detour"]}],"risk_tags":["..."]}'
 )
 
 
@@ -271,6 +271,11 @@ def materialize_itinerary_from_skeleton(planning_context: dict, skeleton: dict) 
             {
                 "day": int(raw_day.get("day") or len(itinerary["days"]) + 1),
                 "theme": str(raw_day.get("theme_hint") or "").strip(),
+                "day_strategy": raw_day.get("day_strategy") or "continuous",
+                "strategy_reason": raw_day.get("strategy_reason") or "",
+                "night_anchor_poi_id": raw_day.get("night_anchor_poi_id") or "",
+                "night_anchor_period": raw_day.get("night_anchor_period") or "",
+                "early_anchor_poi_id": raw_day.get("early_anchor_poi_id") or "",
                 "summary": "",
                 "meal_slots": meal_slots,
                 "selected_branch_ids": dict(raw_day.get("selected_branch_ids") or {}),
@@ -348,12 +353,25 @@ def _call_skeleton_llm(
             return _normalize_skeleton_payload(payload, planning_context, step)
         except AppError as exc:
             last_error = exc
+            _mark_last_llm_metric(llm_client, exc.code)
+            if exc.code in {"llm_request_failed", "llm_invalid_response"} and fallback_on_failure:
+                break
             if exc.code not in {"llm_empty_content", "llm_truncated_json", "llm_invalid_json", "llm_invalid_plan_skeleton"}:
                 raise
+            if exc.code == "llm_truncated_json" and hasattr(llm_client, "increase_output_budget"):
+                llm_client.increase_output_budget()
             current_messages = _messages_with_retry_feedback(messages, exc, planning_context)
     if fallback_on_failure:
         return _deterministic_blueprint(planning_context, step)
     raise last_error or AppError("LLM 未返回有效路线骨架。", code="llm_invalid_plan_skeleton", step=step)
+
+
+def _mark_last_llm_metric(llm_client, error_code: str) -> None:
+    metrics = getattr(llm_client, "call_metrics", None)
+    if not isinstance(metrics, list) or not metrics or not isinstance(metrics[-1], dict):
+        return
+    metrics[-1]["status"] = "error"
+    metrics[-1]["error_code"] = error_code
 
 
 def _messages_with_retry_feedback(messages: list[dict[str, str]], error: AppError, planning_context: dict) -> list[dict[str, str]]:
@@ -460,11 +478,12 @@ def _deterministic_blueprint(planning_context: dict, step: str = "plan_itinerary
             for poi_id in poi_ids:
                 window = time_windows.get(poi_id) or "afternoon"
                 grouped.setdefault(window, []).append(poi_id)
-            raw_day["segments"] = [
+            segments = [
                 {"kind": "outing", "segment_time": window, "poi_ids": values}
                 for window, values in grouped.items()
                 if values
             ]
+            raw_day["segments"] = segments
         raw_days.append(raw_day)
     payload = {
         "destination": planning_context.get("destination", ""),
@@ -494,7 +513,7 @@ def _planning_messages(planning_context: dict) -> list[dict[str, str]]:
                 "- 每个 meal slot 必须说明由真实餐饮地点、场内用餐还是就近补位满足。\n"
                 "- `segments.kind` 只允许 `outing` 或 `hotel_rest`；`meal_slots.source` 只允许 `poi`、`inside_poi`、`fallback_nearby`；`scheduled_roles` 只允许 `quick_stop`、`meal_stop`、`anchor_visit`、`filler_visit`、`nightlife_stop`。\n"
                 "- 顺序偏好、显式时段、强度和正餐冲突都要在规划阶段先主动处理，不要等系统事后修补。\n"
-                "- 严格使用 planning_context 里的 experience_type、time_suitability、outing_role、order_constraints、time_constraints 与 planning_preferences 做决策。\n"
+                "- 严格使用 planning_packet 里的 candidates、constraints、spatial_context 与 output_requirements 做决策。\n"
                 "- `light_drink` 只能视为饮品/轻补给，不可承担正式午餐或晚餐；若顺路且适合短暂停靠，可标成 `quick_stop`。\n"
                 "- `full_meal` / `snack` 若承担午餐或晚餐，应标成 `meal_stop`；午餐和晚餐都必须落地，但不应因为强度控制而被当作可随意删掉的负担。\n"
                 "- `nightlife` 只能安排在 evening/night，不可承担午餐；若作为当天收尾，请标成 `nightlife_stop`。\n"
@@ -513,14 +532,14 @@ def _planning_messages(planning_context: dict) -> list[dict[str, str]]:
                 "- 只有在餐饮地点不足、明显不顺路或为保住必去地点不值得绕行时，才允许 fallback_nearby。\n"
                 "- `segments.kind` 只允许 `outing` 或 `hotel_rest`；`meal_slots.source` 只允许 `poi`、`inside_poi`、`fallback_nearby`；`scheduled_roles` 只允许 `quick_stop`、`meal_stop`、`anchor_visit`、`filler_visit`、`nightlife_stop`。\n"
                 "- 用户明确写了先后顺序或时段时，要先在蓝图阶段主动处理；若因保住必去点、保证正餐或接受用户已选取舍而调整，可在 reason codes / risk tags 里表达。\n"
-                "- 若使用 segments，outing 段里的 poi_ids 仍然必须全部来自候选集合，hotel_rest 段只允许写 duration_min 和 reason。\n"
+                "- 若使用 segments，outing 段里的 poi_ids 仍然必须全部来自候选集合；hotel_rest 只写 rest_until=evening_departure 和 reason，不写固定分钟。\n"
                 "</hard_rules>\n\n"
                 "<task>\n"
                 "请输出可执行的路线骨架。\n"
                 "</task>\n\n"
-                "<planning_context>\n"
-                f"{_prompt_context(planning_context)}\n"
-                "</planning_context>\n\n"
+                "<planning_packet>\n"
+                f"{_prompt_packet_json(planning_context)}\n"
+                "</planning_packet>\n\n"
                 "<required_days>\n"
                 f'{{"required_day_numbers":{_json_dumps(list(range(1, (_positive_int(planning_context.get("days")) or 1) + 1)))}}}\n'
                 "</required_days>\n\n"
@@ -552,9 +571,9 @@ def _replan_messages(planning_context: dict, previous_skeleton: dict, issues: di
         {
             "role": "user",
             "content": (
-                "<planning_context>\n"
-                f"{_prompt_context(planning_context)}\n"
-                "</planning_context>\n\n"
+                "<planning_packet>\n"
+                f"{_prompt_packet_json(planning_context)}\n"
+                "</planning_packet>\n\n"
                 "<required_days>\n"
                 f'{{"required_day_numbers":{_json_dumps(list(range(1, (_positive_int(planning_context.get("days")) or 1) + 1)))}}}\n'
                 "</required_days>\n\n"
@@ -592,9 +611,9 @@ def _semantic_messages(planning_context: dict) -> list[dict[str, str]]:
             "role": "user",
             "content": (
                 "<task>请输出规划语义层结果。</task>\n\n"
-                "<planning_context>\n"
-                f"{_prompt_context(planning_context)}\n"
-                "</planning_context>\n\n"
+                "<planning_packet>\n"
+                f"{_prompt_packet_json(planning_context)}\n"
+                "</planning_packet>\n\n"
                 "<required_days>\n"
                 f'{{"required_day_numbers":{_json_dumps(list(range(1, (_positive_int(planning_context.get("days")) or 1) + 1)))}}}\n'
                 "</required_days>\n\n"
@@ -617,16 +636,20 @@ def _blueprint_messages(planning_context: dict) -> list[dict[str, str]]:
                 "像真人旅行规划一样先决定每天怎么过，输出可落地蓝图 JSON。\n\n"
                 "## Hard Rules\n"
                 "- 不得新增候选集合之外的 poi_id。\n"
-                "- 必须严格输出 planning_context.days 个 day，Day 编号从 1 连续到 planning_context.days；即使某天没有地点，也必须保留空 day。\n"
+                "- 必须严格输出 planning_packet.trip.days 个 day，Day 编号从 1 连续到 planning_packet.trip.days；即使某天没有地点，也必须保留空 day。\n"
                 "- 当候选地点数量不少于天数时，每一天至少安排一个地点，不要把地点挤在前几天后留下空白日。\n"
                 "- 禁止输出最终 arrival_time、交通时间、total_outing_min 和最终文案。\n"
-                "- 必须使用 planning_context 里的 poi_role、meal_capability、time_advice、planning_function、order_constraints、time_constraints、day_budget_min 和 planning_preferences。\n"
+                "- 必须使用 planning_packet 里的候选角色、餐饮能力、适合时段、约束、每日预算和空间关系。\n"
                 "- 顺序偏好、显式时段、正餐和强度冲突都由你先处理；系统只按你的蓝图计算时间线，不会擅自裁掉 optional。\n"
-                "- 明确写了晚上/夜间的地点应放 evening/night 分段；无法满足时放入未安排并给 reason code。\n"
+                "- `evening` 表示17:30-19:00的傍晚，`night` 表示19:00后的晚上；用户写晚上、夜间或看夜景时应使用 night。普通时段偏好应尽力满足，但不要因此放弃整条合法路线。\n"
                 "- 已有 full_meal / breakfast_meal 应优先合理安排进 breakfast、lunch、dinner；候选不足时使用 fallback_nearby。\n"
                 "- 早餐仅在用户明确要求时安排；早餐 07:00-10:00、午餐 11:30-14:00、晚餐 17:30-20:30，餐饮地点必须放进对应餐窗。\n"
+                "- 单个游玩时长达到 240 分钟的大型景区、主题公园或场馆跨过饭点时，应优先使用 inside_poi，不要为了 fallback_nearby 把入园时间拖到中午。\n"
                 "- drink_stop 只作短暂停靠或补给；snack_light_meal 默认不承接正式午餐/晚餐，除非用户明确表达它就是这一餐。\n"
-                "- 可以使用 segments 表达上午、午餐、下午、晚餐、夜间和回酒店休息。\n"
+                "- 当天有夜间活动且过早出门会产生明显空档时，先比较：晚些或中午再出门、调整下午内容、晚餐后衔接夜间地点、换天。\n"
+                "- 只有大熊猫活跃时段、预约、开放时间等真正必须上午完成的 early anchor 存在时，才选择 split_day 并插入 hotel_rest；不要为普通适合上午机械回酒店。\n"
+                "- hotel_rest 不填写固定分钟，使用 rest_until=evening_departure；系统按真实交通与后续目标时间动态反算。\n"
+                "- 必须输出 day_strategy；没有真正早间锚点而当天有夜间活动时优先 late_start。\n"
                 "- 如果冲突无法同时满足，要主动说明哪些点未安排、为什么未安排，以及保留了什么。"
             ),
         },
@@ -634,9 +657,9 @@ def _blueprint_messages(planning_context: dict) -> list[dict[str, str]]:
             "role": "user",
             "content": (
                 "<task>请输出 DayBlueprint。</task>\n\n"
-                "<planning_context>\n"
-                f"{_prompt_context(planning_context)}\n"
-                "</planning_context>\n\n"
+                "<planning_packet>\n"
+                f"{_prompt_packet_json(planning_context)}\n"
+                "</planning_packet>\n\n"
                 "<required_days>\n"
                 f'{{"required_day_numbers":{_json_dumps(list(range(1, (_positive_int(planning_context.get("days")) or 1) + 1)))}}}\n'
                 "</required_days>\n\n"
@@ -659,20 +682,24 @@ def _replan_blueprint_messages(planning_context: dict, previous_skeleton: dict, 
                 "根据事实问题、偏好冲突和高严重体验问题重排 DayBlueprint，输出严格 JSON，并尽量保持合理旅行体验。\n\n"
                 "## Hard Rules\n"
                 "- 不得新增候选集合之外的 poi_id。\n"
-                "- 必须严格输出 planning_context.days 个 day，Day 编号从 1 连续到 planning_context.days；即使某天没有地点，也必须保留空 day。\n"
+                "- 必须严格输出 planning_packet.trip.days 个 day，Day 编号从 1 连续到 planning_packet.trip.days；即使某天没有地点，也必须保留空 day。\n"
                 "- 当候选地点数量不少于天数时，每一天至少安排一个地点，不要把地点挤在前几天后留下空白日。\n"
                 "- 禁止输出最终 arrival_time、交通时间、total_outing_min 和最终文案。\n"
-                "- 事实问题和规划冲突必须优先通过重排、换天、fallback_nearby 或明确未安排来解决。\n"
+                "- 事实问题必须修复；体验与偏好问题通过重排、换天或策略调整改善，不要因普通时间偏差放弃合法路线。\n"
+                "- 当天有19:00后活动且当前方案存在空档时，必须比较 late_start、调整下午内容、晚餐后衔接、换天；只有真正早间锚点存在才使用 split_day。\n"
+                "- 第二次重排不得机械重复第一次失败策略，要结合 schedule_analysis 的空档和酒店往返成本选择其他方案。\n"
+                "- hotel_rest 使用 rest_until=evening_departure，不输出固定休息分钟。\n"
                 "- 早餐仅在用户明确要求时安排；早餐 07:00-10:00、午餐 11:30-14:00、晚餐 17:30-20:30，重排后仍必须落在对应餐窗。\n"
+                "- 单个游玩时长达到 240 分钟的大型景区、主题公园或场馆跨过饭点时，优先使用 inside_poi，不要为了外部用餐明显压缩核心游玩时间。\n"
                 "- 不要依赖系统删除 optional；需要舍弃时请在蓝图里明确写入。"
             ),
         },
         {
             "role": "user",
             "content": (
-                "<planning_context>\n"
-                f"{_prompt_context(planning_context)}\n"
-                "</planning_context>\n\n"
+                "<planning_packet>\n"
+                f"{_prompt_packet_json(planning_context)}\n"
+                "</planning_packet>\n\n"
                 "<required_days>\n"
                 f'{{"required_day_numbers":{_json_dumps(list(range(1, (_positive_int(planning_context.get("days")) or 1) + 1)))}}}\n'
                 "</required_days>\n\n"
@@ -766,6 +793,11 @@ def _normalize_skeleton_payload(payload: dict, planning_context: dict, step: str
             {
                 "day": _positive_int(raw_day.get("day")) or index + 1,
                 "theme_hint": str(raw_day.get("theme_hint") or raw_day.get("theme") or "").strip(),
+                "day_strategy": _normalized_day_strategy(raw_day.get("day_strategy")),
+                "strategy_reason": str(raw_day.get("strategy_reason") or "").strip(),
+                "night_anchor_poi_id": str(raw_day.get("night_anchor_poi_id") or "").strip(),
+                "night_anchor_period": _normalized_segment_time(raw_day.get("night_anchor_period")),
+                "early_anchor_poi_id": str(raw_day.get("early_anchor_poi_id") or "").strip(),
                 "poi_ids": poi_ids,
                 "segments": segments,
                 "selected_branch_ids": selected_branch_ids,
@@ -830,30 +862,72 @@ def _normalize_skeleton_payload(payload: dict, planning_context: dict, step: str
 
 
 def _prompt_context(planning_context: dict) -> dict:
-    return {
-        "destination": planning_context.get("destination", ""),
-        "days": planning_context.get("days", 1),
-        "day_budget_min": planning_context.get("day_budget_min"),
-        "route_goal": planning_context.get("route_goal"),
-        "constraints": planning_context.get("constraints", {}),
-        "transport_preference": planning_context.get("transport_preference", []),
-        "must_visit_names": planning_context.get("must_visit_names", []),
-        "avoid_visit_names": planning_context.get("avoid_visit_names", []),
-        "hotel_anchor": planning_context.get("hotel_anchor"),
-        "plannable_pois": planning_context.get("plannable_pois", []),
-        "order_constraints": planning_context.get("order_constraints", []),
-        "time_constraints": planning_context.get("time_constraints", []),
-        "planning_decisions": planning_context.get("planning_decisions", []),
-        "planning_preferences": planning_context.get("planning_preferences", {}),
-        "route_semantics": planning_context.get("route_semantics", {}),
-        "must_poi_ids": planning_context.get("must_poi_ids", []),
-        "preferred_poi_ids": planning_context.get("preferred_poi_ids", []),
-        "optional_poi_ids": planning_context.get("optional_poi_ids", []),
-        "meal_candidate_poi_ids": planning_context.get("meal_candidate_poi_ids", []),
-        "meal_candidates": planning_context.get("meal_candidates", []),
-        "district_summary": planning_context.get("district_summary", []),
+    return build_planning_packet(planning_context)
+
+
+def _prompt_packet_json(planning_context: dict) -> str:
+    packet = build_planning_packet(planning_context)
+    return _json_dumps({key: value for key, value in packet.items() if key != "meta"})
+
+
+def build_planning_packet(planning_context: dict) -> dict:
+    must_ids = set(planning_context.get("must_poi_ids") or [])
+    optional_ids = set(planning_context.get("optional_poi_ids") or [])
+    candidates = []
+    for poi in planning_context.get("plannable_pois") or []:
+        poi_id = str(poi.get("poi_id") or "")
+        time_windows = _string_list(poi.get("time_suitability") or poi.get("time_advice"))
+        candidates.append(
+            {
+                "poi_id": poi_id,
+                "name": poi.get("name") or "",
+                "district": poi.get("district") or "",
+                "category": poi.get("category") or "unknown",
+                "priority": "must" if poi_id in must_ids else "optional" if poi_id in optional_ids else "preferred",
+                "role": poi.get("poi_role") or "scenic_anchor",
+                "experience_type": poi.get("experience_type") or "daytime_visit",
+                "duration_min": poi.get("estimated_duration_min"),
+                "meal_capability": poi.get("meal_capability") or "none",
+                "time_windows": time_windows,
+                "planning_function": poi.get("planning_function") or "anchor",
+                "planning_notes": str(poi.get("planning_notes") or "")[:160],
+                "quick_stop_eligible": bool(poi.get("quick_stop_eligible")),
+            }
+        )
+    packet = {
+        "trip": {
+            "destination": planning_context.get("destination", ""),
+            "days": planning_context.get("days", 1),
+            "day_budget_min": planning_context.get("day_budget_min"),
+            "route_goal": planning_context.get("route_goal"),
+            "transport_preference": planning_context.get("transport_preference", []),
+            "hotel_anchor": _compact_hotel_anchor(planning_context.get("hotel_anchor")),
+        },
+        "constraints": {
+            "user": planning_context.get("constraints", {}),
+            "order": planning_context.get("order_constraints", []),
+            "time": planning_context.get("time_constraints", []),
+            "planning_preferences": planning_context.get("planning_preferences", {}),
+        },
+        "candidates": candidates,
         "spatial_context": _compact_spatial_context(planning_context),
+        "output_requirements": {
+            "required_day_numbers": list(range(1, (_positive_int(planning_context.get("days")) or 1) + 1)),
+            "cover_every_candidate": True,
+            "meal_windows": {"breakfast": "07:00-10:00", "lunch": "11:30-14:00", "dinner": "17:30-20:30"},
+            "duration_policy": "candidate.duration_min 是推荐停留时长，分天和日内排序必须以此为主要时间依据",
+            "meal_overlap_policy": "地点停留跨过饭点且无顺路真实餐厅时，使用 inside_poi",
+        },
+        "meta": {"packet_version": 1},
     }
+    character_count = len(_json_dumps({key: value for key, value in packet.items() if key != "meta"}))
+    packet["meta"].update(
+        {
+            "character_count": character_count,
+            "budget_status": "normal" if character_count <= 15000 else "warning" if character_count <= 20000 else "oversized",
+        }
+    )
+    return packet
 
 
 def _compact_spatial_context(planning_context: dict, max_neighbors: int = 4) -> dict:
@@ -866,24 +940,23 @@ def _compact_spatial_context(planning_context: dict, max_neighbors: int = 4) -> 
             clusters.setdefault(district, []).append(poi_id)
 
     edges_by_origin: dict[str, list[dict]] = {}
-    far_edges: list[dict] = []
+    far_pairs: list[list[str]] = []
     for edge in planning_context.get("route_matrix") or []:
         origin = str(edge.get("origin_poi_id") or "")
         destination = str(edge.get("destination_poi_id") or "")
         if not origin or not destination:
             continue
         compact_edge = {
-            "origin_poi_id": origin,
-            "destination_poi_id": destination,
+            "poi_id": destination,
             "duration_min": edge.get("duration_min"),
             "distance_m": edge.get("distance_m"),
             "relation": edge.get("relation"),
         }
         edges_by_origin.setdefault(origin, []).append(compact_edge)
         if edge.get("relation") == "separate_day":
-            far_edges.append(compact_edge)
+            far_pairs.append([origin, destination])
 
-    neighbor_edges: list[dict] = []
+    neighbors: dict[str, list[dict]] = {}
     for origin in sorted(edges_by_origin):
         ranked = sorted(
             edges_by_origin[origin],
@@ -893,12 +966,23 @@ def _compact_spatial_context(planning_context: dict, max_neighbors: int = 4) -> 
                 item.get("distance_m") if item.get("distance_m") is not None else 10**9,
             ),
         )
-        neighbor_edges.extend(ranked[:max_neighbors])
+        neighbors[origin] = ranked[:max_neighbors]
 
     return {
         "district_clusters": [{"district": district, "poi_ids": poi_ids} for district, poi_ids in sorted(clusters.items())],
-        "neighbor_edges": neighbor_edges,
-        "far_edges": far_edges[: max(8, len(pois))],
+        "neighbors": neighbors,
+        "far_pairs": far_pairs[: max(8, len(pois))],
+    }
+
+
+def _compact_hotel_anchor(hotel_anchor: dict | None) -> dict | None:
+    if not hotel_anchor:
+        return None
+    return {
+        "poi_id": hotel_anchor.get("poi_id") or "hotel_anchor",
+        "name": hotel_anchor.get("standard_name") or hotel_anchor.get("name") or "酒店",
+        "district": hotel_anchor.get("district") or "",
+        "location": hotel_anchor.get("location") or {},
     }
 
 
@@ -1150,7 +1234,7 @@ def _normalized_time_window(value: str) -> str:
         "下午": "afternoon",
         "afternoon": "afternoon",
         "傍晚": "evening",
-        "晚上": "evening",
+        "晚上": "night",
         "夜间": "night",
         "夜晚": "night",
         "evening": "evening",
@@ -1159,6 +1243,11 @@ def _normalized_time_window(value: str) -> str:
         "all_day": "all_day",
     }
     return mapping.get(text, "")
+
+
+def _normalized_day_strategy(value) -> str:
+    strategy = str(value or "").strip().lower()
+    return strategy if strategy in {"continuous", "late_start", "split_day"} else "continuous"
 
 
 def _normalize_day_segments(
@@ -1189,7 +1278,7 @@ def _normalize_day_segments(
             segments.append(
                 {
                     "kind": "hotel_rest",
-                    "duration_min": _positive_int(raw_segment.get("duration_min")) or 0,
+                    "rest_until": str(raw_segment.get("rest_until") or "evening_departure").strip(),
                     "reason": str(raw_segment.get("reason") or "").strip(),
                 }
             )

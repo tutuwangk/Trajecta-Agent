@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from app.core import AppError
+import hashlib
+import json
+
+
+DURATION_PROMPT_VERSION = "v2"
 
 
 TEXT_DURATION_RULES = [
@@ -12,7 +16,9 @@ TEXT_DURATION_RULES = [
     ("景山公园", 90, "小型城市公园正常游玩约一个多小时。"),
     ("雍和宫", 90, "寺庙类地点正常参观约一个多小时。"),
     ("主题乐园", 600, "主题乐园通常需要接近全天游玩。"),
+    ("主题公园", 480, "主题公园通常需要大半天或全天游玩。"),
     ("游乐园", 420, "游乐园通常需要较长游玩时间。"),
+    ("游乐场", 420, "大型游乐场通常需要较长游玩时间。"),
     ("度假区", 600, "大型度假区通常需要接近全天游玩。"),
     ("动物园", 210, "动物园通常需要完整半天游玩。"),
     ("植物园", 180, "植物园通常需要较长停留。"),
@@ -42,8 +48,21 @@ CATEGORY_DURATION_MINUTES = {
 }
 
 
-def estimate_visit_durations(runtime_pois: list[dict], llm_client=None) -> list[dict]:
-    llm_estimates = _llm_duration_estimates(runtime_pois, llm_client) if llm_client and runtime_pois else {}
+def estimate_visit_durations(runtime_pois: list[dict], llm_client=None, cache=None) -> list[dict]:
+    cache_keys = {
+        str(poi.get("poi_id") or ""): _duration_cache_key(poi, getattr(llm_client, "model", ""))
+        for poi in runtime_pois
+    }
+    cached_profiles: dict[str, dict] = {}
+    uncached_pois: list[dict] = []
+    for poi in runtime_pois:
+        poi_id = str(poi.get("poi_id") or "")
+        cached = _safe_cache_get(cache, cache_keys[poi_id]) if cache is not None and llm_client is not None else None
+        if isinstance(cached, dict):
+            cached_profiles[poi_id] = cached
+        else:
+            uncached_pois.append(poi)
+    llm_estimates = _llm_duration_estimates(uncached_pois, llm_client) if llm_client and uncached_pois else {}
     estimated: list[dict] = []
     for poi in runtime_pois:
         item = dict(poi)
@@ -54,12 +73,24 @@ def estimate_visit_durations(runtime_pois: list[dict], llm_client=None) -> list[
             "high" if _text_rule(item) else "medium",
             fallback_reason,
         )
-        llm_estimate = llm_estimates.get(item.get("poi_id"))
-        profile = _llm_duration_profile(llm_estimate, fallback_profile) or fallback_profile
+        poi_id = str(item.get("poi_id") or "")
+        cached_profile = cached_profiles.get(poi_id)
+        llm_estimate = llm_estimates.get(poi_id)
+        raw_profile = cached_profile or _llm_duration_profile(llm_estimate, fallback_profile)
+        profile, guardrailed = _merge_duration_profile(item, raw_profile, fallback_profile)
+        if cached_profile:
+            source = "llm_cache"
+        elif raw_profile:
+            source = "llm_guardrailed" if guardrailed else "llm"
+            if cache is not None:
+                _safe_cache_set(cache, cache_keys[poi_id], profile)
+        else:
+            source = "deterministic_fallback"
         item["visit_duration_profile"] = profile
         item["estimated_duration_min"] = profile["intense_min"]
         item["duration_confidence"] = profile["confidence"]
         item["duration_reason"] = profile["reason"]
+        item["duration_source"] = source
         estimated.append(item)
     return estimated
 
@@ -74,6 +105,7 @@ def _llm_duration_estimates(runtime_pois: list[dict], llm_client) -> dict[str, d
                     "content": f"""请为每个地点估计两档“正常人在这个地方玩一次要多久”。
 估计口径：只估计地点内的正常游玩、参观、排队和休息时间，不包含酒店往返和点间交通；不要为了迁就用户选择的行程强度而压缩时长；大型景区、主题乐园、动物园、植物园、博物馆群、古镇、山岳景区应按实际游玩体量给出半天或全天估计。
 输出两档时间：`relaxed_duration_min` 表示轻松但正常的游玩时长，`intense_duration_min` 表示更完整但仍然常规的深度游玩时长。两档差距要合理，通常控制在 15-120 分钟内；`relaxed_duration_min` 必须小于等于 `intense_duration_min`，且都不能离谱偏短。
+必须严格输出 JSON。只能使用输入中已有的 poi_id，每个地点最多输出一次；时长使用 15 分钟倍数。无法可靠判断的地点可以不输出，系统会使用本地安全时长。
 
 输出 JSON 格式：
 {{"durations":[{{"poi_id":"...","relaxed_duration_min":150,"intense_duration_min":210,"duration_confidence":"high|medium|low","duration_reason":"..."}}]}}
@@ -85,10 +117,8 @@ def _llm_duration_estimates(runtime_pois: list[dict], llm_client) -> dict[str, d
             step="estimate_visit_duration",
             temperature=0.1,
         )
-    except AppError as exc:
-        if exc.code == "llm_invalid_json":
-            return {}
-        raise
+    except Exception:
+        return {}
     values = payload.get("durations") if isinstance(payload, dict) else []
     estimates: dict[str, dict] = {}
     for value in values or []:
@@ -98,6 +128,79 @@ def _llm_duration_estimates(runtime_pois: list[dict], llm_client) -> dict[str, d
         if poi_id:
             estimates[poi_id] = value
     return estimates
+
+
+def _merge_duration_profile(poi: dict, candidate: dict | None, fallback: dict) -> tuple[dict, bool]:
+    if not isinstance(candidate, dict):
+        return fallback, False
+    relaxed = _positive_int(candidate.get("relaxed_min"))
+    intense = _positive_int(candidate.get("intense_min"))
+    if relaxed is None or intense is None:
+        return fallback, False
+    relaxed = _round_to_quarter_hour(max(45, min(relaxed, 720)))
+    intense = _round_to_quarter_hour(max(relaxed, min(intense, 720)))
+    original = (relaxed, intense)
+    if fallback.get("confidence") == "high":
+        relaxed = max(relaxed, _positive_int(fallback.get("relaxed_min")) or relaxed)
+        intense = max(intense, _positive_int(fallback.get("intense_min")) or intense)
+    ceiling = _duration_ceiling(poi)
+    relaxed = min(relaxed, ceiling)
+    intense = min(max(relaxed, intense), ceiling)
+    guarded = original != (relaxed, intense)
+    return {
+        "relaxed_min": relaxed,
+        "intense_min": intense,
+        "confidence": str(candidate.get("confidence") or fallback.get("confidence") or "medium"),
+        "reason": str(candidate.get("reason") or fallback.get("reason") or "按地点常规游玩体验估计。"),
+    }, guarded
+
+
+def _duration_ceiling(poi: dict) -> int:
+    text = " ".join(
+        [
+            str(poi.get("standard_name") or ""),
+            str(poi.get("category") or ""),
+            str(poi.get("category_raw") or ""),
+            " ".join(str(tag) for tag in poi.get("ugc_tags") or []),
+        ]
+    ).lower()
+    if bool((poi.get("planning_semantics") or {}).get("quick_stop_eligible")):
+        return 60
+    if any(token in text for token in ["咖啡", "奶茶", "茶饮", "甜品", "饮品"]):
+        return 120
+    if "restaurant" in text or "餐饮" in text or poi.get("category") == "restaurant":
+        return 180
+    return 720
+
+
+def _duration_cache_key(poi: dict, model: str) -> str:
+    payload = {
+        "version": DURATION_PROMPT_VERSION,
+        "model": model,
+        "poi_id": poi.get("poi_id"),
+        "name": poi.get("standard_name") or poi.get("raw_name"),
+        "category": poi.get("category") or poi.get("category_normalized"),
+        "category_raw": poi.get("category_raw"),
+        "tags": poi.get("ugc_tags") or poi.get("experience_tags") or [],
+        "evidence": poi.get("ugc_evidence") or poi.get("contexts") or [],
+    }
+    serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _safe_cache_get(cache, cache_key: str) -> dict | None:
+    try:
+        value = cache.get_duration(cache_key)
+    except Exception:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _safe_cache_set(cache, cache_key: str, value: dict) -> None:
+    try:
+        cache.set_duration(cache_key, value)
+    except Exception:
+        return
 
 
 def _duration_prompt_pois(runtime_pois: list[dict]) -> list[dict]:
@@ -168,6 +271,10 @@ def _text_rule(poi: dict) -> tuple[str, int, str] | None:
             str(poi.get("standard_name") or ""),
             str(poi.get("raw_name") or ""),
             " ".join(str(name) for name in poi.get("raw_names") or []),
+            str(poi.get("category") or ""),
+            str(poi.get("category_raw") or ""),
+            " ".join(str(tag) for tag in poi.get("ugc_tags") or poi.get("experience_tags") or []),
+            " ".join(str(value) for value in poi.get("ugc_evidence") or poi.get("contexts") or []),
         ]
     )
     for token, minutes, reason in TEXT_DURATION_RULES:

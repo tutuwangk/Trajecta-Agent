@@ -12,6 +12,8 @@ FACTUAL_ISSUE_TYPES = {
     "unresolved_place_scheduled",
     "missing_transfer",
     "route_unknown",
+    "avoid_visit_scheduled",
+    "fixed_time_constraint_violated",
 }
 
 PREFERENCE_ISSUE_TYPES = {
@@ -25,13 +27,7 @@ PREFERENCE_ISSUE_TYPES = {
     "order_constraint_violated",
 }
 
-RELEASE_BLOCKING_TYPES = FACTUAL_ISSUE_TYPES | {
-    "must_visit_missing",
-    "avoid_visit_scheduled",
-    "empty_day_with_available_places",
-    "time_constraint_violated",
-    "order_constraint_violated",
-}
+RELEASE_BLOCKING_TYPES = FACTUAL_ISSUE_TYPES
 
 
 def verify_itinerary(
@@ -51,7 +47,14 @@ def verify_itinerary(
         order_constraints=order_constraints,
     )
     blocking_issues = [issue for issue in issues if issue.get("type") in RELEASE_BLOCKING_TYPES]
-    return {"passed": not blocking_issues, "issues": issues, "blocking_issues": blocking_issues}
+    publishable = not blocking_issues
+    return {
+        "passed": publishable,
+        "publishable": publishable,
+        "issues": issues,
+        "blocking_issues": blocking_issues,
+        "quality_issues": [issue for issue in issues if issue not in blocking_issues],
+    }
 
 
 def validate_hard_constraints(
@@ -137,6 +140,9 @@ def review_soft_quality(
                         "## Hard Rules\n"
                         "- 不得新增地点与时间。\n"
                         "- 不得输出硬约束问题。\n"
+                        "- 早餐只有在用户明确要求时才需要评审；用户未要求早餐时，不得把缺少早餐写成问题。\n"
+                        "- 当天在午餐或晚餐窗口前已经回酒店时，不得把缺少对应餐次写成问题。\n"
+                        "- 已有 fallback_nearby 或 inside_poi 餐次时，不得写成缺少正餐。\n"
                         "- 只输出 issues 数组，每条含 type、severity、message、suggestion、evidence。"
                     ),
                 },
@@ -613,11 +619,17 @@ def _time_constraint_issue(day: dict, item: dict, time_constraints: list[dict]) 
         if constraint.get("strength") not in {"quasi_hard", "hard"}:
             continue
         window = str(constraint.get("preferred_window") or "")
-        if _time_starts_in_window(arrival, window):
+        fixed_value = constraint.get("fixed_time") or constraint.get("appointment_time") or constraint.get("objective_deadline")
+        is_fixed = constraint.get("strength") == "hard" and bool(
+            fixed_value
+        )
+        fixed_target = _parse_time(fixed_value) if is_fixed else None
+        satisfied = abs(arrival - fixed_target) <= 15 if fixed_target is not None else _time_starts_in_window(arrival, window)
+        if satisfied:
             continue
-        label = _time_window_label(window)
+        label = str(fixed_value) if fixed_target is not None else _time_window_label(window)
         return {
-            "type": "time_constraint_violated",
+            "type": "fixed_time_constraint_violated" if is_fixed else "time_constraint_violated",
             "severity": "high",
             "day": day.get("day"),
             "poi_name": item.get("name"),
@@ -640,7 +652,7 @@ def _semantic_time_issue(day: dict, item: dict, poi: dict) -> dict | None:
     arrival = _parse_time(item.get("arrival_time"))
     if arrival is None:
         return None
-    earliest = 18 * 60 if advice == {"night"} else 17 * 60 + 30
+    earliest = 19 * 60 if advice == {"night"} else 17 * 60 + 30
     if arrival >= earliest:
         return None
     return {
@@ -661,7 +673,7 @@ def _segment_time_issues(day: dict) -> list[dict]:
         "midday": (11 * 60, 14 * 60 + 30),
         "afternoon": (11 * 60 + 30, 18 * 60),
         "evening": (17 * 60 + 30, 22 * 60),
-        "night": (18 * 60, 24 * 60),
+        "night": (19 * 60, 24 * 60),
     }
     issues: list[dict] = []
     for segment in day.get("segments") or []:
@@ -742,8 +754,8 @@ def _time_window_minutes(window: str) -> tuple[int | None, int | None]:
         "morning": (8 * 60, 12 * 60),
         "midday": (11 * 60, 14 * 60),
         "afternoon": (12 * 60, 17 * 60 + 30),
-        "evening": (17 * 60 + 30, 22 * 60),
-        "night": (18 * 60, 24 * 60),
+        "evening": (17 * 60 + 30, 19 * 60),
+        "night": (19 * 60, 24 * 60),
     }
     return mapping.get(window, (None, None))
 
@@ -753,8 +765,8 @@ def _time_window_label(window: str) -> str:
         "morning": "上午",
         "midday": "中午",
         "afternoon": "下午",
-        "evening": "晚上",
-        "night": "夜间",
+        "evening": "傍晚",
+        "night": "晚上",
     }.get(window, "指定时段")
 
 

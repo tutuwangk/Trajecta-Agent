@@ -18,9 +18,10 @@ from app.agents.visit_duration_estimator import estimate_visit_durations
 from app.schemas.models import PlanningDecisionRequest, PoiDecisionUpdate, RevisionRequest, SessionCreate, UserProfile
 from app.services.amap_client import default_amap_client
 from app.services.chain_arranger import arrange_chain_to_anchor
+from app.services.cache_service import CacheService
 from app.services.database import default_store
 from app.services.link_builder import build_navigation_link, build_poi_link
-from app.services.llm_client import default_copy_llm_client, default_llm_client, default_planning_llm_client
+from app.services.llm_client import default_copy_llm_client, default_duration_llm_client, default_llm_client, default_planning_llm_client
 from app.services.poi_enricher import enrich_pois
 from app.services.poi_grounder import ground_pois, ground_single_poi
 from app.services.route_service import build_route_edge, build_spatial_route_matrix
@@ -28,6 +29,7 @@ from app.services.route_service import build_route_edge, build_spatial_route_mat
 
 router = APIRouter()
 store = default_store()
+duration_cache = CacheService(store)
 logger = logging.getLogger(__name__)
 
 
@@ -253,10 +255,11 @@ def _execute_plan_session(
     user_profile = _planning_user_profile(session["user_profile"], revision_intent)
     planning_llm = default_planning_llm_client()
     copy_llm = default_copy_llm_client()
+    duration_llm = default_duration_llm_client()
     amap_client = default_amap_client()
     uncertain_pois = enrich_pois(_uncertain_grounded_pois(pois), [])
     hotel_anchor = _hotel_anchor(user_profile, amap_client)
-    runtime_pois = estimate_visit_durations(enrich_pois(accepted_grounded, []))
+    runtime_pois = estimate_visit_durations(enrich_pois(accepted_grounded, []), duration_llm, cache=duration_cache)
     route_matrix = build_spatial_route_matrix(runtime_pois, user_profile)
     order_constraints = _extract_order_constraints(session["raw_input"], session["notes"], runtime_pois)
     time_constraints = _extract_time_constraints(session["raw_input"], session["notes"], runtime_pois)
@@ -301,6 +304,7 @@ def _execute_plan_session(
         time_constraints=time_constraints,
         planning_decisions=planning_decisions,
         prepare_itinerary=prepare_itinerary,
+        preflight_llm_clients=[duration_llm],
     )
 
     logger.info("Planning workflow debug snapshot: %s", debug)
@@ -320,6 +324,12 @@ def _execute_plan_session(
             "_run_debug": {
                 "attempt_count": len(debug.get("skeleton_versions") or []) or 1,
                 "repair_attempts": debug.get("repair_attempts", 0),
+                "auto_fallback_used": bool(debug.get("auto_fallback_used")),
+                "planning_packet_meta": dict(debug.get("planning_packet_meta") or {}),
+                "llm_metrics": dict(debug.get("llm_metrics") or {}),
+                "hard_issue_types": _debug_issue_types(debug.get("hard_issue_history") or []),
+                "preference_issue_types": _debug_issue_types(debug.get("preference_issue_history") or []),
+                "candidate_scores": list(debug.get("candidate_scores") or []),
             },
         },
         {"build_route_matrix": "done", "plan_itinerary": "done", "verify_itinerary": "done"},
@@ -327,15 +337,41 @@ def _execute_plan_session(
 
 
 def _assert_publishable(verification: dict, run_id: str | None = None) -> None:
-    if verification.get("passed"):
+    if verification.get("publishable") is True:
         return
-    issues = list(verification.get("issues") or [])
+    from app.agents.verifier import RELEASE_BLOCKING_TYPES
+
+    blocking_issues = list(verification.get("blocking_issues") or [])
+    if not blocking_issues:
+        blocking_issues = [
+            issue for issue in verification.get("issues") or [] if issue.get("type") in RELEASE_BLOCKING_TYPES
+        ]
+    if not blocking_issues:
+        return
     raise AppError(
         "路线未通过发布校验，系统没有保存这次不完整结果。",
         code="itinerary_publish_blocked",
         step="verify_itinerary",
-        details={"issues": issues, **({"run_id": run_id} if run_id else {})},
+        details={"issues": blocking_issues, **({"run_id": run_id} if run_id else {})},
     )
+
+
+def _debug_issue_types(histories: list) -> list[str]:
+    result: list[str] = []
+    stack = list(histories)
+    while stack:
+        item = stack.pop(0)
+        if isinstance(item, list):
+            stack.extend(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        if isinstance(item.get("issues"), list):
+            stack.extend(item["issues"])
+        issue_type = str(item.get("type") or "").strip()
+        if issue_type and issue_type not in result:
+            result.append(issue_type)
+    return result
 
 
 def _planning_user_profile(base_user_profile: dict, revision_intent: dict | None = None) -> dict:
@@ -618,11 +654,15 @@ def _sync_hotel_rest_breaks(
                 continue
             return_edge = _cached_precise_edge(after_poi, hotel, amap_client, user_profile, edge_cache)
             depart_edge = _cached_precise_edge(hotel, before_poi, amap_client, user_profile, edge_cache)
+            next_period = str(next_outing.get("segment_time") or "").strip().lower()
+            target_start_min = 19 * 60 if next_period == "night" else 17 * 60 + 30
             day["hotel_rest_breaks"].append(
                 {
                     "after_poi_id": after_poi_id,
                     "before_poi_id": before_poi_id,
                     "duration_min": int(segment.get("duration_min") or 0),
+                    "dynamic": bool(segment.get("rest_until")),
+                    "target_start_min": target_start_min,
                     "reason": str(segment.get("reason") or "回酒店休息").strip(),
                     "return_to_hotel_transport_min": return_edge.get("duration_min") or 0,
                     "depart_from_hotel_transport_min": depart_edge.get("duration_min") or 0,
@@ -876,7 +916,8 @@ def _poi_constraint_names(poi: dict) -> list[str]:
 
 def _time_constraint_for_name(text: str, name: str) -> tuple[str, str] | None:
     patterns = [
-        ("evening", [f"晚上去{name}", f"夜里去{name}", f"夜晚去{name}", f"傍晚去{name}", f"最后去{name}", f"收尾去{name}"]),
+        ("night", [f"晚上去{name}", f"夜里去{name}", f"夜晚去{name}"]),
+        ("evening", [f"傍晚去{name}", f"最后去{name}", f"收尾去{name}"]),
         ("morning", [f"上午去{name}", f"早上去{name}", f"先去{name}", f"第一站{name}", f"上午先去{name}"]),
         ("afternoon", [f"下午去{name}", f"午后去{name}"]),
         ("midday", [f"白天去{name}", f"白天逛{name}"]),
@@ -886,7 +927,7 @@ def _time_constraint_for_name(text: str, name: str) -> tuple[str, str] | None:
             if phrase in text:
                 return window, phrase
     suffix_patterns = [
-        ("evening", [f"{name}晚上", f"{name}夜景", f"{name}夜生活"]),
+        ("night", [f"{name}晚上", f"{name}夜景", f"{name}夜生活"]),
         ("morning", [f"{name}上午", f"{name}早上"]),
         ("midday", [f"{name}白天"]),
         ("afternoon", [f"{name}下午"]),

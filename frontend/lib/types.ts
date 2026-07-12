@@ -103,7 +103,18 @@ export type SessionData = {
   pois: PoiRow[];
   itinerary_state?: ItineraryState | null;
   planning_intervention?: PlanningIntervention | null;
+  latest_planning_run?: PlanningRun | null;
   revision_history: Array<Record<string, unknown>>;
+};
+
+export type PlanningRun = {
+  id: string;
+  status: "running" | "completed" | "failed";
+  stage?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  attempt_count?: number;
+  duration_ms?: number;
 };
 
 export type PlanningInterventionIssue = {

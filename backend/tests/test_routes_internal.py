@@ -108,7 +108,7 @@ def test_extract_time_constraints_marks_explicit_evening_request():
     assert constraints[0] == {
         "poi_id": "p1",
         "name": "九眼桥",
-        "preferred_window": "evening",
+        "preferred_window": "night",
         "strength": "quasi_hard",
         "source_text": "晚上去九眼桥",
     }
@@ -147,18 +147,11 @@ def test_extract_time_constraints_supports_more_time_window_phrases():
     ]
 
 
-def test_assert_publishable_rejects_failed_final_verification():
-    try:
-        routes._assert_publishable(
-            {"passed": False, "issues": [{"type": "meal_time_invalid", "message": "午餐过晚"}]},
-            run_id="run-1",
-        )
-    except AppError as exc:
-        assert exc.code == "itinerary_publish_blocked"
-        assert exc.step == "verify_itinerary"
-        assert exc.details["run_id"] == "run-1"
-    else:
-        raise AssertionError("最终校验失败的路线不应进入保存阶段")
+def test_assert_publishable_allows_quality_deviation():
+    routes._assert_publishable(
+        {"passed": False, "issues": [{"type": "meal_time_invalid", "message": "午餐过晚"}]},
+        run_id="run-1",
+    )
 
 
 def test_submit_planning_decision_does_not_consume_choice_when_replan_fails(monkeypatch):

@@ -1,6 +1,7 @@
 from app.core import AppError
 from app.api.routes import _extract_order_constraints
 from app.agents.planner import (
+    build_planning_packet,
     compile_planning_context,
     enrich_planning_semantics_with_llm,
     materialize_itinerary_from_skeleton,
@@ -8,6 +9,161 @@ from app.agents.planner import (
     plan_skeleton_with_llm,
     _prompt_context,
 )
+
+
+def test_planning_packet_has_one_canonical_candidate_representation_and_budget_metadata():
+    context = compile_planning_context(
+        {"destination": "成都", "days": 2, "route_goal": "balanced", "constraints": {}},
+        [
+            {
+                "poi_id": "p1",
+                "standard_name": "成都武侯祠博物馆",
+                "district": "武侯区",
+                "category": "museum",
+                "match_status": "matched",
+                "estimated_duration_min": 120,
+                "final_decision": "include",
+                "user_override": "must_include",
+                "experience_tags": ["历史", "文化"],
+                "planning_semantics": {
+                    "experience_type": "daytime_visit",
+                    "poi_role": "scenic_anchor",
+                    "meal_capability": "none",
+                    "time_advice": ["morning", "afternoon"],
+                    "time_suitability": ["morning", "afternoon"],
+                    "planning_function": "anchor",
+                    "duration_profile": {"relaxed": 150, "intense": 100},
+                },
+            }
+        ],
+        [],
+    )
+
+    packet = build_planning_packet(context)
+
+    assert set(packet) == {"trip", "constraints", "candidates", "spatial_context", "output_requirements", "meta"}
+    assert len(packet["candidates"]) == 1
+    candidate = packet["candidates"][0]
+    assert candidate == {
+        "poi_id": "p1",
+        "name": "成都武侯祠博物馆",
+        "district": "武侯区",
+        "category": "museum",
+        "priority": "must",
+        "role": "scenic_anchor",
+        "experience_type": "daytime_visit",
+        "duration_min": 120,
+        "meal_capability": "none",
+        "time_windows": ["morning", "afternoon"],
+        "planning_function": "anchor",
+        "planning_notes": "",
+        "quick_stop_eligible": False,
+    }
+    assert "plannable_pois" not in packet
+    assert "meal_candidates" not in packet
+    assert "route_semantics" not in packet
+    assert packet["meta"]["packet_version"] == 1
+    assert packet["meta"]["character_count"] > 0
+    assert packet["meta"]["budget_status"] == "normal"
+    assert packet["output_requirements"]["duration_policy"] == "candidate.duration_min 是推荐停留时长，分天和日内排序必须以此为主要时间依据"
+    assert packet["output_requirements"]["meal_overlap_policy"] == "地点停留跨过饭点且无顺路真实餐厅时，使用 inside_poi"
+
+
+def test_blueprint_falls_back_after_llm_network_retries_are_exhausted():
+    class UnavailableLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            raise AppError("服务不可用", code="llm_request_failed", step=step)
+
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {}},
+        [{"poi_id": "p1", "standard_name": "武侯祠", "match_status": "matched", "estimated_duration_min": 90, "final_decision": "include"}],
+        [],
+    )
+
+    blueprint = plan_day_blueprint_with_llm(context, UnavailableLLM())
+
+    assert blueprint["days"][0]["poi_ids"] == ["p1"]
+    assert any("稳定规划方式" in item for item in blueprint["risk_tags"])
+
+
+def test_materialized_item_keeps_time_windows_as_planning_preferences_only():
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {}},
+        [{"poi_id": "p1", "standard_name": "九眼桥", "match_status": "matched", "final_decision": "include"}],
+        [],
+        time_constraints=[
+            {"poi_id": "p1", "preferred_window": "evening", "strength": "quasi_hard"},
+            {"poi_id": "p1", "preferred_window": "afternoon", "strength": "soft"},
+        ],
+    )
+    skeleton = {
+        "destination": "成都",
+        "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": []}],
+        "unscheduled": [],
+        "risk_tags": [],
+    }
+
+    itinerary = materialize_itinerary_from_skeleton(context, skeleton)
+
+    item = itinerary["days"][0]["items"][0]
+    assert item["preferred_time_windows"] == ["evening", "afternoon"]
+    assert "explicit_time_windows" not in item
+
+
+def test_deterministic_blueprint_does_not_invent_fixed_hotel_rest():
+    class UnavailableLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            raise AppError("服务不可用", code="llm_request_failed", step=step)
+
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {}},
+        [
+            {"poi_id": "p1", "standard_name": "博物馆", "district": "锦江区", "match_status": "matched", "final_decision": "include"},
+            {"poi_id": "p2", "standard_name": "九眼桥", "district": "锦江区", "match_status": "matched", "final_decision": "include"},
+        ],
+        [],
+        time_constraints=[{"poi_id": "p2", "preferred_window": "evening", "strength": "quasi_hard"}],
+    )
+
+    blueprint = plan_day_blueprint_with_llm(context, UnavailableLLM())
+
+    assert blueprint["days"][0]["segments"] == [
+        {"kind": "outing", "segment_time": "afternoon", "poi_ids": ["p1"]},
+        {"kind": "outing", "segment_time": "evening", "poi_ids": ["p2"]},
+    ]
+
+
+def test_blueprint_increases_output_budget_before_retrying_truncated_json():
+    class TruncatedOnceLLM:
+        def __init__(self):
+            self.calls = 0
+            self.budget_increases = 0
+
+        def increase_output_budget(self):
+            self.budget_increases += 1
+
+        def json_chat(self, messages, step, temperature=0.2):
+            self.calls += 1
+            if self.calls == 1:
+                raise AppError("JSON 被截断", code="llm_truncated_json", step=step)
+            return {
+                "destination": "成都",
+                "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": [], "risk_tags": []}],
+                "unscheduled": [],
+                "risk_tags": [],
+            }
+
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {}},
+        [{"poi_id": "p1", "standard_name": "武侯祠", "match_status": "matched", "estimated_duration_min": 90, "final_decision": "include"}],
+        [],
+    )
+    llm = TruncatedOnceLLM()
+
+    blueprint = plan_day_blueprint_with_llm(context, llm)
+
+    assert blueprint["days"][0]["poi_ids"] == ["p1"]
+    assert llm.budget_increases == 1
 
 
 def test_prompt_context_uses_bounded_spatial_summary_instead_of_full_route_matrix():
@@ -35,8 +191,9 @@ def test_prompt_context_uses_bounded_spatial_summary_instead_of_full_route_matri
     prompt_context = _prompt_context(context)
 
     assert "route_matrix" not in prompt_context
-    assert len(prompt_context["spatial_context"]["neighbor_edges"]) <= 6 * 4
-    assert {edge["origin_poi_id"] for edge in prompt_context["spatial_context"]["neighbor_edges"]} == {
+    neighbors = prompt_context["spatial_context"]["neighbors"]
+    assert sum(len(edges) for edges in neighbors.values()) <= 6 * 4
+    assert set(neighbors) == {
         "p1",
         "p2",
         "p3",
@@ -453,7 +610,7 @@ def test_materialize_itinerary_from_segmented_skeleton_keeps_hotel_rest_segments
     assert [item["poi_id"] for item in itinerary["days"][0]["items"]] == ["p1", "p2"]
     assert itinerary["days"][0]["segments"] == [
         {"kind": "outing", "segment_time": "morning", "poi_ids": ["p1"]},
-        {"kind": "hotel_rest", "duration_min": 180, "reason": "中午回酒店休息"},
+        {"kind": "hotel_rest", "rest_until": "evening_departure", "reason": "中午回酒店休息"},
         {"kind": "outing", "segment_time": "night", "poi_ids": ["p2"]},
     ]
 
@@ -574,8 +731,8 @@ def test_plan_skeleton_with_llm_normalizes_common_protocol_variants():
 
     assert skeleton["days"][0]["segments"] == [
         {"kind": "outing", "segment_time": "morning", "poi_ids": ["p1"]},
-        {"kind": "hotel_rest", "duration_min": 180, "reason": "回酒店休息"},
-        {"kind": "outing", "segment_time": "evening", "poi_ids": ["p2"]},
+        {"kind": "hotel_rest", "rest_until": "evening_departure", "reason": "回酒店休息"},
+        {"kind": "outing", "segment_time": "night", "poi_ids": ["p2"]},
     ]
     assert skeleton["days"][0]["meal_slots"] == [
         {"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p1"},

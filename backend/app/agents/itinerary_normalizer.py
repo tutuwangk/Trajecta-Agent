@@ -266,7 +266,7 @@ def _sync_day_segments(day: dict) -> None:
             synced.append(
                 {
                     "kind": "hotel_rest",
-                    "duration_min": _int(raw_segment.get("duration_min")),
+                    "rest_until": str(raw_segment.get("rest_until") or "evening_departure").strip(),
                     "reason": str(raw_segment.get("reason") or "").strip(),
                 }
             )
@@ -360,8 +360,11 @@ def _rebuild_timing_from_meal_slots(day: dict, runtime_by_id: dict, current: int
         while fallback_index < len(pending_fallbacks):
             pending = pending_fallbacks[fallback_index]
             preferred = _slot_preferred_time(pending.get("slot"))
-            _, window_end = _meal_slot_window(str(pending.get("slot") or ""))
+            window_start, window_end = _meal_slot_window(str(pending.get("slot") or ""))
             if current > window_end:
+                fallback_index += 1
+                continue
+            if _convert_overlapping_fallback_to_inside(pending, current, item_duration, item):
                 fallback_index += 1
                 continue
             if current < preferred and current + item_duration <= window_end:
@@ -467,8 +470,11 @@ def _rebuild_segmented_timing(day: dict, runtime_by_id: dict, current: int) -> N
             while fallback_index < len(pending_fallbacks):
                 pending = pending_fallbacks[fallback_index]
                 preferred = _slot_preferred_time(pending.get("slot"))
-                _, window_end = _meal_slot_window(str(pending.get("slot") or ""))
+                window_start, window_end = _meal_slot_window(str(pending.get("slot") or ""))
                 if current > window_end:
+                    fallback_index += 1
+                    continue
+                if _convert_overlapping_fallback_to_inside(pending, current, duration, item):
                     fallback_index += 1
                     continue
                 if current < preferred and current + duration <= window_end:
@@ -502,7 +508,15 @@ def _rebuild_segmented_timing(day: dict, runtime_by_id: dict, current: int) -> N
         if hotel_break:
             current += _int(hotel_break.get("return_to_hotel_transport_min"))
             hotel_break["hotel_arrival_time"] = _format_time(current)
-            current += _int(hotel_break.get("duration_min"))
+            requested_duration = _int(hotel_break.get("duration_min"))
+            if hotel_break.get("dynamic"):
+                target_start = _int(hotel_break.get("target_start_min"))
+                requested_duration = max(
+                    0,
+                    target_start - _int(hotel_break.get("depart_from_hotel_transport_min")) - current,
+                )
+                hotel_break["duration_min"] = requested_duration
+            current += requested_duration
             hotel_break["rest_end_time"] = _format_time(current)
             total_minutes += _int(hotel_break.get("return_to_hotel_transport_min")) + _int(hotel_break.get("depart_from_hotel_transport_min"))
             current += _int(hotel_break.get("depart_from_hotel_transport_min"))
@@ -706,12 +720,14 @@ def _meal_slot_window(slot_name: str) -> tuple[int, int]:
 
 def _drop_stale_required_meals(day: dict) -> None:
     required = required_meal_slots(day)
+    realized_break_slots = {str(meal.get("slot") or "") for meal in day.get("meal_breaks") or []}
     removed_slots = {
         str(slot.get("slot"))
         for slot in day.get("meal_slots") or []
         if str(slot.get("requirement") or "required") == "required"
         and str(slot.get("slot") or "") in {"lunch", "dinner"}
         and str(slot.get("slot") or "") not in required
+        and str(slot.get("slot") or "") not in realized_break_slots
     }
     if not removed_slots:
         return
@@ -844,6 +860,21 @@ def _build_inside_meals(item: dict, meal_slots: list[dict]) -> list[dict]:
     return result
 
 
+def _convert_overlapping_fallback_to_inside(slot: dict, current: int, duration: int, item: dict) -> bool:
+    if slot.get("source") != "fallback_nearby" or duration < 240:
+        return False
+    preferred = _slot_preferred_time(slot.get("slot"))
+    if not (current <= preferred < current + duration):
+        return False
+    poi_id = str(item.get("poi_id") or "")
+    if not poi_id:
+        return False
+    slot["source"] = "inside_poi"
+    slot["within_poi_id"] = poi_id
+    slot.pop("poi_id", None)
+    return True
+
+
 def _fallback_meal_break(slot: dict, start_minutes: int) -> dict:
     return {
         "label": _slot_label(slot.get("slot")),
@@ -900,7 +931,9 @@ def _default_start_time(day: dict, items: list[dict], runtime_by_id: dict, high_
                 return inferred
     first_poi = runtime_by_id.get(items[0].get("poi_id"), {})
     suitability = _time_suitability(first_poi)
-    if "night" in suitability or "evening" in suitability:
+    if "night" in suitability and "evening" not in suitability:
+        return 19 * 60
+    if "evening" in suitability:
         return 18 * 60
     if "midday" in suitability:
         return 11 * 60 + 30
@@ -917,7 +950,7 @@ def _segment_start_time(
 ) -> int:
     segment_time = str(segment.get("segment_time") or "").strip().lower()
     if honor_segment_label and segment_time == "night":
-        return 18 * 60
+        return 19 * 60
     if honor_segment_label and segment_time == "evening":
         return 18 * 60
     if honor_segment_label and segment_time == "afternoon":
@@ -931,7 +964,7 @@ def _segment_start_time(
     item = items_by_id.get(first_poi_id, {})
     suitability = list(dict.fromkeys([*_time_suitability(poi), *(item.get("preferred_time_windows") or [])]))
     if "night" in suitability:
-        return 18 * 60
+        return 19 * 60
     if "evening" in suitability and not any(value in suitability for value in {"morning", "midday", "afternoon"}):
         return 18 * 60
     if "midday" in suitability and "morning" not in suitability:

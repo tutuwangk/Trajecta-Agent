@@ -122,7 +122,7 @@ def test_normalize_itinerary_keeps_segments_aligned_when_items_remain_unchanged(
     assert day["items"][0]["transport_to_next"]["duration_min"] == 10
 
 
-def test_normalize_itinerary_places_fallback_lunch_before_a_long_visit_crosses_mealtime():
+def test_normalize_itinerary_places_lunch_inside_a_long_visit_crossing_mealtime():
     itinerary = {
         "days": [
             {
@@ -151,9 +151,17 @@ def test_normalize_itinerary_places_fallback_lunch_before_a_long_visit_crosses_m
 
     day = itinerary["days"][0]
     assert day["meal_breaks"] == [
-        {"label": "午餐", "slot": "lunch", "start_time": "11:30", "duration_min": 60, "source": "fallback_nearby"}
+        {
+            "label": "午餐",
+            "slot": "lunch",
+            "start_time": "12:00",
+            "duration_min": 60,
+            "within_poi_id": "p1",
+            "included_in_item_duration": True,
+            "source": "inside_poi",
+        }
     ]
-    assert day["items"][0]["arrival_time"] == "12:30"
+    assert day["items"][0]["arrival_time"] == "10:00"
 
 
 def test_normalize_itinerary_keeps_segmented_fallback_lunch_after_compilation():
@@ -225,7 +233,7 @@ def test_normalize_itinerary_drops_required_lunch_when_first_outing_starts_at_ni
     day = itinerary["days"][0]
     assert day["meal_slots"] == []
     assert day["meal_breaks"] == []
-    assert day["items"][0]["arrival_time"] == "18:00"
+    assert day["items"][0]["arrival_time"] == "19:00"
 
 
 def test_normalize_itinerary_aligns_real_lunch_poi_with_lunch_window():
@@ -341,6 +349,78 @@ def test_normalize_itinerary_does_not_create_gap_for_soft_later_segment_label():
 
     assert itinerary["days"][0]["items"][0]["arrival_time"] == "14:00"
     assert itinerary["days"][0]["items"][1]["arrival_time"] == "16:20"
+
+
+def test_normalize_itinerary_does_not_force_explicit_window_for_later_item_in_segment():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "segments": [
+                    {"kind": "outing", "segment_time": "afternoon", "poi_ids": ["p1"]},
+                    {"kind": "outing", "segment_time": "evening", "poi_ids": ["p2", "p3"]},
+                ],
+                "items": [
+                    {"poi_id": "p1", "name": "博物馆", "duration_min": 120},
+                    {"poi_id": "p2", "name": "普通街区", "duration_min": 40},
+                    {
+                        "poi_id": "p3",
+                        "name": "九眼桥",
+                        "duration_min": 90,
+                        "explicit_time_windows": ["evening"],
+                    },
+                ],
+                "removed_pois": [],
+            }
+        ]
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "match_status": "matched", "final_decision": "include"},
+        {"poi_id": "p2", "match_status": "matched", "final_decision": "include"},
+        {"poi_id": "p3", "match_status": "matched", "final_decision": "include"},
+    ]
+    route_matrix = [
+        {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "walking", "duration_min": 20},
+        {"origin_poi_id": "p2", "destination_poi_id": "p3", "mode": "walking", "duration_min": 10},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {}}, runtime_pois, route_matrix)
+
+    assert itinerary["days"][0]["items"][1]["arrival_time"] == "16:20"
+    assert itinerary["days"][0]["items"][2]["arrival_time"] == "17:10"
+
+
+def test_normalize_itinerary_places_dinner_before_explicit_evening_visit():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 30,
+                "segments": [{"kind": "outing", "segment_time": "evening", "poi_ids": ["p1"]}],
+                "meal_slots": [{"slot": "dinner", "requirement": "required", "source": "fallback_nearby"}],
+                "items": [
+                    {
+                        "poi_id": "p1",
+                        "name": "九眼桥",
+                        "duration_min": 90,
+                        "explicit_time_windows": ["evening"],
+                    }
+                ],
+                "removed_pois": [],
+            }
+        ]
+    }
+
+    normalize_itinerary(
+        itinerary,
+        {"constraints": {}},
+        [{"poi_id": "p1", "match_status": "matched", "final_decision": "include"}],
+        [],
+    )
+
+    day = itinerary["days"][0]
+    assert day["meal_breaks"][0]["start_time"] == "18:00"
+    assert day["items"][0]["arrival_time"] == "19:00"
 
 
 def test_normalize_itinerary_does_not_invent_meal_break_without_blueprint_slot():
@@ -885,6 +965,54 @@ def test_normalize_itinerary_keeps_inside_poi_and_optional_breakfast_slots():
     ]
 
 
+def test_normalize_itinerary_converts_overlapping_nearby_meal_to_inside_long_visit():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_departure_transport_min": 30,
+                "hotel_return_transport_min": 30,
+                "meal_slots": [
+                    {"slot": "lunch", "requirement": "required", "source": "fallback_nearby"},
+                    {"slot": "dinner", "requirement": "required", "source": "fallback_nearby"},
+                ],
+                "items": [{"poi_id": "p1", "name": "城市主题公园", "duration_min": 390}],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "城市主题公园",
+            "match_status": "matched",
+            "final_decision": "include",
+            "category": "attraction",
+        }
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {"physical_intensity": "medium"}}, runtime_pois, [])
+
+    day = itinerary["days"][0]
+    assert day["items"][0]["arrival_time"] == "10:00"
+    assert day["meal_slots"] == [
+        {"slot": "lunch", "requirement": "required", "source": "inside_poi", "within_poi_id": "p1"}
+    ]
+    assert day["meal_breaks"] == [
+        {
+            "label": "午餐",
+            "slot": "lunch",
+            "start_time": "12:00",
+            "duration_min": 60,
+            "within_poi_id": "p1",
+            "included_in_item_duration": True,
+            "source": "inside_poi",
+        }
+    ]
+
+
 def test_normalize_itinerary_replaces_inside_poi_meal_with_real_restaurant_when_available():
     itinerary = {
         "days": [
@@ -995,6 +1123,27 @@ def test_normalize_itinerary_starts_nightlife_only_day_in_evening():
     assert itinerary["days"][0]["items"][0]["arrival_time"] == "18:00"
 
 
+def test_normalize_itinerary_starts_night_only_place_at_1900():
+    itinerary = {
+        "days": [{"day": 1, "items": [{"poi_id": "p1", "name": "夜景平台", "duration_min": 90}], "removed_pois": []}],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+    runtime_pois = [
+        {
+            "poi_id": "p1",
+            "standard_name": "夜景平台",
+            "match_status": "matched",
+            "final_decision": "include",
+            "planning_semantics": {"time_suitability": ["night"]},
+        }
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {}}, runtime_pois, [])
+
+    assert itinerary["days"][0]["items"][0]["arrival_time"] == "19:00"
+
+
 def test_normalize_itinerary_supports_hotel_rest_between_morning_and_night_segments():
     itinerary = {
         "days": [
@@ -1037,5 +1186,45 @@ def test_normalize_itinerary_supports_hotel_rest_between_morning_and_night_segme
 
     day = itinerary["days"][0]
     assert day["items"][0]["arrival_time"] == "10:00"
-    assert day["items"][1]["arrival_time"] == "18:00"
+    assert day["items"][1]["arrival_time"] == "19:00"
     assert day["total_outing_min"] == 330
+
+
+def test_normalize_itinerary_dynamically_derives_hotel_rest_until_night_departure():
+    itinerary = {
+        "days": [
+            {
+                "day": 1,
+                "hotel_rest_breaks": [
+                    {
+                        "after_poi_id": "p1",
+                        "before_poi_id": "p2",
+                        "duration_min": 0,
+                        "dynamic": True,
+                        "target_start_min": 19 * 60,
+                        "return_to_hotel_transport_min": 20,
+                        "depart_from_hotel_transport_min": 25,
+                    }
+                ],
+                "segments": [
+                    {"kind": "outing", "segment_time": "morning", "poi_ids": ["p1"]},
+                    {"kind": "hotel_rest", "rest_until": "evening_departure", "reason": "回酒店休整"},
+                    {"kind": "outing", "segment_time": "night", "poi_ids": ["p2"]},
+                ],
+                "items": [
+                    {"poi_id": "p1", "name": "熊猫基地", "duration_min": 120},
+                    {"poi_id": "p2", "name": "九眼桥", "duration_min": 90},
+                ],
+            }
+        ]
+    }
+    runtime_pois = [
+        {"poi_id": "p1", "match_status": "matched", "final_decision": "include"},
+        {"poi_id": "p2", "match_status": "matched", "final_decision": "include"},
+    ]
+
+    normalize_itinerary(itinerary, {"constraints": {}}, runtime_pois, [])
+
+    day = itinerary["days"][0]
+    assert day["items"][1]["arrival_time"] == "19:00"
+    assert day["hotel_rest_breaks"][0]["duration_min"] == 375

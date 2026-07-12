@@ -327,6 +327,43 @@ def test_run_planning_workflow_uses_deterministic_blueprint_instead_of_user_choi
     assert debug["auto_fallback_used"] is True
 
 
+def test_workflow_gives_two_replans_then_publishes_best_quality_candidate():
+    class PlanningLLM:
+        def __init__(self):
+            self.replans = 0
+
+        def json_chat(self, messages, step, temperature=0.2):
+            if step == "plan_itinerary_blueprint":
+                return {"destination": "成都", "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": []}], "unscheduled": [], "risk_tags": []}
+            if step == "replan_itinerary_blueprint":
+                self.replans += 1
+                assert "late_start" in messages[1]["content"]
+                assert "回酒店休整" in messages[1]["content"]
+                return {"destination": "成都", "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": []}], "unscheduled": [], "risk_tags": []}
+            raise AssertionError(step)
+
+    class CopyLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            return {"issues": []}
+
+    planning_llm = PlanningLLM()
+    itinerary, verification, debug = run_planning_workflow(
+        {"destination": "成都", "days": 1, "constraints": {}},
+        [{"poi_id": "p1", "standard_name": "九眼桥", "match_status": "matched", "estimated_duration_min": 60, "final_decision": "include"}],
+        [],
+        planning_llm,
+        CopyLLM(),
+        time_constraints=[{"poi_id": "p1", "preferred_window": "night", "strength": "quasi_hard", "source_text": "晚上去九眼桥"}],
+    )
+
+    assert planning_llm.replans == 2
+    assert len(debug["candidate_scores"]) == 3
+    assert sum(bool(candidate["selected"]) for candidate in debug["candidate_scores"]) == 1
+    assert itinerary["days"][0]["items"][0]["poi_id"] == "p1"
+    assert verification["publishable"] is True
+    assert verification["quality_deviations"]
+
+
 def test_run_planning_workflow_does_not_recompile_facts_after_copy_generation():
     class PlanningLLM:
         def json_chat(self, messages, step, temperature=0.2):
@@ -379,3 +416,50 @@ def test_run_planning_workflow_does_not_recompile_facts_after_copy_generation():
     assert prepare_calls == [1]
     assert itinerary["days"][0]["items"][0]["arrival_time"] == "10:00"
     assert verification["passed"] is True
+
+
+def test_run_planning_workflow_collects_safe_llm_call_metrics():
+    class DurationLLM:
+        call_metrics = [{"step": "estimate_visit_duration", "status": "success", "prompt_tokens": 25}]
+
+    class PlanningLLM:
+        call_metrics = [
+            {
+                "step": "plan_itinerary_blueprint",
+                "status": "success",
+                "prompt_tokens": 100,
+                "completion_tokens": 30,
+                "reasoning_tokens": 20,
+            }
+        ]
+
+        def json_chat(self, messages, step, temperature=0.2):
+            return {
+                "destination": "成都",
+                "days": [{"day": 1, "poi_ids": ["p1"], "unscheduled_poi_ids": [], "risk_tags": []}],
+                "unscheduled": [],
+                "risk_tags": [],
+            }
+
+    class CopyLLM:
+        call_metrics = [{"step": "generate_itinerary_copy", "status": "success", "prompt_tokens": 50}]
+
+        def json_chat(self, messages, step, temperature=0.2):
+            if step == "review_itinerary_soft_quality":
+                return {"issues": []}
+            return {"days": [{"day": 1, "items": [{"poi_id": "p1", "reason": "顺路安排。"}]}]}
+
+    _itinerary, verification, debug = run_planning_workflow(
+        {"destination": "成都", "days": 1, "constraints": {"physical_intensity": "medium"}},
+        [{"poi_id": "p1", "standard_name": "武侯祠", "match_status": "matched", "estimated_duration_min": 90, "final_decision": "include"}],
+        [],
+        PlanningLLM(),
+        CopyLLM(),
+        preflight_llm_clients=[DurationLLM()],
+    )
+
+    assert verification["passed"] is True
+    assert debug["llm_metrics"]["call_count"] == 3
+    assert debug["llm_metrics"]["prompt_tokens"] == 175
+    assert debug["llm_metrics"]["reasoning_tokens"] == 20
+    assert debug["llm_metrics"]["calls"][0]["step"] == "estimate_visit_duration"

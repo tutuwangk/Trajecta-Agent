@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { getSession, planTrip, recognizePlaces, reviseTrip, submitPlanningDecision, updatePlaceOverrides } from "@/lib/api";
 import { planningControlsDisabled, resolvePlanningFlow } from "@/lib/planning-flow";
+import { waitForPlanningCompletion } from "@/lib/planning-recovery";
 import type { PlanningBlocker, PlanningIntervention, PoiDecisionInput, SessionData } from "@/lib/types";
 import { ItineraryCard } from "@/components/ItineraryCard";
 import { PlanningInterventionCard } from "@/components/PlanningInterventionCard";
@@ -18,10 +19,11 @@ export default function TripPage() {
   const [busyMessage, setBusyMessage] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const planningRecoveryAbortRef = useRef<AbortController | null>(null);
   const hasItinerary = Boolean(session?.itinerary_state?.itinerary);
   const isBusy = planningControlsDisabled(busyMessage);
   const recognizing = busyMessage === "正在识别地点";
-  const generatingRoute = busyMessage === "正在生成路线";
+  const generatingRoute = busyMessage === "正在生成路线" || busyMessage === "路线仍在生成";
 
   async function load() {
     const result = await getSession(sessionId);
@@ -36,6 +38,10 @@ export default function TripPage() {
 
   useEffect(() => {
     void load();
+    return () => {
+      planningRecoveryAbortRef.current?.abort();
+      planningRecoveryAbortRef.current = null;
+    };
   }, [sessionId]);
 
   async function handlePoiChange(decisions: PoiDecisionInput[]) {
@@ -53,10 +59,34 @@ export default function TripPage() {
   }
 
   async function handlePlan() {
+    const previousRunId = session?.latest_planning_run?.id || null;
+    planningRecoveryAbortRef.current?.abort();
+    const recoveryController = new AbortController();
+    planningRecoveryAbortRef.current = recoveryController;
     setBusyMessage("正在生成路线");
     setNotice("");
     setError("");
-    const outcome = resolvePlanningFlow(await planTrip(sessionId), "路线生成失败");
+    const result = await planTrip(sessionId);
+    if (!result.ok && result.error?.code === "network_error") {
+      setBusyMessage("路线仍在生成");
+      setNotice("连接已中断，但路线可能仍在后台生成，正在自动等待结果。请勿重复点击。");
+      const recovery = await waitForPlanningCompletion(sessionId, getSession, recoveryController.signal, { previousRunId });
+      if (planningRecoveryAbortRef.current !== recoveryController || recovery.kind === "cancelled") return;
+      planningRecoveryAbortRef.current = null;
+      if (recovery.kind === "completed") {
+        setSession(recovery.session);
+        setPlanningIntervention(recovery.session.planning_intervention || null);
+        setNotice("路线已生成");
+        setError("");
+      } else {
+        setError(recovery.message);
+        setNotice("");
+      }
+      setBusyMessage("");
+      return;
+    }
+    planningRecoveryAbortRef.current = null;
+    const outcome = resolvePlanningFlow(result, "路线生成失败");
     if (outcome.kind === "failed") {
       setError(formatPlanningError(outcome.message, outcome.blockers));
       setBusyMessage("");
