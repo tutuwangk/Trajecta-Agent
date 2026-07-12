@@ -103,7 +103,6 @@ pnpm run dev
 - `backend/`：后端接口、地点整理、路线生成和校验
 - `database/`：数据库结构参考
 - `examples/`：样例输入输出
-- `docs/ARCHITECTURE.md`：更完整的架构说明
 
 ## 当前边界
 
