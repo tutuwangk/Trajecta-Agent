@@ -452,8 +452,18 @@ def _sanitize_itinerary_text(itinerary: dict) -> None:
     itinerary["global_risks"] = [_sanitize_user_text(text) for text in _text_list(itinerary.get("global_risks", []))]
     itinerary["revision_notes"] = [_sanitize_user_text(text) for text in _text_list(itinerary.get("revision_notes", []))]
     for day in itinerary.get("days", []):
+        if "theme" in day:
+            day["theme"] = _sanitize_user_text(day.get("theme", ""))
         if "summary" in day:
             day["summary"] = _sanitize_user_text(day.get("summary", ""))
+        if "risk_notes" in day:
+            day["risk_notes"] = [_sanitize_user_text(text) for text in _text_list(day.get("risk_notes", []))]
+        for segment in day.get("segments", []):
+            if isinstance(segment, dict) and "reason" in segment:
+                segment["reason"] = _sanitize_user_text(segment.get("reason", ""))
+        for hotel_break in day.get("hotel_rest_breaks", []):
+            if isinstance(hotel_break, dict) and "reason" in hotel_break:
+                hotel_break["reason"] = _sanitize_user_text(hotel_break.get("reason", ""))
         for item in day.get("items", []):
             if "reason" in item:
                 item["reason"] = _sanitize_user_text(item.get("reason", ""))
@@ -466,6 +476,26 @@ def _sanitize_itinerary_text(itinerary: dict) -> None:
 
 def _sanitize_user_text(text: str) -> str:
     value = str(text or "")
+    value = re.sub(
+        r"<(?:think|analysis|reasoning)\b[^>]*>.*?</(?:think|analysis|reasoning)>",
+        "",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    value = re.sub(
+        r"```(?:think|analysis|reasoning)\s*.*?```",
+        "",
+        value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    has_reasoning_prefix = bool(re.search(r"(?:思考|分析|推理)(?:过程|内容)?\s*[:：]", value))
+    if has_reasoning_prefix:
+        final_markers = list(re.finditer(r"(?:最终(?:安排|建议|结论)|给用户的(?:安排|建议)|答复)\s*[:：]\s*", value))
+        if final_markers:
+            value = value[final_markers[-1].end() :]
+        else:
+            value = re.sub(r"^(?:思考|分析|推理)(?:过程|内容)?\s*[:：].*(?:\n|$)", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"</?(?:think|analysis|reasoning)\b[^>]*>", "", value, flags=re.IGNORECASE)
     value = re.sub(
         r"\b(?:must_include|must_visit|user_override|final_decision|system_decision|arrange_nearby|needs_confirmation|unresolved|exclude|optional|include)\b\s*[，,、。；;:：]?\s*",
         "",

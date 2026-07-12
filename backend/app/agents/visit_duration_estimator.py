@@ -4,7 +4,7 @@ import hashlib
 import json
 
 
-DURATION_PROMPT_VERSION = "v2"
+DURATION_PROMPT_VERSION = "v3"
 
 
 TEXT_DURATION_RULES = [
@@ -39,8 +39,8 @@ TEXT_DURATION_RULES = [
 ]
 
 CATEGORY_DURATION_MINUTES = {
-    "restaurant": 75,
-    "shopping_mall": 90,
+    "restaurant": 90,
+    "shopping_mall": 120,
     "museum": 150,
     "park": 120,
     "citywalk": 120,
@@ -103,7 +103,7 @@ def _llm_duration_estimates(runtime_pois: list[dict], llm_client) -> dict[str, d
                 {
                     "role": "user",
                     "content": f"""请为每个地点估计两档“正常人在这个地方玩一次要多久”。
-估计口径：只估计地点内的正常游玩、参观、排队和休息时间，不包含酒店往返和点间交通；不要为了迁就用户选择的行程强度而压缩时长；大型景区、主题乐园、动物园、植物园、博物馆群、古镇、山岳景区应按实际游玩体量给出半天或全天估计。
+估计口径：先判断用户在该地点的实际活动角色，再估计地点内的正常游玩、用餐、采购、参观、排队和休息时间，不包含酒店往返和点间交通；不要为了迁就用户选择的行程强度而压缩时长。完整正餐应覆盖点餐、等位或上菜和用餐，目的型超市/会员店采购应覆盖选购与结账，不能按饮品式快速打卡估计；大型景区、主题乐园、动物园、植物园、博物馆群、古镇、山岳景区应按实际游玩体量给出半天或全天估计。
 输出两档时间：`relaxed_duration_min` 表示轻松但正常的游玩时长，`intense_duration_min` 表示更完整但仍然常规的深度游玩时长。两档差距要合理，通常控制在 15-120 分钟内；`relaxed_duration_min` 必须小于等于 `intense_duration_min`，且都不能离谱偏短。
 必须严格输出 JSON。只能使用输入中已有的 poi_id，每个地点最多输出一次；时长使用 15 分钟倍数。无法可靠判断的地点可以不输出，系统会使用本地安全时长。
 
@@ -143,6 +143,9 @@ def _merge_duration_profile(poi: dict, candidate: dict | None, fallback: dict) -
     if fallback.get("confidence") == "high":
         relaxed = max(relaxed, _positive_int(fallback.get("relaxed_min")) or relaxed)
         intense = max(intense, _positive_int(fallback.get("intense_min")) or intense)
+    floor_relaxed, floor_intense = _semantic_duration_floor(poi, fallback)
+    relaxed = max(relaxed, floor_relaxed)
+    intense = max(intense, floor_intense, relaxed)
     ceiling = _duration_ceiling(poi)
     relaxed = min(relaxed, ceiling)
     intense = min(max(relaxed, intense), ceiling)
@@ -171,6 +174,20 @@ def _duration_ceiling(poi: dict) -> int:
     if "restaurant" in text or "餐饮" in text or poi.get("category") == "restaurant":
         return 180
     return 720
+
+
+def _semantic_duration_floor(poi: dict, fallback: dict) -> tuple[int, int]:
+    semantics = poi.get("planning_semantics") or {}
+    experience_type = str(semantics.get("experience_type") or "")
+    poi_role = str(semantics.get("poi_role") or "")
+    category = str(poi.get("category") or poi.get("category_normalized") or "")
+    fallback_relaxed = _positive_int(fallback.get("relaxed_min")) or 45
+    fallback_intense = _positive_int(fallback.get("intense_min")) or 45
+    if experience_type == "full_meal" or category == "restaurant":
+        return max(fallback_relaxed, 75), max(fallback_intense, 90)
+    if poi_role == "shopping_rest" or category == "shopping_mall":
+        return max(fallback_relaxed, 90), max(fallback_intense, 120)
+    return 45, 45
 
 
 def _duration_cache_key(poi: dict, model: str) -> str:
@@ -211,6 +228,10 @@ def _duration_prompt_pois(runtime_pois: list[dict]) -> list[dict]:
             "category": poi.get("category") or poi.get("category_normalized"),
             "tags": poi.get("ugc_tags") or poi.get("experience_tags") or [],
             "evidence": poi.get("ugc_evidence") or poi.get("contexts") or [],
+            "experience_type": (poi.get("planning_semantics") or {}).get("experience_type"),
+            "poi_role": (poi.get("planning_semantics") or {}).get("poi_role"),
+            "meal_capability": (poi.get("planning_semantics") or {}).get("meal_capability"),
+            "planning_notes": (poi.get("planning_semantics") or {}).get("planning_notes"),
         }
         for poi in runtime_pois
     ]

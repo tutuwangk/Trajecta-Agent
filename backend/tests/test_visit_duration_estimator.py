@@ -393,3 +393,38 @@ def test_duration_llm_cannot_expand_light_drink_into_half_day_visit():
 
     assert estimated[0]["visit_duration_profile"]["intense_min"] <= 120
     assert estimated[0]["duration_source"] == "llm_guardrailed"
+
+
+def test_duration_guardrail_uses_activity_role_for_meals_and_destination_shopping():
+    class TooShortLLM:
+        def json_chat(self, *args, **kwargs):
+            return {
+                "durations": [
+                    {"poi_id": "p1", "relaxed_duration_min": 45, "intense_duration_min": 60},
+                    {"poi_id": "p2", "relaxed_duration_min": 15, "intense_duration_min": 30},
+                ]
+            }
+
+    estimated = estimate_visit_durations(
+        [
+            {
+                "poi_id": "p1",
+                "standard_name": "本地火锅店",
+                "category": "restaurant",
+                "planning_semantics": {"experience_type": "full_meal", "poi_role": "full_meal"},
+            },
+            {
+                "poi_id": "p2",
+                "standard_name": "会员商店",
+                "category": "shopping_mall",
+                "planning_semantics": {"experience_type": "shopping", "poi_role": "shopping_rest"},
+            },
+        ],
+        TooShortLLM(),
+    )
+
+    by_id = {poi["poi_id"]: poi for poi in estimated}
+    assert by_id["p1"]["visit_duration_profile"]["relaxed_min"] >= 75
+    assert by_id["p1"]["visit_duration_profile"]["intense_min"] >= 90
+    assert by_id["p2"]["visit_duration_profile"]["relaxed_min"] >= 90
+    assert by_id["p2"]["visit_duration_profile"]["intense_min"] >= 120

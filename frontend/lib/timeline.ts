@@ -1,4 +1,5 @@
 import type { DayRoute, ItineraryItem } from "./types";
+import { cleanUserFacingText } from "./displayText.ts";
 
 export type TimelineEntry =
   | {
@@ -132,6 +133,7 @@ function buildSegmentedTimelineEntries(day: DayRoute): TimelineEntry[] {
   const meals = sortedMeals(day);
   const usedMeals = new Set<number>();
   const itemsById = new Map(day.items.map((item) => [item.poi_id, item]));
+  const nextItemById = new Map(day.items.slice(0, -1).map((item, index) => [item.poi_id, day.items[index + 1]]));
   const hotelBreakByAfter = new Map((day.hotel_rest_breaks || []).map((hotelBreak) => [hotelBreak.after_poi_id, hotelBreak]));
   const firstOuting = segments.find((segment) => segment.kind === "outing");
   const firstPoi = firstOuting?.kind === "outing" ? itemsById.get(firstOuting.poi_ids[0] || "") : undefined;
@@ -174,7 +176,12 @@ function buildSegmentedTimelineEntries(day: DayRoute): TimelineEntry[] {
       });
       addIncludedMeals(entries, meals, usedMeals, item);
 
-      const nextItem = index < poiIds.length - 1 ? itemsById.get(poiIds[index + 1]) : undefined;
+      const hotelBreak = hotelBreakByAfter.get(item.poi_id);
+      const nextItem = index < poiIds.length - 1
+        ? itemsById.get(poiIds[index + 1])
+        : hotelBreak
+          ? undefined
+          : nextItemById.get(item.poi_id);
       const nextArrival = nextItem ? roundedArrival(nextItem) : null;
       const afterMeals = addExternalMeals(entries, meals, usedMeals, departureTime, nextArrival);
 
@@ -198,7 +205,6 @@ function buildSegmentedTimelineEntries(day: DayRoute): TimelineEntry[] {
       }
 
       currentTime = afterMeals;
-      const hotelBreak = hotelBreakByAfter.get(item.poi_id);
       if (!hotelBreak) return;
       const returnTransport = displayTransferMinutes(hotelBreak.return_to_hotel_transport_min || 0);
       const hotelArrival = parseClockTime(hotelBreak.hotel_arrival_time) ?? (currentTime === null ? null : currentTime + returnTransport);
@@ -250,14 +256,23 @@ function addIncludedMeals(
   usedMeals: Set<number>,
   item: ItineraryItem,
 ) {
+  const itemStart = roundedArrival(item);
+  const itemEnd = itemStart === null ? null : itemStart + displayStayMinutes(item.duration_min);
   meals.forEach((meal, index) => {
-    if (usedMeals.has(index) || !meal.included_in_item_duration || meal.within_poi_id !== item.poi_id) return;
     const start = parseClockTime(meal.start_time);
+    const explicitlyInside = meal.included_in_item_duration && meal.within_poi_id === item.poi_id;
+    const overlapsVisit = !meal.included_in_item_duration
+      && start !== null
+      && itemStart !== null
+      && itemEnd !== null
+      && itemStart <= start
+      && start < itemEnd;
+    if (usedMeals.has(index) || (!explicitlyInside && !overlapsVisit)) return;
     entries.push({
       kind: "break",
       time: start === null ? nearbyMealTitle(meal) : formatTime(start),
       title: nearbyMealTitle(meal),
-      detail: `在此附近预留约 ${displayStayMinutes(meal.duration_min || meal.duration_minutes || 60)} 分钟。`,
+      detail: `${explicitlyInside ? "在此附近" : "就近"}预留约 ${displayStayMinutes(meal.duration_min || meal.duration_minutes || 60)} 分钟。`,
     });
     usedMeals.add(index);
   });
@@ -361,7 +376,8 @@ function nearbyMealTitle(
 
 function hotelRestDetail(hotelBreak: NonNullable<DayRoute["hotel_rest_breaks"]>[number]) {
   const parts: string[] = [];
-  if (hotelBreak.reason) parts.push(hotelBreak.reason);
+  const reason = cleanUserFacingText(hotelBreak.reason);
+  if (reason) parts.push(reason);
   if (typeof hotelBreak.duration_min === "number") parts.push(`休息约 ${displayStayMinutes(hotelBreak.duration_min)} 分钟`);
   if (hotelBreak.next_departure_time) parts.push(`预计 ${hotelBreak.next_departure_time} 再次出发`);
   return parts.join("，") || "回酒店短暂休息后再出发。";

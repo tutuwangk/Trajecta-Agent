@@ -35,3 +35,16 @@ def test_extract_poi_names_recovers_explicit_meal_place_from_original_text():
     meal = next(poi for poi in raw_pois if poi["raw_name"] == "叶婆婆钵钵鸡")
     assert meal["possible_category"] == "restaurant"
     assert meal["contexts"] == ["明确希望作为午餐"]
+
+
+def test_extract_poi_names_recovers_short_and_symbol_brands_from_chained_intent():
+    raw_pois = extract_poi_names(
+        [{"note_id": "note_001", "mentioned_pois": []}],
+        "去太古里，顺便喝杯喜茶再买个B&C，晚上去九眼桥",
+    )
+
+    by_name = {poi["raw_name"]: poi for poi in raw_pois}
+    assert "太古里" in by_name
+    assert by_name["喜茶"]["possible_category"] == "restaurant"
+    assert "B&C" in by_name
+    assert by_name["B&C"]["confidence"] >= 0.9

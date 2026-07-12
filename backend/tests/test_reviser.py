@@ -308,6 +308,40 @@ def test_revise_itinerary_removes_internal_fields_from_user_visible_text():
     assert revised["global_risks"] == ["热门地点可能需要排队"]
 
 
+def test_revise_itinerary_removes_explicit_reasoning_from_user_visible_text():
+    itinerary = {
+        "route_summary": {"main_message": "<think>先比较三条路线。</think>已安排顺路路线。"},
+        "days": [
+            {
+                "day": 1,
+                "theme": "<think>先定主题。</think>历史与夜景",
+                "summary": "<analysis>需要权衡距离。</analysis>上午游览历史街区。",
+                "hotel_rest_breaks": [{"reason": "<think>计算空档。</think>回酒店休整"}],
+                "items": [
+                    {
+                        "poi_id": "p1",
+                        "name": "武侯祠",
+                        "reason": "推理过程：先看优先级。\n最终安排：作为上午第一站。",
+                        "risk_notes": ["```reasoning\n内部判断\n```排队时间可能较长。"],
+                    }
+                ],
+                "removed_pois": [],
+            }
+        ],
+        "global_risks": [],
+        "revision_notes": [],
+    }
+
+    revised = revise_itinerary(itinerary, {"issues": []}, {"constraints": {}})
+
+    assert revised["route_summary"]["main_message"] == "已安排顺路路线。"
+    assert revised["days"][0]["theme"] == "历史与夜景"
+    assert revised["days"][0]["summary"] == "上午游览历史街区。"
+    assert revised["days"][0]["hotel_rest_breaks"][0]["reason"] == "回酒店休整"
+    assert revised["days"][0]["items"][0]["reason"] == "作为上午第一站。"
+    assert revised["days"][0]["items"][0]["risk_notes"] == ["排队时间可能较长。"]
+
+
 def test_revise_from_user_instruction_deletes_named_poi_without_llm_call():
     class FailingLLM:
         def json_chat(self, *args, **kwargs):

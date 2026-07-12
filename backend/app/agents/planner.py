@@ -1396,7 +1396,7 @@ def _resolve_materialized_poi(poi: dict, selected_branch_id: str | None) -> dict
 
 def _resolved_scheduled_role(poi_id: str, poi: dict, scheduled_roles: dict, meal_slots: list[dict]) -> str:
     explicit = str((scheduled_roles or {}).get(poi_id) or "").strip()
-    if explicit:
+    if explicit and _scheduled_role_compatible(poi, explicit):
         return explicit
     if any(slot.get("source") == "poi" and slot.get("poi_id") == poi_id for slot in meal_slots):
         return "meal_stop"
@@ -1410,6 +1410,16 @@ def _resolved_scheduled_role(poi_id: str, poi: dict, scheduled_roles: dict, meal
     if (poi.get("planning_semantics") or {}).get("outing_role") == "filler":
         return "filler_visit"
     return "anchor_visit"
+
+
+def _scheduled_role_compatible(poi: dict, role: str) -> bool:
+    if role == "quick_stop":
+        return _quick_stop_eligible(poi)
+    if role == "meal_stop":
+        return _meal_capability(poi) not in {"none", "drink_only"}
+    if role == "nightlife_stop":
+        return _experience_type(poi) in {"nightlife", "evening_view"}
+    return role in {"anchor_visit", "filler_visit"}
 
 
 def _quick_stop_eligible(poi: dict) -> bool:
@@ -1430,7 +1440,10 @@ def _materialized_duration_min(poi: dict, scheduled_role: str) -> int:
     if scheduled_role == "quick_stop":
         return _positive_int(poi.get("quick_stop_duration_min")) or _positive_int(profiles.get("quick_stop")) or 15
     if scheduled_role == "meal_stop":
-        return _positive_int(poi.get("meal_stop_duration_min")) or _positive_int(profiles.get("meal_stop")) or 60
+        role_duration = _positive_int(poi.get("meal_stop_duration_min")) or _positive_int(profiles.get("meal_stop")) or 60
+        if _experience_type(poi) == "full_meal":
+            return max(estimated, _positive_int(_visit_duration_profile(poi).get("intense_min")) or 0, role_duration)
+        return max(estimated, role_duration)
     return estimated
 
 

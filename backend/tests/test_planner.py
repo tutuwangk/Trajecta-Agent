@@ -1055,3 +1055,62 @@ def test_plan_day_blueprint_falls_back_when_llm_keeps_duplicate_day_numbers():
 
     assert [day["day"] for day in blueprint["days"]] == [1, 2]
     assert blueprint["days"][0]["poi_ids"] == ["p1"]
+
+
+def test_materialization_softly_normalizes_incompatible_quick_stop_role():
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {}},
+        [
+            {
+                "poi_id": "p1", "standard_name": "会员商店", "category": "shopping_mall",
+                "match_status": "matched", "final_decision": "include", "estimated_duration_min": 90,
+                "visit_duration_profile": {"relaxed_min": 90, "intense_min": 120},
+                "planning_semantics": {
+                    "experience_type": "shopping", "poi_role": "shopping_rest",
+                    "outing_role": "filler", "quick_stop_eligible": False,
+                },
+            }
+        ],
+        [],
+    )
+    skeleton = {
+        "destination": "成都",
+        "days": [{"day": 1, "poi_ids": ["p1"], "scheduled_roles": {"p1": "quick_stop"}, "unscheduled_poi_ids": []}],
+        "unscheduled": [], "risk_tags": [],
+    }
+
+    item = materialize_itinerary_from_skeleton(context, skeleton)["days"][0]["items"][0]
+
+    assert item["scheduled_role"] == "filler_visit"
+    assert item["duration_min"] == 90
+
+
+def test_materialization_uses_complete_duration_for_formal_meal_role():
+    context = compile_planning_context(
+        {"destination": "成都", "days": 1, "constraints": {}},
+        [
+            {
+                "poi_id": "p1", "standard_name": "本地火锅店", "category": "restaurant",
+                "match_status": "matched", "final_decision": "include", "estimated_duration_min": 75,
+                "visit_duration_profile": {"relaxed_min": 75, "intense_min": 90},
+                "planning_semantics": {
+                    "experience_type": "full_meal", "meal_capability": "lunch_dinner",
+                    "base_duration_profiles": {"meal_stop": 60},
+                },
+            }
+        ],
+        [],
+    )
+    skeleton = {
+        "destination": "成都",
+        "days": [{
+            "day": 1, "poi_ids": ["p1"], "scheduled_roles": {"p1": "meal_stop"},
+            "meal_slots": [{"slot": "lunch", "requirement": "required", "source": "poi", "poi_id": "p1"}],
+            "unscheduled_poi_ids": [],
+        }],
+        "unscheduled": [], "risk_tags": [],
+    }
+
+    item = materialize_itinerary_from_skeleton(context, skeleton)["days"][0]["items"][0]
+
+    assert item["duration_min"] == 90

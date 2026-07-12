@@ -7,13 +7,15 @@ export function DayRouteCard({ day }: { day: DayRoute }) {
   const transferMinutes = transferTimeMinutes(day);
   const outingMinutes = outingTimeMinutes(day);
   const intensity = intensityLabel(day, outingMinutes);
+  const theme = cleanUserFacingText(day.theme);
+  const summary = cleanUserFacingText(day.summary);
 
   return (
     <section className="panel">
       <div className="mb-5">
         <div className="text-sm font-medium text-muted">第 {day.day} 天</div>
-        <h3 className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-ink">{day.theme}</h3>
-        <p className="subtle mt-2">{day.summary}</p>
+        <h3 className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-ink">{theme}</h3>
+        {summary && <p className="subtle mt-2">{summary}</p>}
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <div className="metric">
             <div className="text-xs text-muted">地点</div>

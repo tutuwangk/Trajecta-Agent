@@ -5,7 +5,17 @@ const TECHNICAL_NOTICE_PATTERN =
 
 export function cleanUserFacingText(value?: string | null) {
   if (!value) return "";
-  return value
+  let text = value
+    .replace(/<(?:think|analysis|reasoning)\b[^>]*>[\s\S]*?<\/(?:think|analysis|reasoning)>/gi, "")
+    .replace(/```(?:think|analysis|reasoning)\s*[\s\S]*?```/gi, "");
+  if (/(?:思考|分析|推理)(?:过程|内容)?\s*[:：]/.test(text)) {
+    const parts = text.split(/(?:最终(?:安排|建议|结论)|给用户的(?:安排|建议)|答复)\s*[:：]\s*/);
+    text = parts.length > 1
+      ? parts[parts.length - 1]
+      : text.replace(/^(?:思考|分析|推理)(?:过程|内容)?\s*[:：].*(?:\n|$)/i, "");
+  }
+  return text
+    .replace(/<\/?(?:think|analysis|reasoning)\b[^>]*>/gi, "")
     .replace(INTERNAL_TEXT_PATTERN, "")
     .replace(/^[\s，,、。；;:：]+/, "")
     .replace(/\s{2,}/g, " ")

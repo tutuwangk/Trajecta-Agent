@@ -76,7 +76,49 @@ def extract_poi_names(ugc_items: list[dict], user_input: str = "") -> list[dict]
             bucket["experience_tags"].append("美食")
         bucket["possible_category"] = "restaurant"
         bucket["confidence"] = max(float(bucket.get("confidence") or 0), 0.9)
+    for mention in _explicit_intent_mentions(user_input):
+        raw_name = mention["raw_name"]
+        if not _is_valid_place_name(raw_name):
+            continue
+        canonical = ALIASES.get(raw_name, raw_name)
+        bucket = grouped.setdefault(
+            canonical,
+            {
+                "raw_name": canonical,
+                "source": "user_input",
+                "contexts": [],
+                "experience_tags": [],
+                "possible_category": mention["possible_category"],
+                "confidence": 0.92,
+            },
+        )
+        context = mention["context"]
+        if context not in bucket["contexts"]:
+            bucket["contexts"].append(context)
+        bucket["confidence"] = max(float(bucket.get("confidence") or 0), 0.92)
     return list(grouped.values())
+
+
+_ACTION = r"(?:去(?:吃|喝(?:杯)?|逛|看|买(?:个)?)?|顺便(?:去|吃|喝(?:杯)?|逛|看|买(?:个)?)?|再(?:去|吃|喝(?:杯)?|逛|看|买(?:个)?)|逛|可以吃)"
+_ACTION_PATTERN = re.compile(rf"(?P<action>{_ACTION})\s*(?P<name>.+?)(?={_ACTION}|[，。；;、\n]|$)", re.IGNORECASE)
+
+
+def _explicit_intent_mentions(text: str) -> list[dict]:
+    mentions: list[dict] = []
+    for match in _ACTION_PATTERN.finditer(text or ""):
+        action = str(match.group("action") or "")
+        name = str(match.group("name") or "").strip(" ，。；;、")
+        if not name:
+            continue
+        possible_category = "restaurant" if any(token in action for token in ["吃", "喝"]) else _guess_category(name, {})
+        mentions.append(
+            {
+                "raw_name": name,
+                "context": f"用户明确表达：{action}{name}",
+                "possible_category": possible_category,
+            }
+        )
+    return mentions
 
 
 def _is_valid_place_name(name: str) -> bool:

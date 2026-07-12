@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import type { DayRoute } from "./types";
-import { buildTimelineEntries } from "./timeline";
+import { buildTimelineEntries } from "./timeline.ts";
 
 test("timeline keeps backend arrival times instead of drifting from previous legs", () => {
   const day: DayRoute = {
@@ -146,4 +146,40 @@ test("timeline keeps plain place title when meal happens during a non-restaurant
   assert.equal(entries[1]?.title, "成都博物馆");
   assert.equal(entries[2]?.kind, "break");
   assert.equal(entries[2]?.title, "午餐：就近用餐");
+});
+
+test("segmented timeline keeps transport between adjacent outing segments", () => {
+  const day: DayRoute = {
+    day: 1,
+    theme: "从上午到下午",
+    summary: "",
+    segments: [
+      { kind: "outing", segment_time: "morning", poi_ids: ["p1"] },
+      { kind: "outing", segment_time: "afternoon", poi_ids: ["p2"] },
+    ],
+    items: [
+      {
+        time_block: "morning",
+        poi_id: "p1",
+        name: "武侯祠",
+        arrival_time: "10:00",
+        duration_min: 90,
+        reason: "",
+        transport_to_next: { mode: "taxi", duration_min: 25, distance_m: 5600 },
+      },
+      {
+        time_block: "afternoon",
+        poi_id: "p2",
+        name: "杜甫草堂",
+        arrival_time: "12:30",
+        duration_min: 90,
+        reason: "",
+      },
+    ],
+    meal_breaks: [],
+  };
+
+  const entries = buildTimelineEntries(day);
+
+  assert.ok(entries.some((entry) => entry.kind === "transfer" && entry.title === "前往 杜甫草堂"));
 });
