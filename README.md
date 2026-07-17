@@ -27,14 +27,14 @@ Trajecta-Agent 面向真实旅行决策场景。用户输入目的地、日期�
    对未指定门店的连锁品牌，用户可以选择“顺路规划”，以酒店或其他已识别地点为参考，系统匹配最近的具体门店后再参与路线规划。
 
 3. 由唯一的 `PlannerAgent` 主动决策
-   只有已确认、且未被移除的地点会进入正式规划。PlannerAgent 使用严格的 `PlannerTurn` 协议：当营业时间或停止入场时间会改变路线取舍时，可先发出一次 `NeedFacts`；系统通过高德与有界网页搜索解析带日期、来源和置信度的事实，再由同一个 Agent 提交 `PlanBlueprint`。Agent 负责选点、分天、排序、饭点策略和取舍，但不能创建地点、坐标、营业状态或交通耗时。
+   只有已确认、且未被移除的地点会进入正式规划。系统先把用户原文整理为 `IntentLedger`（意图账本）和 `PlanningEnvelope`（规划包络）：固定预约是受保护的高权重锚点，明确分天、普通时段、指定餐厅和用户提及地点按强弱偏好参与整体取舍。PlannerAgent 使用严格的 `PlannerTurn` 协议：当营业时间或停止入场时间会改变路线取舍时，可先发出一次 `NeedFacts`；系统通过高德与有界网页搜索解析带日期、来源和置信度的事实，再由同一个 Agent 提交 `PlanBlueprint`。Agent 负责选点、分天、排序、饭点策略和取舍，但不能创建地点、坐标、营业状态或交通耗时。
 
    规划会综合天数、酒店位置、交通偏好、路线目标、兴趣偏好和行程强度。地图事实、地点合法性、分钟级时间线、业务校验和发布资格始终由 Python 代码掌握。
 
 4. 系统编译、校验、有限修正并决定发布状态
    后端根据实际采用的相邻地点请求高德交通信息，确定性生成酒店往返、点间交通、饭点、到达时间和每日总外出时长。系统优先保护明确要求和必去地点；当节奏或空间安排不够理想时，会自动调整或给出提示，而不是把普通取舍交还给用户。
 
-   生成结果会经过事实与时间线校验。每次规划最多包含一次事实请求、一次首版蓝图和一次整体修正；普通时段、餐饮、跨天顺序和舒适度作为评价目标反馈给 Agent，不再逐条阻断。只有固定预约、已知闭馆、地点/路线事实造假、时间算术错误和 14 小时绝对上限等最小不变量会阻断发布。地图或网页事实不足时发布为带来源说明的 `degraded`，不能伪装成 `verified`。
+   生成结果会经过事实与时间线校验。每次规划最多包含一次事实请求、一次首版蓝图和一次整体修正；普通时段、餐饮、跨天顺序、明确预约和舒适度作为不同权重的评价目标反馈给 Agent，不再逐条阻断。模型修正后仍前重后空时，系统只比较一次容量受控的确定性分天候选，不增加 Agent 循环。已知闭馆、地点/路线事实造假、时间算术错误和 14 小时绝对上限等最小不变量才阻断发布；未能满足的预约会作为高优先级体验冲突明确展示。地图或网页事实不足时事实状态为带来源说明的 `degraded`，不能伪装成 `verified`。
 
 5. 根据反馈继续调整
    用户可以在结果页删除地点、调整先后顺序、时段或节奏，也可以重新做连锁店的顺路规划。酒店、天数、交通偏好和原始资料属于规划输入，需要回到行程设置修改并重新生成。若重新识别地点、改名重搜或修改地点决定，旧路线会标记为需要重新生成，避免继续展示过期结果。
@@ -77,7 +77,7 @@ pnpm run dev
 
 浏览器打开 `http://localhost:3000` 即可开始使用。
 
-规划接口以任务方式运行：`POST /sessions/{session_id}/plan` 返回 `run_id`，前端通过运行记录恢复和轮询。结果分为 `verified`、`degraded` 和 `failed`；断线或进程重启后可用原 `run_id` 请求恢复，不会重复创建同一幂等任务。
+规划接口以任务方式运行：`POST /sessions/{session_id}/plan` 返回 `run_id`，前端通过运行记录恢复和轮询。结果同时展示事实状态 `verified/degraded/failed` 与体验状态 `good/needs_adjustment/conflict`，避免用“事实已核验”掩盖路线取舍；断线或进程重启后可用原 `run_id` 请求恢复，不会重复创建同一幂等任务。
 
 ## 跨电脑或线上部署补充
 
@@ -104,13 +104,14 @@ pnpm run dev
 - 地图能力以高德地点链接为主
 - 同一 `run_id` 会复用事实快照、蓝图和已通过门禁的编译结果；从 release gate 恢复时只重做文案与保存。多实例 exactly-once 不在本版范围
 
-完整架构、状态机、错误码和指标定义见 [技术架构](./docs/ARCHITECTURE.md)，本轮实测结果见 [Agent 重构验收报告](./docs/AGENT_REFACTOR_ACCEPTANCE.md)。
+完整架构、状态机、错误码和指标定义见 [技术架构](./docs/ARCHITECTURE.md)，本轮实测结果见 [软优化与六场景验收](./docs/AGENT_SOFT_OPTIMIZATION_ACCEPTANCE_2026-07-17.md)，此前架构收口记录见 [Agent 重构验收报告](./docs/AGENT_REFACTOR_ACCEPTANCE.md)。
 
 ## 验证
 
 ```bash
-backend/.venv/bin/python -m pytest
+backend/.venv/bin/pytest -q
+backend/.venv/bin/python -m compileall -q backend/app backend/main.py
 cd frontend && pnpm test
-cd frontend && pnpm run typecheck
+cd frontend && ./node_modules/.bin/tsc --noEmit --incremental false
 cd frontend && pnpm exec next build --webpack
 ```

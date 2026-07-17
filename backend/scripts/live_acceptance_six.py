@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 from pathlib import Path
@@ -112,6 +113,13 @@ SCENARIOS: list[dict[str, Any]] = [
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Run six realistic end-to-end acceptance scenarios.")
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Print compact acceptance evidence instead of full itineraries.",
+    )
+    args = parser.parse_args()
     load_project_env()
     missing = [name for name in ("LLM_API_KEY", "AMAP_API_KEY") if not os.getenv(name)]
     if missing:
@@ -138,8 +146,42 @@ def main() -> int:
             "product_pass_count": sum(1 for result in results if result["product_checks_passed"]),
             "results": results,
         }
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        printable = _compact_summary(summary) if args.summary_only else summary
+        print(json.dumps(printable, ensure_ascii=False, indent=2))
         return 0 if summary["ok"] else 1
+
+
+def _compact_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": summary["ok"],
+        "scenario_count": summary["scenario_count"],
+        "technical_success_count": summary["technical_success_count"],
+        "product_pass_count": summary["product_pass_count"],
+        "results": [
+            {
+                "id": result["id"],
+                "technical_ok": result["technical_ok"],
+                "fact_status": result.get("fact_status"),
+                "experience_status": result.get("experience_status"),
+                "elapsed_seconds": result.get("elapsed_seconds"),
+                "hotel_anchor": (result.get("hotel_anchor") or {}).get("standard_name"),
+                "intent_commitment_count": len(result.get("intent_commitments") or []),
+                "day_loads": [
+                    {
+                        "day": day.get("day"),
+                        "total_outing_min": day.get("total_outing_min"),
+                        "place_count": len(day.get("places") or []),
+                    }
+                    for day in result.get("days") or []
+                ],
+                "issue_types": [issue.get("type") for issue in result.get("verification_issues") or []],
+                "product_checks_passed": result.get("product_checks_passed"),
+                "product_check_failures": result.get("product_check_failures") or [],
+                "product_advisories": result.get("product_advisories") or [],
+            }
+            for result in summary.get("results") or []
+        ],
+    }
 
 
 if __name__ == "__main__":

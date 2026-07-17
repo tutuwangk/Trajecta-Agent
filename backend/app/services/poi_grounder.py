@@ -56,6 +56,24 @@ def ground_single_poi(raw_poi: dict, user_profile: dict, amap_client, llm_client
                 search_keyword=search_keyword,
             )
         selected = candidates[selected_index]
+        if not _category_is_compatible(raw_poi.get("possible_category", ""), selected.get("type", "")):
+            compatible = [
+                (_score_candidate(raw_poi, candidate, city), candidate)
+                for candidate in candidates
+                if _category_is_compatible(raw_poi.get("possible_category", ""), candidate.get("type", ""))
+            ]
+            if not compatible:
+                return _unmatched(
+                    raw_poi,
+                    candidate_count=len(candidates),
+                    confidence=min(confidence, 0.49),
+                    candidate_options=candidate_options,
+                    search_keyword=search_keyword,
+                )
+            guard_score, selected = max(compatible, key=lambda item: item[0])
+            status = "matched" if guard_score >= 0.8 or (guard_score >= 0.72 and _is_primary_candidate(raw_poi, selected)) else "ambiguous"
+            confidence = min(confidence, guard_score)
+            llm_selection["reason"] = "候选类别与用户意图冲突，已改选类别一致的候选。"
         return _grounded_from_candidate(
             raw_poi,
             selected,
@@ -283,6 +301,8 @@ def _score_candidate(raw_poi: dict, candidate: dict, city: str | None) -> float:
     )
     if _is_auxiliary_candidate(candidate):
         score -= 0.45
+    if not _category_is_compatible(raw_poi.get("possible_category", ""), candidate.get("type", "")):
+        score -= 0.5
     return max(0.0, score)
 
 
@@ -329,16 +349,57 @@ def _is_auxiliary_candidate(candidate: dict) -> bool:
 
 def _category_matches(expected: str, amap_type: str) -> float:
     category = _normalize_category(amap_type)
-    if not expected:
+    expected_category = _normalize_expected_category(expected)
+    if not expected_category:
         return 0.5
-    if expected == category:
+    if expected_category == category:
         return 1.0
-    if expected in {"attraction", "citywalk"} and category in {"attraction", "citywalk", "park"}:
+    if expected_category in {"attraction", "citywalk"} and category in {"attraction", "citywalk", "park", "museum"}:
         return 0.7
-    return 0.3
+    return 0.0 if not _category_is_compatible(expected, amap_type) else 0.3
+
+
+def _category_is_compatible(expected: str, amap_type: str) -> bool:
+    expected_category = _normalize_expected_category(expected)
+    actual = _normalize_category(amap_type)
+    if not expected_category or actual == "unknown":
+        return True
+    compatible = {
+        "attraction": {"attraction", "citywalk", "park", "museum"},
+        "citywalk": {"attraction", "citywalk", "park", "shopping_mall"},
+        "park": {"attraction", "citywalk", "park"},
+        "museum": {"attraction", "museum"},
+        "restaurant": {"restaurant"},
+        "shopping_mall": {"shopping_mall", "citywalk"},
+        "hotel": {"hotel"},
+    }
+    return actual in compatible.get(expected_category, {expected_category})
+
+
+def _normalize_expected_category(raw: str) -> str:
+    value = str(raw or "").strip().lower()
+    if not value or value == "unknown":
+        return ""
+    if any(token in value for token in ["餐", "美食", "restaurant", "咖啡", "小吃"]):
+        return "restaurant"
+    if any(token in value for token in ["酒店", "住宿", "hotel", "宾馆"]):
+        return "hotel"
+    if any(token in value for token in ["购物", "商场", "shopping"]):
+        return "shopping_mall"
+    if any(token in value for token in ["博物馆", "museum"]):
+        return "museum"
+    if any(token in value for token in ["公园", "park"]):
+        return "park"
+    if any(token in value for token in ["街区", "citywalk"]):
+        return "citywalk"
+    if any(token in value for token in ["景点", "景区", "attraction"]):
+        return "attraction"
+    return value
 
 
 def _normalize_category(raw: str) -> str:
+    if any(token in raw for token in ["住宿服务", "宾馆酒店", "酒店", "旅馆", "民宿"]):
+        return "hotel"
     if any(token in raw for token in ["餐饮", "美食", "餐厅"]):
         return "restaurant"
     if any(token in raw for token in ["购物", "商场", "购物中心"]):
@@ -349,6 +410,8 @@ def _normalize_category(raw: str) -> str:
         return "park"
     if any(token in raw for token in ["街", "道路", "风景名胜"]):
         return "attraction"
+    if any(token in raw for token in ["生活服务", "团购", "公司企业"]):
+        return "service"
     return raw or "unknown"
 
 

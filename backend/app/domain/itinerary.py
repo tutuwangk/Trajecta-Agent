@@ -9,23 +9,35 @@ from app.domain.validation import ValidationReport
 
 
 ResultStatus = Literal["verified", "degraded", "failed"]
+ExperienceStatus = Literal["good", "needs_adjustment", "conflict"]
 
 
 class ReleaseDecision(DomainModel):
     status: ResultStatus
+    fact_status: ResultStatus | None = None
+    experience_status: ExperienceStatus = "good"
     reasons: list[str] = Field(default_factory=list)
     blocking_issue_codes: list[str] = Field(default_factory=list)
     degradation_reasons: list[str] = Field(default_factory=list)
     user_actions: list[str] = Field(default_factory=list)
+    experience_reasons: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_status_details(self) -> "ReleaseDecision":
+        if self.fact_status is None:
+            self.fact_status = self.status
+        if self.fact_status != self.status:
+            raise ValueError("fact_status must match the compatibility status field")
         if self.status == "failed" and not self.blocking_issue_codes:
             raise ValueError("failed release decision must include blocking_issue_codes")
         if self.status == "degraded" and not self.degradation_reasons:
             raise ValueError("degraded release decision must include degradation_reasons")
         if self.status == "verified" and (self.blocking_issue_codes or self.degradation_reasons):
             raise ValueError("verified result cannot include blockers or degradation reasons")
+        if self.experience_status == "good" and self.experience_reasons:
+            raise ValueError("good experience status cannot include experience_reasons")
+        if self.experience_status != "good" and not self.experience_reasons:
+            raise ValueError("non-good experience status must include experience_reasons")
         return self
 
 
@@ -171,6 +183,8 @@ class CompiledItinerary(DomainModel):
 
 class FinalItinerary(CompiledItinerary):
     result_status: ResultStatus
+    fact_status: ResultStatus | None = None
+    experience_status: ExperienceStatus = "good"
     release_decision: ReleaseDecision
     verification: ValidationReport | None = None
     fact_version: str = ""

@@ -13,6 +13,15 @@ _PREFERENCE_WEIGHTS = {
     "meal_slot_missing": 700,
     "meal_time_invalid": 500,
     "daily_time_over_intensity_limit": 300,
+    "segment_time_violated": 850,
+    "day_assignment_violated": 800,
+    "explicit_meal_preference_missing": 750,
+    "preferred_visit_missing": 650,
+    "long_transfer": 450,
+    "too_many_cross_area_moves": 350,
+    "meal_stop_missing": 250,
+    "daytime_place_scheduled_too_late": 600,
+    "fixed_time_constraint_violated": 5_000,
 }
 
 
@@ -33,6 +42,9 @@ def evaluate_schedule_candidate(
     penalty += sum(_PREFERENCE_WEIGHTS.get(str(issue.get("type") or ""), 200) for issue in preference_issues)
     penalty += sum(max(0, gap["duration_min"] - 90) for gap in analysis["idle_gaps"])
     penalty += sum(max(0, rest["hotel_detour_min"] - rest["rest_duration_min"]) for rest in analysis["hotel_rests"])
+    day_loads = [int(day.get("total_outing_min") or 0) for day in analysis["days"] if int(day.get("total_outing_min") or 0) > 0]
+    if len(day_loads) > 1:
+        penalty += max(0, max(day_loads) - min(day_loads) - 180) * 2
     return {
         "attempt": attempt,
         "publishable": not factual_issues,
@@ -97,8 +109,13 @@ def analyze_schedule(itinerary: dict) -> dict:
 
 
 def build_replan_feedback(candidate: dict, previous_candidate: dict | None = None) -> dict:
+    ranked_issues = sorted(
+        list(candidate.get("factual_issues") or []) + list(candidate.get("quality_issues") or []),
+        key=lambda issue: _PREFERENCE_WEIGHTS.get(str(issue.get("type") or ""), _FACTUAL_PENALTY if issue in (candidate.get("factual_issues") or []) else 200),
+        reverse=True,
+    )
     feedback = {
-        "issues": list(candidate.get("factual_issues") or []) + list(candidate.get("quality_issues") or []),
+        "issues": ranked_issues[:5],
         "schedule_analysis": dict(candidate.get("analysis") or {}),
         "instruction": "从换天、重排、替换可选地点和调整时段中主动选择整体收益最高的方案；不要逐条机械修补。",
     }

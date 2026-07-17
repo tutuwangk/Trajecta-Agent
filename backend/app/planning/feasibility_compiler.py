@@ -54,6 +54,7 @@ class FeasibilityCompiler:
             runtime_pois,
             time_constraints=[item.model_dump(mode="json") for item in context.time_constraints],
             order_constraints=[item.model_dump(mode="json") for item in context.order_constraints],
+            intent_ledger=context.intent_ledger.model_dump(mode="json"),
         )
         report = validation_report_from_legacy(
             verification,

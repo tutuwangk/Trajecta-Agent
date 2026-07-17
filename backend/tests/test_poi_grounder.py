@@ -86,6 +86,35 @@ def test_ground_single_poi_uses_llm_search_keyword_and_candidate_selection():
     assert grounded["candidate_options"][0]["name"] == "太古里滑板公园"
 
 
+def test_ground_single_poi_does_not_confirm_hotel_for_landmark_even_when_llm_selects_it():
+    raw_poi = {"raw_name": "京杭大运河拱宸桥", "possible_category": "attraction", "contexts": ["第三天去运河"]}
+    client = FakeAmapClient(
+        [
+            {
+                "id": "HOTEL",
+                "name": "如家精选酒店(杭州京杭大运河拱宸桥店)",
+                "address": "拱墅区",
+                "location": "120.140,30.320",
+                "cityname": "杭州市",
+                "adname": "拱墅区",
+                "type": "住宿服务;宾馆酒店;经济型连锁酒店",
+            }
+        ]
+    )
+    llm = FakeLLMClient(
+        [
+            {"search_keyword": "京杭大运河拱宸桥"},
+            {"selected_index": 0, "match_status": "matched", "confidence": 0.98, "reason": "名称相似"},
+        ]
+    )
+
+    grounded = ground_single_poi(raw_poi, {"destination": "杭州"}, client, llm)
+
+    assert grounded["match_status"] == "unmatched"
+    assert grounded["standard_name"] == ""
+
+
+
 def test_ground_single_poi_marks_chain_branches_as_ambiguous():
     raw_poi = {"raw_name": "星巴克", "possible_category": "restaurant", "contexts": ["想喝咖啡"]}
     client = FakeAmapClient(

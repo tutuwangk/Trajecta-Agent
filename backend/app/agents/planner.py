@@ -7,6 +7,7 @@ from math import asin, ceil, cos, radians, sin, sqrt
 import re
 
 from app.agents.intensity import daily_time_ceiling_minutes, daily_time_limit_minutes
+from app.agents.intent_ledger import build_intent_ledger, build_planning_envelope
 from app.agents.planning_preferences import build_planning_preferences
 from app.core import AppError
 
@@ -105,6 +106,24 @@ def compile_planning_context(
         if district:
             district_groups.setdefault(district, []).append(poi_id)
 
+    district_summary = [
+        {"district": district, "poi_ids": poi_ids, "count": len(poi_ids)}
+        for district, poi_ids in district_groups.items()
+    ]
+    intent_ledger = build_intent_ledger(
+        user_profile=user_profile,
+        runtime_pois=runtime_pois,
+        time_constraints=time_constraints,
+        order_constraints=order_constraints,
+        user_request=str(user_request or ""),
+    )
+    planning_envelope = build_planning_envelope(
+        user_profile=user_profile,
+        intent_ledger=intent_ledger,
+        district_summary=district_summary,
+        must_poi_ids=must_poi_ids,
+    )
+
     return {
         "user_profile": user_profile,
         "destination": user_profile.get("destination", ""),
@@ -122,15 +141,14 @@ def compile_planning_context(
         "optional_poi_ids": optional_poi_ids,
         "meal_candidate_poi_ids": meal_candidate_poi_ids,
         "meal_candidates": meal_candidates,
-        "district_summary": [
-            {"district": district, "poi_ids": poi_ids, "count": len(poi_ids)}
-            for district, poi_ids in district_groups.items()
-        ],
+        "district_summary": district_summary,
         "route_matrix": route_matrix,
         "order_constraints": list(order_constraints or []),
         "time_constraints": list(time_constraints or []),
         "planning_decisions": list(planning_decisions or []),
         "planning_preferences": build_planning_preferences(planning_decisions),
+        "intent_ledger": intent_ledger.model_dump(mode="json"),
+        "planning_envelope": planning_envelope.model_dump(mode="json"),
         "route_semantics": {
             poi_id: dict(poi.get("route_semantics") or {})
             for poi_id, poi in poi_lookup.items()
@@ -440,27 +458,45 @@ def _deterministic_blueprint(planning_context: dict, step: str = "plan_itinerary
     comfort_target = _positive_int(planning_context.get("day_budget_min")) or daily_time_limit_minutes(user_profile)
     release_ceiling = daily_time_ceiling_minutes(user_profile)
     preferred_limit = min(release_ceiling, comfort_target + 120)
+    planning_envelope = planning_context.get("planning_envelope") or {}
+    preferred_day_by_poi = {
+        str(poi_id): int(day)
+        for day, poi_ids in (planning_envelope.get("preferred_day_poi_ids") or {}).items()
+        for poi_id in poi_ids or []
+        if str(day).isdigit()
+    }
+    explicit_meal_ids = set(str(poi_id) for poi_id in planning_envelope.get("explicit_meal_poi_ids") or [])
     unscheduled_ids: list[str] = []
 
     def place(poi_id: str, limit: int | None) -> None:
-        best: tuple[int, int, int, list[str]] | None = None
-        for day_index, existing in enumerate(day_poi_ids):
+        best: tuple[int, int, int, int, list[str]] | None = None
+        preferred_day = preferred_day_by_poi.get(poi_id)
+        day_indexes = list(range(day_count))
+        if preferred_day and 1 <= preferred_day <= day_count:
+            preferred_index = preferred_day - 1
+            day_indexes = [preferred_index, *[index for index in day_indexes if index != preferred_index]]
+        for day_index in day_indexes:
+            existing = day_poi_ids[day_index]
             for position in range(len(existing) + 1):
                 candidate = [*existing[:position], poi_id, *existing[position:]]
                 cost = _fallback_day_cost(candidate, planning_context)
                 district = str((poi_lookup.get(poi_id) or {}).get("district") or "")
                 district_penalty = 0 if any(str((poi_lookup.get(item) or {}).get("district") or "") == district for item in existing) else 1
-                ranked = (cost, district_penalty, day_index, candidate)
-                if best is None or ranked[:3] < best[:3]:
+                day_penalty = 0 if preferred_day is None or day_index == preferred_day - 1 else 1
+                ranked = (day_penalty, cost, district_penalty, day_index, candidate)
+                if best is None or ranked[:4] < best[:4]:
                     best = ranked
-        if best is None or (limit is not None and best[0] > limit):
+        if best is None or (limit is not None and best[1] > limit):
             unscheduled_ids.append(poi_id)
             return
-        day_poi_ids[best[2]] = best[3]
+        day_poi_ids[best[3]] = best[4]
 
     for poi_id in sorted(must_ids, key=lambda item: -_fallback_role_duration(poi_lookup.get(item) or {})):
         place(poi_id, None)
-    for poi_id in sorted(preferred_ids, key=lambda item: -_fallback_role_duration(poi_lookup.get(item) or {})):
+    for poi_id in sorted(
+        preferred_ids,
+        key=lambda item: (item not in explicit_meal_ids, -_fallback_role_duration(poi_lookup.get(item) or {})),
+    ):
         place(poi_id, preferred_limit)
     for poi_id in sorted(optional_ids, key=lambda item: -_fallback_role_duration(poi_lookup.get(item) or {})):
         place(poi_id, comfort_target)

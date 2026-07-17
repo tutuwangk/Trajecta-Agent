@@ -12,7 +12,7 @@ DEFAULT_PLANNING_PREFERENCES = {
     "must_places": "keep_must_places",
     "time_preferences": "keep_time_preferences",
     "order_preferences": "keep_order_preferences",
-    "pace": "relax_pace",
+    "pace": "balance_pace",
     "meal_arrangement": "use_nearby_meal",
 }
 

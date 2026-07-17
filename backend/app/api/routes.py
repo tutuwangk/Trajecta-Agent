@@ -534,6 +534,8 @@ def _execute_plan_session(
     final_facts = release_state["facts"]
     release_decision = release_state["decision"]
     final["result_status"] = release_decision.status
+    final["fact_status"] = release_decision.fact_status
+    final["experience_status"] = release_decision.experience_status
     final["release_decision"] = release_decision.model_dump(mode="json")
     final["fact_version"] = final_facts.version
     run_metrics = _build_planning_metrics(
@@ -568,6 +570,7 @@ def _execute_plan_session(
                 "preference_issue_types": _debug_issue_types(debug.get("preference_issue_history") or []),
                 "candidate_scores": list(debug.get("candidate_scores") or []),
                 "fact_requests": list(debug.get("fact_requests") or []),
+                "planning_context_snapshot": dict(debug.get("planning_context_snapshot") or {}),
                 "last_blueprint": (debug.get("skeleton_versions") or [{}])[-1],
                 "fact_snapshot": final_facts.model_dump(mode="json"),
             },
@@ -643,6 +646,7 @@ def _build_planning_metrics(*, itinerary: dict, facts, verification: dict, relea
     llm_metrics = dict(debug.get("llm_metrics") or {})
     calls = list(llm_metrics.get("calls") or [])
     result_status = release_decision.status
+    experience_status = release_decision.experience_status
     return {
         "hard_constraint_pass_rate": 1.0 if not verification.get("blocking_issues") else 0.0,
         "fact_completeness_rate": round(fact_available / fact_total, 4) if fact_total else 1.0,
@@ -656,6 +660,9 @@ def _build_planning_metrics(*, itinerary: dict, facts, verification: dict, relea
         "degraded_rate": 1.0 if result_status == "degraded" else 0.0,
         "failed_rate": 1.0 if result_status == "failed" else 0.0,
         "final_publish_success_rate": 1.0 if result_status in {"verified", "degraded"} else 0.0,
+        "experience_good_rate": 1.0 if experience_status == "good" else 0.0,
+        "experience_needs_adjustment_rate": 1.0 if experience_status == "needs_adjustment" else 0.0,
+        "experience_conflict_rate": 1.0 if experience_status == "conflict" else 0.0,
         "copy_fact_drift_count": 0,
         "llm": llm_metrics,
     }
@@ -699,6 +706,8 @@ def _resume_after_release(
     copy_llm = default_copy_llm_client()
     final = generate_copy(itinerary, copy_context, user_profile, copy_llm)
     final["result_status"] = decision.status
+    final["fact_status"] = decision.fact_status
+    final["experience_status"] = decision.experience_status
     final["release_decision"] = decision.model_dump(mode="json")
     final["fact_version"] = facts.version
     _clean_final_messages(final, verification)

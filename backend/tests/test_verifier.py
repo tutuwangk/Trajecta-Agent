@@ -202,6 +202,76 @@ def test_review_preference_conflicts_respects_relax_pace_choice():
     assert "daily_time_over_intensity_limit" not in {issue["type"] for issue in preference_issues}
 
 
+def test_review_preference_conflicts_keeps_pace_issue_by_default():
+    itinerary = {
+        "days": [{"day": 1, "items": [{"poi_id": "p1", "name": "A", "duration_min": 600}]}]
+    }
+    runtime_pois = [{"poi_id": "p1", "standard_name": "A", "match_status": "matched"}]
+
+    issues = review_preference_conflicts(
+        itinerary,
+        {"constraints": {"physical_intensity": "medium"}},
+        [],
+        runtime_pois,
+        planning_preferences={"pace": "balance_pace"},
+    )
+
+    assert "daily_time_over_intensity_limit" in {issue["type"] for issue in issues}
+
+
+def test_verify_itinerary_audits_day_and_explicit_meal_commitments_without_blocking_release():
+    itinerary = {
+        "days": [
+            {"day": 1, "items": [{"poi_id": "meal", "name": "指定餐厅", "arrival_time": "14:00", "duration_min": 60}]},
+            {"day": 2, "items": [{"poi_id": "view", "name": "目标景点", "arrival_time": "10:00", "duration_min": 90}]},
+        ]
+    }
+    runtime_pois = [
+        {"poi_id": "meal", "standard_name": "指定餐厅", "match_status": "matched", "category": "restaurant"},
+        {"poi_id": "view", "standard_name": "目标景点", "match_status": "matched"},
+    ]
+    ledger = {
+        "commitments": [
+            {"kind": "day", "strength": "strong_preference", "poi_id": "view", "preferred_day": 1, "source_text": "第一天目标景点"},
+            {"kind": "meal", "strength": "strong_preference", "poi_id": "meal", "meal_slot": "lunch", "source_text": "午餐指定餐厅"},
+        ]
+    }
+
+    result = verify_itinerary(itinerary, {"constraints": {}}, [], runtime_pois, intent_ledger=ledger)
+
+    issue_types = {issue["type"] for issue in result["quality_issues"]}
+    assert result["publishable"] is True
+    assert "day_assignment_violated" in issue_types
+    assert "explicit_meal_preference_missing" in issue_types
+
+
+def test_verify_itinerary_reports_omitted_user_mentioned_place_as_soft_quality_issue():
+    itinerary = {
+        "days": [{"day": 1, "items": [{"poi_id": "kept", "name": "保留景点", "arrival_time": "10:00", "duration_min": 90}]}]
+    }
+    runtime_pois = [
+        {"poi_id": "kept", "standard_name": "保留景点", "match_status": "matched"},
+        {"poi_id": "omitted", "standard_name": "普通偏好景点", "match_status": "matched"},
+    ]
+    ledger = {
+        "commitments": [
+            {
+                "kind": "visit",
+                "strength": "soft_preference",
+                "poi_id": "omitted",
+                "source_text": "下午去普通偏好景点",
+            }
+        ]
+    }
+
+    result = verify_itinerary(itinerary, {"constraints": {}}, [], runtime_pois, intent_ledger=ledger)
+
+    assert result["publishable"] is True
+    issue = next(issue for issue in result["quality_issues"] if issue["type"] == "preferred_visit_missing")
+    assert issue["severity"] == "medium"
+
+
+
 def test_verify_itinerary_blocks_routes_over_absolute_intensity_ceiling():
     itinerary = {
         "days": [{"day": 1, "items": [{"poi_id": "p1", "name": "成都欢乐谷", "duration_min": 900}]}]
@@ -498,7 +568,7 @@ def test_verify_itinerary_requires_evening_visit_to_start_in_the_evening_window(
     assert result["publishable"] is True
 
 
-def test_verify_itinerary_blocks_objective_fixed_time_conflict():
+def test_verify_itinerary_reports_objective_fixed_time_conflict_without_failing_the_run():
     itinerary = {"days": [{"day": 1, "items": [{"poi_id": "p1", "name": "演出", "arrival_time": "17:00", "duration_min": 90}]}]}
     runtime_pois = [{"poi_id": "p1", "standard_name": "演出", "match_status": "matched"}]
 
@@ -518,8 +588,9 @@ def test_verify_itinerary_blocks_objective_fixed_time_conflict():
         ],
     )
 
-    assert result["publishable"] is False
-    assert {issue["type"] for issue in result["blocking_issues"]} == {"fixed_time_constraint_violated"}
+    assert result["publishable"] is True
+    assert not result["blocking_issues"]
+    assert {issue["type"] for issue in result["quality_issues"]} == {"fixed_time_constraint_violated"}
 
 
 def test_verify_itinerary_scores_cross_day_order_globally_without_blocking_output():

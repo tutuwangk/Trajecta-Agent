@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from app.domain.facts import Coordinates, FactGap, FactSnapshot, GroundedPOI, HotelAnchor, POIAvailabilityFact, RouteEdge
-from app.domain.planning import PlanBlueprint, PlanningCandidate, PlanningContext, PlanningPreferences
+from app.domain.planning import IntentLedger, PlanBlueprint, PlanningCandidate, PlanningContext, PlanningEnvelope, PlanningPreferences
 from app.domain.validation import ValidationIssue, ValidationReport
 from app.schemas.models import UserProfile
 
@@ -237,6 +237,8 @@ def planning_context_from_legacy(
         order_constraints=list(legacy_context.get("order_constraints") or []),
         time_constraints=list(legacy_context.get("time_constraints") or []),
         planning_preferences=PlanningPreferences.model_validate(legacy_context.get("planning_preferences") or {}),
+        intent_ledger=IntentLedger.model_validate(legacy_context.get("intent_ledger") or {}),
+        planning_envelope=PlanningEnvelope.model_validate(legacy_context.get("planning_envelope") or {}),
         trip_dates=trip_dates,
         user_request=str(legacy_context.get("user_request") or "")[:6000],
     )

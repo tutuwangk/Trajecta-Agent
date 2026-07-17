@@ -185,8 +185,11 @@ export type ItineraryState = {
     degradation_reasons?: string[];
     release_decision?: {
       status: "verified" | "degraded" | "failed";
+      fact_status?: "verified" | "degraded" | "failed";
+      experience_status?: "good" | "needs_adjustment" | "conflict";
       reasons: string[];
       degradation_reasons: string[];
+      experience_reasons?: string[];
       user_actions: string[];
     };
     issues: Array<{ type: string; severity: string; message: string; suggestion?: string; day?: number; poi_name?: string }>;
@@ -204,11 +207,16 @@ export type RuntimePoi = {
 export type Itinerary = {
   destination: string;
   result_status?: "verified" | "degraded" | "failed";
+  fact_status?: "verified" | "degraded" | "failed";
+  experience_status?: "good" | "needs_adjustment" | "conflict";
   fact_version?: string;
   release_decision?: {
     status: "verified" | "degraded" | "failed";
+    fact_status?: "verified" | "degraded" | "failed";
+    experience_status?: "good" | "needs_adjustment" | "conflict";
     reasons: string[];
     degradation_reasons: string[];
+    experience_reasons?: string[];
     user_actions: string[];
   };
   route_summary?: {

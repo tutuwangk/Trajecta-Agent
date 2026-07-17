@@ -9,6 +9,27 @@ from app.planning.segment_boundaries import hotel_rest_boundary_pairs
 from app.schemas.models import UserProfile
 
 
+_EXPERIENCE_CONFLICT_CODES = {
+    "fixed_time_constraint_violated",
+    "day_assignment_violated",
+    "order_constraint_violated",
+    "explicit_meal_preference_missing",
+}
+_EXPERIENCE_ADJUSTMENT_CODES = _EXPERIENCE_CONFLICT_CODES | {
+    "time_constraint_violated",
+    "segment_time_violated",
+    "daily_time_over_intensity_limit",
+    "empty_day_with_available_places",
+    "preferred_visit_missing",
+    "meal_slot_missing",
+    "meal_time_invalid",
+    "meal_stop_missing",
+    "long_transfer",
+    "too_many_cross_area_moves",
+    "daytime_place_scheduled_too_late",
+}
+
+
 class ReleaseGate:
     def decide(
         self,
@@ -21,6 +42,7 @@ class ReleaseGate:
         blockers = [issue.code for issue in report.blocking_issues]
         reasons = [issue.message for issue in report.blocking_issues]
         degradation_reasons: list[str] = []
+        experience_status, experience_reasons = _experience_decision(report)
 
         scheduled_ids = {
             str(item.get("poi_id"))
@@ -110,6 +132,8 @@ class ReleaseGate:
         if blockers:
             return ReleaseDecision(
                 status="failed",
+                experience_status=experience_status,
+                experience_reasons=experience_reasons,
                 reasons=list(dict.fromkeys(reasons)),
                 blocking_issue_codes=list(dict.fromkeys(blockers)),
                 user_actions=["调整地点或稍后重试地图事实获取。"],
@@ -117,21 +141,41 @@ class ReleaseGate:
         if degradation_reasons:
             return ReleaseDecision(
                 status="degraded",
+                experience_status=experience_status,
+                experience_reasons=experience_reasons,
                 reasons=["行程可执行，但部分事实采用估算或仍需复核。"],
                 degradation_reasons=degradation_reasons,
                 user_actions=["出发前复核标记为估算的交通或营业信息。"],
             )
-        return ReleaseDecision(status="verified", reasons=["地点、路线和行程硬约束均已通过核验。"])
+        return ReleaseDecision(
+            status="verified",
+            experience_status=experience_status,
+            experience_reasons=experience_reasons,
+            reasons=["地点、路线和行程硬约束均已通过核验。"],
+        )
 
 
 def apply_release_decision(verification: dict, decision: ReleaseDecision) -> dict:
     result = dict(verification)
     result["result_status"] = decision.status
+    result["fact_status"] = decision.fact_status
+    result["experience_status"] = decision.experience_status
+    result["experience_reasons"] = list(decision.experience_reasons)
     result["release_decision"] = decision.model_dump(mode="json")
     result["degradation_reasons"] = list(decision.degradation_reasons)
     result["publishable"] = decision.status in {"verified", "degraded"}
     result["passed"] = result["publishable"]
     return result
+
+
+def _experience_decision(report: ValidationReport) -> tuple[str, list[str]]:
+    relevant = [issue for issue in report.issues if not issue.release_blocking and issue.code in _EXPERIENCE_ADJUSTMENT_CODES]
+    reasons = list(dict.fromkeys(issue.message for issue in relevant if issue.message))[:5]
+    if not reasons:
+        return "good", []
+    if any(issue.code in _EXPERIENCE_CONFLICT_CODES and issue.severity in {"high", "blocking"} for issue in relevant):
+        return "conflict", reasons
+    return "needs_adjustment", reasons
 
 
 def _used_route_edges(

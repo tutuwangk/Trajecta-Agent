@@ -17,6 +17,8 @@ SegmentTime = Literal["", "morning", "midday", "afternoon", "evening", "night"]
 ScheduledRole = Literal["quick_stop", "meal_stop", "anchor_visit", "filler_visit", "nightlife_stop"]
 MealSource = Literal["poi", "inside_poi", "fallback_nearby"]
 MealType = Literal["breakfast", "lunch", "dinner"]
+CommitmentKind = Literal["visit", "time", "day", "order", "meal"]
+CommitmentStrength = Literal["hard_anchor", "strong_preference", "soft_preference"]
 
 
 class PlanningCandidate(DomainModel):
@@ -59,8 +61,35 @@ class PlanningPreferences(DomainModel):
     must_places: str = "keep_must_places"
     time_preferences: str = "keep_time_preferences"
     order_preferences: str = "keep_order_preferences"
-    pace: str = "relax_pace"
+    pace: str = "balance_pace"
     meal_arrangement: str = "use_nearby_meal"
+
+
+class PlanningCommitment(DomainModel):
+    commitment_id: str = Field(min_length=1)
+    kind: CommitmentKind
+    strength: CommitmentStrength
+    poi_id: str = ""
+    related_poi_ids: list[str] = Field(default_factory=list)
+    preferred_day: int | None = Field(default=None, ge=1)
+    preferred_window: str = ""
+    fixed_time: str = ""
+    meal_slot: str = ""
+    source_text: str = Field(default="", max_length=240)
+
+
+class IntentLedger(DomainModel):
+    commitments: list[PlanningCommitment] = Field(default_factory=list)
+
+
+class PlanningEnvelope(DomainModel):
+    comfort_target_min: int = Field(default=0, ge=0)
+    release_ceiling_min: int = Field(default=840, ge=0)
+    protected_poi_ids: list[str] = Field(default_factory=list)
+    fixed_anchors: list[PlanningCommitment] = Field(default_factory=list)
+    preferred_day_poi_ids: dict[int, list[str]] = Field(default_factory=dict)
+    explicit_meal_poi_ids: list[str] = Field(default_factory=list)
+    district_clusters: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class PlanningContext(DomainModel):
@@ -71,6 +100,8 @@ class PlanningContext(DomainModel):
     order_constraints: list[OrderConstraint] = Field(default_factory=list)
     time_constraints: list[TimeConstraint] = Field(default_factory=list)
     planning_preferences: PlanningPreferences = Field(default_factory=PlanningPreferences)
+    intent_ledger: IntentLedger = Field(default_factory=IntentLedger)
+    planning_envelope: PlanningEnvelope = Field(default_factory=PlanningEnvelope)
     previous_blueprint: "PlanBlueprint | None" = None
     validation_report: ValidationReport | None = None
     history: list[str] = Field(default_factory=list)

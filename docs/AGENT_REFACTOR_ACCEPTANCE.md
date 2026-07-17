@@ -1,5 +1,7 @@
 # Agent 重构验收报告
 
+> 本文件保留 2026-07-16 架构收口验收。2026-07-17 的意图账本、软优化、事实/体验双状态与最新 6/6 在线结果见 [Agent 软优化与六场景验收](./AGENT_SOFT_OPTIMIZATION_ACCEPTANCE_2026-07-17.md)。
+
 > 日期：2026-07-16
 > 方案基准：`docs/AGENT_REFACTOR_PLAN.md`
 > 当前事实：`docs/ARCHITECTURE.md` 与本报告

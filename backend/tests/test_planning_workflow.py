@@ -404,6 +404,62 @@ def test_workflow_gives_one_bounded_replan_then_publishes_best_quality_candidate
     assert verification["quality_deviations"]
 
 
+def test_workflow_compares_deterministic_distribution_when_model_leaves_later_day_empty():
+    class FrontLoadsPlanningLLM:
+        def __init__(self):
+            self.replans = 0
+
+        def json_chat(self, messages, step, temperature=0.2):
+            if step == "plan_itinerary_blueprint":
+                return {
+                    "destination": "成都",
+                    "days": [
+                        {"day": 1, "poi_ids": ["p1", "p2"], "unscheduled_poi_ids": []},
+                        {"day": 2, "poi_ids": [], "unscheduled_poi_ids": []},
+                    ],
+                    "unscheduled": [],
+                    "risk_tags": [],
+                }
+            if step == "replan_itinerary_blueprint":
+                self.replans += 1
+                return {
+                    "destination": "成都",
+                    "days": [
+                        {"day": 1, "poi_ids": ["p1", "p2"], "unscheduled_poi_ids": []},
+                        {"day": 2, "poi_ids": [], "unscheduled_poi_ids": []},
+                    ],
+                    "unscheduled": [],
+                    "risk_tags": [],
+                }
+            raise AssertionError(step)
+
+    class CopyLLM:
+        def json_chat(self, messages, step, temperature=0.2):
+            return {"issues": []}
+
+    planner = FrontLoadsPlanningLLM()
+    itinerary, verification, debug = run_planning_workflow(
+        {"destination": "成都", "days": 2, "constraints": {}},
+        [
+            {"poi_id": "p1", "raw_name": "第一处", "standard_name": "第一处", "match_status": "matched", "estimated_duration_min": 90, "final_decision": "include"},
+            {"poi_id": "p2", "raw_name": "第二处", "standard_name": "第二处", "match_status": "matched", "estimated_duration_min": 90, "final_decision": "include"},
+        ],
+        [
+            {"origin_poi_id": "p1", "destination_poi_id": "p2", "mode": "taxi", "duration_min": 15, "distance_m": 2000, "relation": "nearby"},
+            {"origin_poi_id": "p2", "destination_poi_id": "p1", "mode": "taxi", "duration_min": 15, "distance_m": 2000, "relation": "nearby"},
+        ],
+        planner,
+        CopyLLM(),
+        user_request="第一天去第一处，第二天去第二处。",
+    )
+
+    assert planner.replans == 1
+    assert [[item["poi_id"] for item in day["items"]] for day in itinerary["days"]] == [["p1"], ["p2"]]
+    assert verification["publishable"] is True
+    assert debug["auto_fallback_used"] is True
+    assert len(debug["candidate_scores"]) == 3
+
+
 def test_run_planning_workflow_does_not_recompile_facts_after_copy_generation():
     class PlanningLLM:
         def json_chat(self, messages, step, temperature=0.2):

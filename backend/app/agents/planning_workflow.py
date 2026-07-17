@@ -159,6 +159,7 @@ def run_planning_workflow(
             time_constraints=planning_context.get("time_constraints", []),
             order_constraints=planning_context.get("order_constraints", []),
             planning_preferences=planning_preferences,
+            intent_ledger=planning_context.get("intent_ledger"),
         )
         if preference_issues:
             preference_issue_history.append(deepcopy(preference_issues))
@@ -224,6 +225,7 @@ def run_planning_workflow(
             time_constraints=planning_context.get("time_constraints", []),
             order_constraints=planning_context.get("order_constraints", []),
             planning_preferences=planning_preferences,
+            intent_ledger=planning_context.get("intent_ledger"),
         )
         fallback_candidate = evaluate_schedule_candidate(
             fallback_itinerary, [], fallback_preferences, attempt=len(skeleton_versions) - 1
@@ -231,8 +233,13 @@ def run_planning_workflow(
         fallback_candidate.update({"itinerary": fallback_itinerary, "skeleton": fallback_skeleton})
         candidates.append(fallback_candidate)
 
+    fallback_trigger_types = {
+        "must_visit_missing",
+        "empty_day_with_available_places",
+        "day_assignment_violated",
+    }
     if candidates and all(
-        any(issue.get("type") == "must_visit_missing" for issue in candidate.get("quality_issues") or [])
+        any(issue.get("type") in fallback_trigger_types for issue in candidate.get("quality_issues") or [])
         for candidate in candidates
     ):
         fallback_skeleton = _deterministic_blueprint(planning_context)
@@ -254,6 +261,7 @@ def run_planning_workflow(
                 time_constraints=planning_context.get("time_constraints", []),
                 order_constraints=planning_context.get("order_constraints", []),
                 planning_preferences=planning_preferences,
+                intent_ledger=planning_context.get("intent_ledger"),
             )
             fallback_candidate = evaluate_schedule_candidate(
                 fallback_itinerary, [], fallback_preferences, attempt="fallback"
@@ -268,14 +276,15 @@ def run_planning_workflow(
 
     final_soft_issues = list(best_candidate.get("quality_issues") or [])
     reviewed_soft_issues = review_soft_quality(
-            final_itinerary,
-            user_profile,
-            route_matrix,
-            runtime_pois,
-            time_constraints=planning_context.get("time_constraints", []),
-            order_constraints=planning_context.get("order_constraints", []),
-            llm_client=copy_llm,
-        )
+        final_itinerary,
+        user_profile,
+        route_matrix,
+        runtime_pois,
+        time_constraints=planning_context.get("time_constraints", []),
+        order_constraints=planning_context.get("order_constraints", []),
+        llm_client=copy_llm,
+        intent_ledger=planning_context.get("intent_ledger"),
+    )
     final_soft_issues.extend(issue for issue in reviewed_soft_issues if issue not in final_soft_issues)
     pre_copy_verification = verify_itinerary(
         final_itinerary,
@@ -284,6 +293,7 @@ def run_planning_workflow(
         runtime_pois,
         time_constraints=planning_context.get("time_constraints", []),
         order_constraints=planning_context.get("order_constraints", []),
+        intent_ledger=planning_context.get("intent_ledger"),
     )
     if release_candidate is not None:
         pre_copy_verification = release_candidate(final_itinerary, pre_copy_verification)
@@ -295,7 +305,7 @@ def run_planning_workflow(
     copy_context = build_copy_context(planning_context, final_itinerary, final_hard_validation, final_soft_issues)
     _emit_phase(on_phase, "copywriting", {"blueprint": best_candidate["skeleton"]})
     final = generate_copy(final_itinerary, copy_context, user_profile, copy_llm)
-    deviation_messages = quality_deviation_messages(best_candidate.get("quality_issues") or [])
+    deviation_messages = quality_deviation_messages(final_soft_issues)
     if deviation_messages:
         risks = list(final.get("global_risks") or [])
         for message in deviation_messages:
@@ -309,8 +319,18 @@ def run_planning_workflow(
         runtime_pois,
         time_constraints=planning_context.get("time_constraints", []),
         order_constraints=planning_context.get("order_constraints", []),
+        intent_ledger=planning_context.get("intent_ledger"),
     )
-    for key in ("result_status", "release_decision", "degradation_reasons", "publishable", "passed"):
+    for key in (
+        "result_status",
+        "fact_status",
+        "experience_status",
+        "experience_reasons",
+        "release_decision",
+        "degradation_reasons",
+        "publishable",
+        "passed",
+    ):
         if key in pre_copy_verification:
             verification[key] = deepcopy(pre_copy_verification[key])
     verification["quality_deviations"] = deviation_messages
@@ -383,6 +403,7 @@ def _compile_candidate(
         runtime_pois,
         time_constraints=planning_context.get("time_constraints", []),
         order_constraints=planning_context.get("order_constraints", []),
+        intent_ledger=planning_context.get("intent_ledger"),
     )
     return itinerary, validation
 
@@ -505,6 +526,8 @@ def _context_snapshot(planning_context: dict) -> dict:
         "optional_poi_ids": list(planning_context.get("optional_poi_ids", [])),
         "time_constraints": list(planning_context.get("time_constraints", [])),
         "planning_decisions": list(planning_context.get("planning_decisions", [])),
+        "intent_ledger": dict(planning_context.get("intent_ledger") or {}),
+        "planning_envelope": dict(planning_context.get("planning_envelope") or {}),
     }
 
 
@@ -581,6 +604,11 @@ def _repair_meal_only_blueprint(skeleton: dict, itinerary: dict, issues: list[di
         existing_index = next((index for index, slot in enumerate(slots) if slot.get("slot") == slot_name), None)
         if existing_index is None:
             slots.append(replacement)
+        elif slots[existing_index].get("source") == "poi":
+            # A user-selected restaurant is a planning commitment.  Mechanical
+            # repair may fill an empty slot, but must not silently replace an
+            # explicit restaurant with a generic nearby meal.
+            continue
         elif slots[existing_index] == replacement:
             continue
         else:

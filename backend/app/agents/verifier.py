@@ -14,7 +14,6 @@ FACTUAL_ISSUE_TYPES = {
     "missing_transfer",
     "route_unknown",
     "avoid_visit_scheduled",
-    "fixed_time_constraint_violated",
     "daily_absolute_limit_exceeded",
     "duplicate_place_scheduled",
     "unavailable_place_scheduled",
@@ -33,6 +32,14 @@ PREFERENCE_ISSUE_TYPES = {
     "meal_slot_missing",
     "meal_time_invalid",
     "daytime_place_scheduled_too_late",
+    "fixed_time_constraint_violated",
+    "segment_time_violated",
+    "long_transfer",
+    "too_many_cross_area_moves",
+    "day_assignment_violated",
+    "explicit_meal_preference_missing",
+    "preferred_visit_missing",
+    "meal_stop_missing",
 }
 
 RELEASE_BLOCKING_TYPES = FACTUAL_ISSUE_TYPES | {
@@ -48,6 +55,7 @@ def verify_itinerary(
     runtime_pois: list[dict] | None = None,
     time_constraints: list[dict] | None = None,
     order_constraints: list[dict] | None = None,
+    intent_ledger: dict | list[dict] | None = None,
 ) -> dict:
     issues = _collect_issues(
         itinerary,
@@ -56,6 +64,7 @@ def verify_itinerary(
         runtime_pois,
         time_constraints=time_constraints,
         order_constraints=order_constraints,
+        intent_ledger=intent_ledger,
     )
     blocking_issues = [issue for issue in issues if issue.get("type") in RELEASE_BLOCKING_TYPES]
     publishable = not blocking_issues
@@ -75,6 +84,7 @@ def validate_hard_constraints(
     runtime_pois: list[dict] | None = None,
     time_constraints: list[dict] | None = None,
     order_constraints: list[dict] | None = None,
+    intent_ledger: dict | list[dict] | None = None,
 ) -> dict:
     issues = [
         issue
@@ -85,6 +95,7 @@ def validate_hard_constraints(
             runtime_pois,
             time_constraints=time_constraints,
             order_constraints=order_constraints,
+            intent_ledger=intent_ledger,
         )
         if issue["type"] in RELEASE_BLOCKING_TYPES
     ]
@@ -99,6 +110,7 @@ def review_preference_conflicts(
     time_constraints: list[dict] | None = None,
     order_constraints: list[dict] | None = None,
     planning_preferences: dict | None = None,
+    intent_ledger: dict | list[dict] | None = None,
 ) -> list[dict]:
     issues = [
         dict(issue, domain=_preference_issue_domain(issue["type"]))
@@ -109,6 +121,7 @@ def review_preference_conflicts(
             runtime_pois,
             time_constraints=time_constraints,
             order_constraints=order_constraints,
+            intent_ledger=intent_ledger,
         )
         if issue["type"] in PREFERENCE_ISSUE_TYPES and issue["type"] not in RELEASE_BLOCKING_TYPES
     ]
@@ -123,6 +136,7 @@ def review_soft_quality(
     time_constraints: list[dict] | None = None,
     order_constraints: list[dict] | None = None,
     llm_client=None,
+    intent_ledger: dict | list[dict] | None = None,
 ) -> list[dict]:
     issues = [
         issue
@@ -133,6 +147,7 @@ def review_soft_quality(
             runtime_pois,
             time_constraints=time_constraints,
             order_constraints=order_constraints,
+            intent_ledger=intent_ledger,
         )
         if issue["type"] not in FACTUAL_ISSUE_TYPES and issue["type"] not in PREFERENCE_ISSUE_TYPES
     ]
@@ -203,6 +218,7 @@ def _collect_issues(
     runtime_pois: list[dict] | None = None,
     time_constraints: list[dict] | None = None,
     order_constraints: list[dict] | None = None,
+    intent_ledger: dict | list[dict] | None = None,
 ) -> list[dict]:
     issues: list[dict] = []
     runtime_by_id = {poi.get("poi_id"): poi for poi in runtime_pois or []}
@@ -417,6 +433,7 @@ def _collect_issues(
                     }
                 )
     issues.extend(_order_constraint_issues(days, order_constraints or []))
+    issues.extend(_intent_commitment_issues(days, intent_ledger))
     has_plannable_runtime_poi = any(
         _is_plannable_poi(poi) and poi.get("final_decision") in {None, "", "include", "optional"}
         for poi in runtime_pois or []
@@ -473,6 +490,86 @@ def _collect_issues(
                 }
             )
     return issues
+
+
+def _intent_commitment_issues(days: list[dict], intent_ledger: dict | list[dict] | None) -> list[dict]:
+    if isinstance(intent_ledger, dict):
+        commitments = list(intent_ledger.get("commitments") or [])
+    elif isinstance(intent_ledger, list):
+        commitments = list(intent_ledger)
+    else:
+        commitments = []
+    if not commitments:
+        return []
+
+    positions: dict[str, tuple[int, dict, dict]] = {}
+    for day in days:
+        for item in day.get("items") or []:
+            poi_id = str(item.get("poi_id") or "")
+            if poi_id:
+                positions[poi_id] = (int(day.get("day") or 0), day, item)
+
+    issues: list[dict] = []
+    for commitment in commitments:
+        if not isinstance(commitment, dict):
+            continue
+        kind = str(commitment.get("kind") or "")
+        strength = str(commitment.get("strength") or "soft_preference")
+        poi_id = str(commitment.get("poi_id") or "")
+        position = positions.get(poi_id)
+        source_text = str(commitment.get("source_text") or "")
+        if kind == "day" and commitment.get("preferred_day") and position:
+            preferred_day = int(commitment["preferred_day"])
+            if position[0] != preferred_day:
+                issues.append(
+                    {
+                        "type": "day_assignment_violated",
+                        "severity": "high" if strength == "strong_preference" else "medium",
+                        "day": position[0],
+                        "poi_id": poi_id,
+                        "poi_name": position[2].get("name"),
+                        "message": f"用户希望 {position[2].get('name')} 安排在 Day {preferred_day}，当前放在 Day {position[0]}。",
+                        "suggestion": "优先换天或调整同日组合；若移动成本明显更差，应明确说明取舍。",
+                        "evidence": source_text,
+                    }
+                )
+        if kind == "meal":
+            if position and _commitment_meal_is_fulfilled(position[1], poi_id, str(commitment.get("meal_slot") or "")):
+                continue
+            poi_name = position[2].get("name") if position else source_text or poi_id
+            issues.append(
+                {
+                    "type": "explicit_meal_preference_missing",
+                    "severity": "high" if strength == "strong_preference" else "medium",
+                    "day": position[0] if position else None,
+                    "poi_id": poi_id,
+                    "poi_name": poi_name,
+                    "message": f"用户明确指定的餐饮 {poi_name} 没有真正承接对应餐次。",
+                    "suggestion": "先尝试换天或调整顺序；仍不可行时保留未采用原因，再使用附近就餐补位。",
+                    "evidence": source_text,
+                }
+            )
+        if kind == "visit" and poi_id and not position:
+            issues.append(
+                {
+                    "type": "preferred_visit_missing",
+                    "severity": "high" if strength == "strong_preference" else "medium",
+                    "poi_id": poi_id,
+                    "message": f"用户提及的地点 {source_text or poi_id} 未进入路线。",
+                    "suggestion": "优先比较重新分天与顺路补入；若会明显超载，可保留为备选并说明取舍。",
+                    "evidence": source_text,
+                }
+            )
+    return issues
+
+
+def _commitment_meal_is_fulfilled(day: dict, poi_id: str, meal_slot: str) -> bool:
+    for slot in day.get("meal_slots") or []:
+        if slot.get("source") != "poi" or str(slot.get("poi_id") or "") != poi_id:
+            continue
+        if not meal_slot or str(slot.get("slot") or "") == meal_slot:
+            return _is_meal_slot_satisfied(day, slot)
+    return False
 
 
 def _has_meal_stop(items: list[dict], runtime_by_id: dict) -> bool:
@@ -607,6 +704,13 @@ def _preference_issue_domain(issue_type: str) -> str:
         "meal_time_invalid": "meal_arrangement",
         "segment_time_violated": "time_preferences",
         "empty_day_with_available_places": "day_distribution",
+        "day_assignment_violated": "day_distribution",
+        "explicit_meal_preference_missing": "meal_arrangement",
+        "preferred_visit_missing": "must_places",
+        "long_transfer": "route_quality",
+        "too_many_cross_area_moves": "route_quality",
+        "meal_stop_missing": "meal_arrangement",
+        "daytime_place_scheduled_too_late": "time_preferences",
         "avoid_visit_scheduled": "avoid_places",
     }
     return mapping.get(issue_type, "planning_preference")

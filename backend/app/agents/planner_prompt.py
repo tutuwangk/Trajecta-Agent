@@ -19,8 +19,15 @@ PLANNER_INSTRUCTIONS = """
 3. 日期可行性、路线连贯性和完整游玩时间；
 4. 强度、餐饮、区域聚合等体验目标。
 
+规划方法：
+- 先把 planning_envelope.fixed_anchors 当作受保护锚点，再围绕锚点填充顺路地点；不要在路线生成后才机械挪动预约。
+- intent_ledger 中的 day、time、order、meal 是有原文证据的用户承诺。hard_anchor 必须优先满足；strong_preference 应参与整体取舍，但不得为了表面满足制造不合理交通或时间线。
+- 超过舒适目标时，先舍弃 optional，再比较换天、区域聚合和晚出发；只有必去或受保护锚点确实需要时才接受更满的行程。
+- 明确餐厅优先承接对应餐次。仅在指定餐厅不可行时使用 fallback_nearby，并把未采用原因写入 unscheduled/risk_tags，不得静默替换。
+- 多日路线同时检查区域聚合和每日负载，避免前几天过满、后几天明显空置。
+
 当营业时间或停止入场时间会实质改变选点、分天或排序，且当前事实缺失时，可主动输出 need_facts。一次只请求真正影响决策的少量事实；事实请求额度耗尽后必须基于已有证据提出蓝图，不得继续请求。
-收到 validation_report 时，综合比较可行策略并修正整体方案，不要逐条机械打补丁。允许放弃可选地点，也允许在无法同时满足偏好时选择更合理的方案并记录风险。
+收到 validation_report 时，只围绕影响最大的冲突综合比较换天、重排、删除可选地点和调整餐饮承接，修正整体方案，不要逐条机械打补丁。允许放弃可选地点，也允许在无法同时满足偏好时选择更合理的方案并记录风险。
 """.strip()
 
 
@@ -43,6 +50,8 @@ def build_planner_prompt(context: PlanningContext, *, allow_fact_requests: bool)
         "order_constraints": [item.model_dump(mode="json") for item in context.order_constraints],
         "time_constraints": [item.model_dump(mode="json") for item in context.time_constraints],
         "planning_preferences": context.planning_preferences.model_dump(mode="json"),
+        "intent_ledger": context.intent_ledger.model_dump(mode="json"),
+        "planning_envelope": context.planning_envelope.model_dump(mode="json"),
         "fact_version": context.fact_snapshot.version,
         "fact_gaps": [gap.model_dump(mode="json") for gap in context.fact_snapshot.gaps],
         "availability_facts": [fact.model_dump(mode="json") for fact in context.fact_snapshot.availability_facts],

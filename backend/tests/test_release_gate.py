@@ -1,5 +1,5 @@
 from app.adapters.legacy import fact_snapshot_from_legacy
-from app.domain.validation import ValidationReport
+from app.domain.validation import ValidationIssue, ValidationReport
 from app.planning.release_gate import ReleaseGate
 from app.schemas.models import UserProfile
 
@@ -79,6 +79,58 @@ def test_release_gate_marks_precise_selected_edge_as_verified():
     )
 
     assert decision.status == "verified"
+
+
+def test_release_gate_keeps_fact_verification_separate_from_experience_conflict():
+    facts = fact_snapshot_from_legacy("成都", [_pois()[0]], [])
+    report = ValidationReport(
+        passed=True,
+        issues=[
+            ValidationIssue(
+                code="day_assignment_violated",
+                severity="high",
+                message="用户希望目标景点安排在 Day 2，当前放在 Day 1。",
+                release_blocking=False,
+            )
+        ],
+    )
+
+    decision = ReleaseGate().decide(
+        itinerary={"days": [{"day": 1, "items": [{"poi_id": "p1"}]}]},
+        report=report,
+        facts=facts,
+        user_profile=_profile(),
+    )
+
+    assert decision.status == "verified"
+    assert decision.fact_status == "verified"
+    assert decision.experience_status == "conflict"
+    assert decision.experience_reasons
+
+
+def test_release_gate_treats_ordinary_segment_time_drift_as_adjustment_not_conflict():
+    facts = fact_snapshot_from_legacy("成都", [_pois()[0]], [])
+    report = ValidationReport(
+        passed=True,
+        issues=[
+            ValidationIssue(
+                code="segment_time_violated",
+                severity="high",
+                message="普通下午分段与编译后到达时间不完全一致。",
+                release_blocking=False,
+            )
+        ],
+    )
+
+    decision = ReleaseGate().decide(
+        itinerary={"days": [{"day": 1, "items": [{"poi_id": "p1"}]}]},
+        report=report,
+        facts=facts,
+        user_profile=_profile(),
+    )
+
+    assert decision.fact_status == "verified"
+    assert decision.experience_status == "needs_adjustment"
 
 
 def test_release_gate_never_verifies_spatial_hotel_rest_routes():

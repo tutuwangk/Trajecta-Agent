@@ -120,24 +120,37 @@ def run_scenario(client, scenario: dict[str, Any]) -> dict[str, Any]:
 
     data = session["data"]
     run = data.get("latest_planning_run") or {}
+    run_detail_response = client.get(f"/planning-runs/{run.get('id')}").json() if run.get("id") else {}
+    run_detail = run_detail_response.get("data") or {}
+    fact_snapshot = run_detail.get("fact_snapshot") or {}
+    planning_snapshot = (run_detail.get("debug") or {}).get("planning_context_snapshot") or {}
     state = data.get("itinerary_state") or {}
     itinerary = state.get("itinerary") or {}
     verification = state.get("verification") or {}
-    checks = product_checks(scenario, itinerary, verification)
+    review = product_review(scenario, itinerary, verification)
     return {
         "id": scenario["id"],
         "technical_ok": run.get("status") == "completed" and itinerary.get("result_status") in {"verified", "degraded"},
         "terminal_status": run.get("status"),
         "result_status": itinerary.get("result_status") or run.get("result_status"),
+        "fact_status": itinerary.get("fact_status") or (itinerary.get("release_decision") or {}).get("fact_status"),
+        "experience_status": itinerary.get("experience_status") or (itinerary.get("release_decision") or {}).get("experience_status"),
         "error_code": run.get("error_code") or "",
         "release_decision": run.get("release_decision") or verification.get("release_decision") or {},
         "degradation_reasons": verification.get("degradation_reasons") or [],
         "elapsed_seconds": round(time.perf_counter() - started_at, 2),
         "recognized_places": [
-            row.get("grounded_poi", {}).get("standard_name")
+            {
+                "raw_name": row.get("raw_poi", {}).get("raw_name"),
+                "standard_name": row.get("grounded_poi", {}).get("standard_name"),
+                "category": row.get("grounded_poi", {}).get("category_normalized"),
+                "match_status": row.get("grounded_poi", {}).get("match_status"),
+                "match_confidence": row.get("grounded_poi", {}).get("match_confidence"),
+            }
             for row in data.get("pois") or []
-            if row.get("grounded_poi", {}).get("standard_name")
         ],
+        "hotel_anchor": fact_snapshot.get("hotel_anchor"),
+        "intent_commitments": (planning_snapshot.get("intent_ledger") or {}).get("commitments") or [],
         "days": [
             {
                 "day": day.get("day"),
@@ -167,27 +180,35 @@ def run_scenario(client, scenario: dict[str, Any]) -> dict[str, Any]:
         ],
         "metrics": _acceptance_metrics(run.get("metrics") or {}),
         "fact_requests": (run.get("debug") or {}).get("fact_requests") or [],
-        "product_checks_passed": not checks,
-        "product_check_failures": checks,
+        "product_checks_passed": not review["failures"],
+        "product_check_failures": review["failures"],
+        "product_advisories": review["advisories"],
     }
 
 
 def product_checks(scenario: dict[str, Any], itinerary: dict, verification: dict) -> list[str]:
+    return product_review(scenario, itinerary, verification)["failures"]
+
+
+def product_review(scenario: dict[str, Any], itinerary: dict, verification: dict) -> dict[str, list[str]]:
     failures: list[str] = []
+    advisories: list[str] = []
     days = itinerary.get("days") or []
     expected_days = int(scenario["user_profile"]["days"])
     if len(days) != expected_days:
         failures.append(f"day_count:{len(days)}!={expected_days}")
-    ceiling = {"low": 540, "medium": 660, "high": 780}.get(
+    comfort_target = {"low": 420, "medium": 540, "high": 660}.get(
         scenario["user_profile"].get("constraints", {}).get("physical_intensity", "medium"),
-        660,
+        540,
     )
     names: list[str] = []
     arrivals: dict[str, int] = {}
     for day in days:
         total = day.get("total_outing_min")
-        if isinstance(total, int) and total > ceiling:
-            failures.append(f"day_{day.get('day')}_over_ceiling:{total}>{ceiling}")
+        if isinstance(total, int) and total > 840:
+            failures.append(f"day_{day.get('day')}_over_absolute_ceiling:{total}>840")
+        elif isinstance(total, int) and total > comfort_target:
+            advisories.append(f"day_{day.get('day')}_over_comfort_target:{total}>{comfort_target}")
         if not day.get("items"):
             failures.append(f"day_{day.get('day')}_empty")
         if isinstance(total, int) and total >= 240:
@@ -212,15 +233,12 @@ def product_checks(scenario: dict[str, Any], itinerary: dict, verification: dict
     if verification.get("publishable") is False:
         failures.append("not_publishable")
     issue_types = {str(issue.get("type") or "") for issue in verification.get("issues") or []}
-    unacceptable_time_issues = {
-        "fixed_time_constraint_violated",
-        "time_constraint_violated",
-        "segment_time_violated",
-    }
-    for issue_type in sorted(issue_types.intersection(unacceptable_time_issues)):
-        failures.append(f"unresolved_time_issue:{issue_type}")
+    if "fixed_time_constraint_violated" in issue_types:
+        failures.append("unresolved_time_issue:fixed_time_constraint_violated")
+    for issue_type in sorted(issue_types.intersection({"time_constraint_violated", "segment_time_violated"})):
+        advisories.append(f"soft_time_issue:{issue_type}")
     if "不要太赶" in scenario.get("raw_input", "") and "daily_time_over_intensity_limit" in issue_types:
-        failures.append("pace_preference_violated")
+        advisories.append("pace_preference_violated")
     for expected_name, window in (scenario.get("expected_time_windows") or {}).items():
         matching = [value for name, value in arrivals.items() if name == expected_name]
         if not matching:
@@ -238,7 +256,7 @@ def product_checks(scenario: dict[str, Any], itinerary: dict, verification: dict
     visible = "\n".join(_visible_texts(itinerary))
     if any(token in visible for token in ("must_include", "final_decision", "user_override", "<think>")):
         failures.append("technical_copy_leak")
-    return failures
+    return {"failures": failures, "advisories": list(dict.fromkeys(advisories))}
 
 
 def _visible_texts(itinerary: dict) -> list[str]:
@@ -266,6 +284,9 @@ def _acceptance_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         "amap_degradation_rate",
         "fact_request_count",
         "result_status",
+        "experience_good_rate",
+        "experience_needs_adjustment_rate",
+        "experience_conflict_rate",
         "release_reason",
         "copy_fingerprint_match",
     )

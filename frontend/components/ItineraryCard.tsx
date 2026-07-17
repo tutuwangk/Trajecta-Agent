@@ -13,7 +13,10 @@ export function ItineraryCard({ itinerary }: { itinerary?: Itinerary | null }) {
       <section className="panel">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-2xl font-semibold tracking-[-0.02em]">路线概览</h2>
-          <ResultBadge status={itinerary.result_status} />
+          <div className="flex flex-wrap gap-2">
+            <ResultBadge status={itinerary.fact_status || itinerary.result_status} />
+            <ExperienceBadge status={itinerary.experience_status || itinerary.release_decision?.experience_status} />
+          </div>
         </div>
         <p className="subtle mt-2">{cleanUserFacingText(summary?.main_message) || "已为你整理出可执行路线。"}</p>
         <div className="mt-4 grid grid-cols-2 gap-2">
@@ -29,11 +32,19 @@ export function ItineraryCard({ itinerary }: { itinerary?: Itinerary | null }) {
       </section>
       {itinerary.result_status === "degraded" && itinerary.release_decision?.degradation_reasons?.length ? (
         <section className="panel border border-amber-200 bg-amber-50/70">
-          <h3 className="font-semibold text-amber-900">部分交通时间为估算</h3>
+          <h3 className="font-semibold text-amber-900">部分事实需要复核</h3>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-900">
             {itinerary.release_decision.degradation_reasons.map((reason) => <li key={reason}>{cleanUserFacingText(reason)}</li>)}
           </ul>
-          <p className="mt-2 text-sm text-amber-800">出发前请在地图中复核这些路段。</p>
+          <p className="mt-2 text-sm text-amber-800">出发前请复核标记的交通、地点或营业信息。</p>
+        </section>
+      ) : null}
+      {itinerary.release_decision?.experience_status && itinerary.release_decision.experience_status !== "good" && itinerary.release_decision.experience_reasons?.length ? (
+        <section className="panel border border-orange-200 bg-orange-50/70">
+          <h3 className="font-semibold text-orange-900">路线已生成，部分偏好仍需调整</h3>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-orange-900">
+            {itinerary.release_decision.experience_reasons.map((reason) => <li key={reason}>{cleanUserFacingText(reason)}</li>)}
+          </ul>
         </section>
       ) : null}
       <RiskNotice risks={itinerary.global_risks} />
@@ -47,9 +58,15 @@ export function ItineraryCard({ itinerary }: { itinerary?: Itinerary | null }) {
 
 function ResultBadge({ status }: { status?: Itinerary["result_status"] }) {
   if (!status) return null;
-  const text = status === "verified" ? "路线已核验" : status === "degraded" ? "路线含估算" : "路线未通过";
+  const text = status === "verified" ? "事实已核验" : status === "degraded" ? "部分事实待复核" : "事实未通过";
   const style = status === "verified" ? "bg-emerald-50 text-emerald-700" : status === "degraded" ? "bg-amber-50 text-amber-700" : "bg-red-50 text-red-700";
   return <span className={`rounded-full px-3 py-1 text-xs font-medium ${style}`}>{text}</span>;
+}
+
+function ExperienceBadge({ status }: { status?: "good" | "needs_adjustment" | "conflict" }) {
+  if (!status || status === "good") return null;
+  const text = status === "conflict" ? "偏好存在取舍" : "体验可再优化";
+  return <span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-medium text-orange-700">{text}</span>;
 }
 
 function PlaceDetails({ title, items }: { title: string; items: Array<{ name: string; reason?: string }> }) {
