@@ -87,15 +87,6 @@ pnpm run dev
 
 浏览器打开 `http://localhost:3000` 即可开始使用。
 
-## 跨电脑或线上部署补充
-
-当前仓库默认面向**本地前后端一起运行**。如果前端部署到另一台电脑、云主机或托管平台，需要额外补一项后端地址配置：
-
-- 在前端运行环境中设置 `BACKEND_API_BASE_URL=https://你的后端地址`
-- 不要只部署静态前端页面；`/api/backend/*` 依赖 Next.js 服务端代理，纯静态托管不会转发到 FastAPI
-- 如果浏览器会直接访问 FastAPI，而不是先经过前端代理，再把后端 `CORS_ORIGINS` 改成实际前端地址
-
-如果不配置 `BACKEND_API_BASE_URL`，前端在本地开发时会默认转发到 `http://127.0.0.1:8000`；但在其他电脑或线上环境，这个地址通常只会指向部署机器自己的本地回环地址，最终表现为“请求失败”。
 
 ## 项目结构
 
@@ -110,11 +101,3 @@ pnpm run dev
 - 输入范围聚焦用户主动提供的文本资料
 - 地图能力以高德地点链接为主
 
-## 验证
-
-```bash
-backend/.venv/bin/python -m pytest
-cd frontend && pnpm test
-cd frontend && pnpm run typecheck
-cd frontend && pnpm exec next build --webpack
-```
