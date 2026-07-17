@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  background: #f5f5f7;
+  color: #171717;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.96), rgba(245, 245, 247, 0) 34rem),
+    #f5f5f7;
+  color: #171717;
+}
+
+input,
+textarea,
+select,
+button {
+  font: inherit;
+}
+
+.field {
+  @apply w-full rounded-2xl border border-line bg-white/90 px-4 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-ink focus:bg-white focus:ring-4 focus:ring-black/5;
+}
+
+.btn {
+  @apply inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-medium transition active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+.btn-primary {
+  @apply btn bg-brand text-white hover:bg-black;
+}
+
+.btn-secondary {
+  @apply btn border border-line bg-white/80 text-ink hover:border-ink/30 hover:bg-white;
+}
+
+.panel {
+  @apply rounded-[28px] border border-white/80 bg-white/85 p-5 shadow-[0_18px_60px_rgba(0,0,0,0.06)] backdrop-blur;
+}
+
+.panel-flat {
+  @apply rounded-[28px] border border-line bg-white/70 p-5;
+}
+
+.eyebrow {
+  @apply text-xs font-semibold uppercase tracking-[0.14em] text-muted;
+}
+
+.subtle {
+  @apply text-sm leading-6 text-muted;
+}
+
+.metric {
+  @apply rounded-2xl border border-line bg-surface px-4 py-3;
+}
