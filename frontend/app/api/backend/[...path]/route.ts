@@ -5,23 +5,25 @@ import { NextResponse } from "next/server";
 export const maxDuration = 600;
 
 const configuredBackendBase = process.env.BACKEND_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL;
+const localHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
 
 type RouteContext = {
   params: Promise<{ path: string[] }>;
 };
 
-function resolveBackendBase(): string | null {
+function resolveBackendBase(request: Request): string | null {
   if (configuredBackendBase?.startsWith("http")) {
     return configuredBackendBase.replace(/\/+$/, "");
   }
-  if (process.env.NODE_ENV !== "production") {
+  const requestHost = new URL(request.url).hostname;
+  if (process.env.NODE_ENV !== "production" || localHostnames.has(requestHost)) {
     return "http://127.0.0.1:8000";
   }
   return null;
 }
 
 async function proxy(request: Request, context: RouteContext) {
-  const backendBase = resolveBackendBase();
+  const backendBase = resolveBackendBase(request);
   if (!backendBase) {
     return NextResponse.json(
       {
