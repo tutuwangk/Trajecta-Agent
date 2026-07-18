@@ -2,10 +2,15 @@
 
 日期：2026-07-18
 
+> 历史快照：以下 100% recall 是 WP4 首轮评测加失败 case 重跑后的成功样本结果。后续 WP8
+> 首次全量运行出现 8/100 mention provider errors，按“不用重跑覆盖首次失败”的新口径，recall
+> 为 91.14%，未达到 95% Gate。当前评分口径和恢复方式以
+> `WP8_REPAIR_R0_R4_2026-07-18.md` 为准，本文件不再代表当前供应商稳定性结论。
+
 ## 结论
 
-使用生产 `DeepSeekAmapPlaceKnowledge` adapter 对完整数据集执行真实 V4 Flash 调用，WP4 的三项
-目标指标通过：
+使用生产 `DeepSeekAmapPlaceKnowledge` adapter 对完整数据集执行真实 V4 Flash 调用；按当时允许
+失败 case 重跑覆盖的 WP4 口径，三项目标指标通过：
 
 ```text
 mention cases: 100/100 evaluated

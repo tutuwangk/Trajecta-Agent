@@ -137,6 +137,8 @@ cd backend
   --task all --concurrency 3 --output-dir /tmp/agent-v2-eval-full
 ```
 
-当前实现证据、剩余 Gate 和不允许声称完成的边界见
-[WP4-WP7 实施状态](./docs/agent-v2/WP4_WP7_IMPLEMENTATION_STATUS_2026-07-18.md)；详细架构见
-[技术架构](./docs/ARCHITECTURE.md)。
+当前实现证据、R0～R4 修复和剩余 Gate 见
+[WP8 修复记录](./docs/agent-v2/WP8_REPAIR_R0_R4_2026-07-18.md)；WP4～WP7 阶段证据见
+[实施状态](./docs/agent-v2/WP4_WP7_IMPLEMENTATION_STATUS_2026-07-18.md)，详细架构见
+[技术架构](./docs/ARCHITECTURE.md)。2026-07-18 全部会话的当前状态、风险和下一步入口见
+[项目交接](./docs/agent-v2/HANDOFF_2026-07-18.md)。

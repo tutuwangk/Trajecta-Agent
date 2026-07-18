@@ -2,6 +2,9 @@
 
 日期：2026-07-18
 
+> 本文件保留 WP4～WP7 阶段验收。后续 WP8 已发现同回合多 mutation 的版本所有权缺口并完成
+> R0～R4 修复；当前 Runtime、预算和发布语义以 `WP8_REPAIR_R0_R4_2026-07-18.md` 为准。
+
 ## 当前判断
 
 WP4-WP7 已接到同一条隔离 V2 生产链路，阶段内合同与退出门槛已经完成；尚未执行的是明确
@@ -21,7 +24,8 @@ WP4-WP7 已接到同一条隔离 V2 生产链路，阶段内合同与退出门�
 - 高德方向路线事实；失败时仅生成 `spatial_estimate` EstimateClaim。
 - V4 Flash 游览画像 EstimateClaim，不允许成为 verified 事实。
 - `source_records` 和 `knowledge_claims` 独立表，fact revision 与 Workspace version 原子递增。
-- 写工具 sequential；stale version 通过 ModelRetry 返回根 Agent，不以数据库异常终止运行。
+- 阶段实现曾依赖写工具 sequential 与模型回传版本；WP8 证明该合同无法处理同一回复中的多个
+  mutation。现已改为 Runtime 内部读取版本、Repository CAS、批量语义工具和 tool-effect 幂等。
 
 修正结构化日期和生产 Narrative 后，真实链路最新一次通过结果：
 

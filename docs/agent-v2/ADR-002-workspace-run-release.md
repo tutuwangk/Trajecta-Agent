@@ -10,7 +10,8 @@
 - `Release` 是不可变发布版本。
 - Agent 主动澄清继续同一业务 run；Provider 可以产生新的底层 `.run()`，但必须通过 conversation/lineage 映射回原业务 run。
 - 发布后的新修改创建 revision run，读取同一 Workspace 和上一版 Release。
-- 所有终态不可覆盖；Workspace 使用单调版本，mutation 必须携带 `expected_version`。
+- 所有终态不可覆盖；Workspace 使用单调版本，Repository mutation 必须进行当前版本 CAS。版本令牌
+  由 Runtime 在执行时提供，不进入模型工具 schema。
 
 ## 边界
 
