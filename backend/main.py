@@ -10,6 +10,7 @@ from app.env import load_project_env
 load_project_env()
 
 from app.api.routes import router
+from app.trip_agent.api import router as trip_agent_v2_router
 
 
 def create_app() -> FastAPI:
@@ -23,6 +24,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(router)
+    app.include_router(trip_agent_v2_router)
     return app
 
 

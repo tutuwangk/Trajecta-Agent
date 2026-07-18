@@ -271,6 +271,92 @@ export type DayRoute = {
   alternatives?: Array<Record<string, unknown> | string>;
 };
 
+export type AgentV2RunStatus =
+  | "created"
+  | "running"
+  | "waiting_user"
+  | "validating"
+  | "published"
+  | "incomplete"
+  | "failed"
+  | "cancelled";
+
+export type AgentV2Run = {
+  run_id: string;
+  workspace_id: string;
+  status: AgentV2RunStatus;
+  active_interruption_id?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+};
+
+export type AgentV2Question = {
+  question_id: string;
+  prompt: string;
+  reason: string;
+  options: string[];
+  allow_other: boolean;
+};
+
+export type AgentV2Interruption = {
+  interruption_id: string;
+  questions: AgentV2Question[];
+};
+
+export type AgentV2Event = {
+  event_id: number;
+  created_at: string;
+  type: string;
+  [key: string]: unknown;
+};
+
+export type AgentV2Workspace = {
+  workspace_id: string;
+  version: number;
+  fact_version: number;
+  goal_ledger: {
+    goal: {
+      raw_request: string;
+      destination?: string | null;
+      start_date?: string | null;
+      days?: number | null;
+    };
+  };
+  place_hypotheses: Array<{ hypothesis_id: string; raw_name: string; status: string }>;
+  place_candidates: Array<{ candidate_id: string; name: string; address?: string | null }>;
+  place_resolutions: Array<{ hypothesis_id: string; status: string; candidate_id?: string | null }>;
+  current_draft?: {
+    days: Array<{
+      day_index: number;
+      date: string;
+      hotel_candidate_id?: string | null;
+      return_to_hotel?: boolean;
+      visits: Array<{ visit_id: string; place_candidate_id: string; duration_min: number }>;
+      meals?: Array<{
+        meal_id: string;
+        kind: string;
+        duration_min: number;
+        after_visit_id?: string | null;
+      }>;
+    }>;
+  } | null;
+};
+
+export type AgentV2Release = {
+  release_id: string;
+  fact_status: "verified" | "degraded" | "failed";
+  experience_status: "good" | "needs_adjustment" | "conflict";
+  issue_codes: string[];
+};
+
+export type AgentV2Narrative = {
+  release_id: string;
+  overview: string;
+  days: Array<{ day_index: number; theme: string; summary: string }>;
+  risk_notes: string[];
+  generator: string;
+};
+
 export type DaySegment =
   | {
       kind: "outing";
