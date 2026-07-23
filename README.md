@@ -131,13 +131,20 @@ cd frontend && pnpm exec next build --webpack
 真实供应商 V2 验收：
 
 ```bash
-cd backend
-.venv/bin/python scripts/run_trip_agent_v2_real_chain.py
-.venv/bin/python scripts/run_agent_v2_live_evals.py \
+backend/.venv/bin/python backend/scripts/run_trip_agent_v2_wp8.py \
+  --output-dir /tmp/trajecta-wp8-flash-mvp \
+  --planner-model flash \
+  --gate-profile mvp
+backend/.venv/bin/python backend/scripts/run_agent_v2_live_evals.py \
   --task all --concurrency 3 --output-dir /tmp/agent-v2-eval-full
 ```
 
+WP8 为控制评测成本可临时让唯一根 Agent 使用 V4 Flash；这不改变生产默认的 V4 Pro，也不能把
+MVP Gate 解释为生产切流 Gate。当前六场景 MVP、真实耗时与剩余体验问题见下方 WP8 系统性修复
+文档。
+
 当前实现证据、R0～R4 修复和剩余 Gate 见
+[WP8 当前系统性修复](./docs/agent-v2/WP8_SYSTEMIC_REPAIR_2026-07-19.md)，历史 R0～R4 见
 [WP8 修复记录](./docs/agent-v2/WP8_REPAIR_R0_R4_2026-07-18.md)；WP4～WP7 阶段证据见
 [实施状态](./docs/agent-v2/WP4_WP7_IMPLEMENTATION_STATUS_2026-07-18.md)，详细架构见
 [技术架构](./docs/ARCHITECTURE.md)。2026-07-18 全部会话的当前状态、风险和下一步入口见

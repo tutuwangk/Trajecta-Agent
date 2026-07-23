@@ -1,10 +1,12 @@
 # Trajecta Agent V2：WP0～WP7 权威执行计划
 
-> 状态：执行中
+> 状态：WP0～WP7 已完成；当前处于 WP8 验收
 > 决策日期：2026-07-18
 > 实施目录：`/Users/wk/Documents/产品设计/Agent开发`
 > 范围：WP0～WP7；WP8 影子验收与 WP9 切流删除另行执行，但本计划产物必须为其提供可验证入口
 > 优先级：本文件是 Agent V2 重构的实施基准；现有 `AGENT_REFACTOR_PLAN.md` 仅描述 Legacy 当前架构和历史重构，不得反向约束 V2
+> 当前实现、预算与验收口径以 `docs/ARCHITECTURE.md` 和
+> `docs/agent-v2/WP8_SYSTEMIC_REPAIR_2026-07-19.md` 为准；本文件中的初始性能目标保留为计划基线。
 
 ## 1. 目标与完成定义
 

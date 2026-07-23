@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
+from hashlib import sha256
 import json
 import sqlite3
 from threading import RLock
@@ -10,6 +11,7 @@ from pydantic import TypeAdapter
 
 from app.trip_agent.domain import (
     AgentRun,
+    CandidateCheckpoint,
     CandidateRejected,
     CandidateSnapshot,
     ClarificationAnswers,
@@ -17,17 +19,29 @@ from app.trip_agent.domain import (
     ReleaseRecord,
     ReleaseNarrative,
     KnowledgeClaim,
+    PlaceCandidate,
     SourceRecord,
     RunStatus,
+    RunFailureClass,
     TripWorkspace,
 )
 
 
 _KNOWLEDGE_CLAIM_ADAPTER = TypeAdapter(KnowledgeClaim)
+ToolEffect = tuple[str, str, str, dict[str, object]]
 
 
 class RepositoryConflict(RuntimeError):
     pass
+
+
+def _claim_fingerprint(claim: KnowledgeClaim) -> str:
+    payload = claim.model_dump(mode="json")
+    for field in ("claim_id", "acquired_at"):
+        payload.pop(field, None)
+    return sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 class SqliteTripAgentRepository:
@@ -107,11 +121,39 @@ class SqliteTripAgentRepository:
                     FOREIGN KEY (candidate_id) REFERENCES agent_candidates(candidate_id),
                     FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
                 );
+                CREATE TABLE IF NOT EXISTS candidate_checkpoints (
+                    checkpoint_id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    FOREIGN KEY (workspace_id) REFERENCES trip_workspaces(workspace_id),
+                    FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
+                );
                 CREATE TABLE IF NOT EXISTS source_records (
                     source_record_id TEXT PRIMARY KEY,
                     workspace_id TEXT NOT NULL,
                     payload TEXT NOT NULL,
                     FOREIGN KEY (workspace_id) REFERENCES trip_workspaces(workspace_id)
+                );
+                CREATE TABLE IF NOT EXISTS source_artifacts (
+                    source_record_id TEXT PRIMARY KEY,
+                    content_hash TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS place_search_cache (
+                    cache_key TEXT PRIMARY KEY,
+                    stored_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS workspace_source_observations (
+                    workspace_id TEXT NOT NULL,
+                    source_record_id TEXT NOT NULL,
+                    first_observed_at TEXT NOT NULL,
+                    last_observed_at TEXT NOT NULL,
+                    PRIMARY KEY (workspace_id, source_record_id),
+                    FOREIGN KEY (workspace_id) REFERENCES trip_workspaces(workspace_id),
+                    FOREIGN KEY (source_record_id) REFERENCES source_artifacts(source_record_id)
                 );
                 CREATE TABLE IF NOT EXISTS knowledge_claims (
                     claim_id TEXT PRIMARY KEY,
@@ -137,6 +179,15 @@ class SqliteTripAgentRepository:
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
                 );
+                CREATE TABLE IF NOT EXISTS agent_tool_effects_v2 (
+                    run_id TEXT NOT NULL,
+                    tool_call_id TEXT NOT NULL,
+                    tool_name TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (run_id, tool_call_id),
+                    FOREIGN KEY (run_id) REFERENCES agent_runs(run_id)
+                );
                 CREATE TABLE IF NOT EXISTS agent_run_budgets (
                     run_id TEXT PRIMARY KEY,
                     payload TEXT NOT NULL,
@@ -151,6 +202,125 @@ class SqliteTripAgentRepository:
                 );
                 """
             )
+            claim_columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(knowledge_claims)")
+            }
+            if "fingerprint" not in claim_columns:
+                self._connection.execute(
+                    "ALTER TABLE knowledge_claims ADD COLUMN fingerprint TEXT"
+                )
+            for row in self._connection.execute(
+                "SELECT claim_id, workspace_id, payload FROM knowledge_claims WHERE fingerprint IS NULL"
+            ).fetchall():
+                claim = _KNOWLEDGE_CLAIM_ADAPTER.validate_json(row["payload"])
+                fingerprint = _claim_fingerprint(claim)
+                duplicate = self._connection.execute(
+                    "SELECT 1 FROM knowledge_claims WHERE workspace_id = ? AND fingerprint = ?",
+                    (row["workspace_id"], fingerprint),
+                ).fetchone()
+                if duplicate is None:
+                    self._connection.execute(
+                        "UPDATE knowledge_claims SET fingerprint = ? WHERE claim_id = ?",
+                        (fingerprint, row["claim_id"]),
+                    )
+            self._connection.execute(
+                """CREATE UNIQUE INDEX IF NOT EXISTS unique_claim_fingerprint_per_workspace
+                ON knowledge_claims(workspace_id, fingerprint)
+                WHERE fingerprint IS NOT NULL"""
+            )
+            # Migrate the original workspace-owned source table into the V2
+            # content-addressed artifact/reference model. The old table stays
+            # readable for existing databases but receives no new writes.
+            self._connection.execute(
+                """INSERT OR IGNORE INTO source_artifacts(
+                    source_record_id, content_hash, provider, payload
+                )
+                SELECT source_record_id,
+                       json_extract(payload, '$.content_hash'),
+                       json_extract(payload, '$.provider'),
+                       payload
+                FROM source_records"""
+            )
+            self._connection.execute(
+                """INSERT OR IGNORE INTO agent_tool_effects_v2(
+                    run_id, tool_call_id, tool_name, payload, created_at
+                )
+                SELECT run_id, tool_call_id, tool_name, payload, created_at
+                FROM agent_tool_effects"""
+            )
+            self._connection.execute(
+                """INSERT OR IGNORE INTO workspace_source_observations(
+                    workspace_id, source_record_id, first_observed_at, last_observed_at
+                )
+                SELECT workspace_id,
+                       source_record_id,
+                       COALESCE(json_extract(payload, '$.retrieved_at'), CURRENT_TIMESTAMP),
+                       COALESCE(json_extract(payload, '$.retrieved_at'), CURRENT_TIMESTAMP)
+                FROM source_records"""
+            )
+
+    def _link_sources(
+        self, workspace_id: str, sources: tuple[SourceRecord, ...]
+    ) -> None:
+        """Persist immutable artifacts and idempotent per-workspace observations."""
+
+        for source in sources:
+            row = self._connection.execute(
+                """SELECT content_hash, provider, payload
+                FROM source_artifacts WHERE source_record_id = ?""",
+                (source.source_record_id,),
+            ).fetchone()
+            if row is not None:
+                existing = SourceRecord.model_validate_json(row["payload"])
+                if (
+                    row["content_hash"] != source.content_hash
+                    or row["provider"] != source.provider
+                    or existing.source_type != source.source_type
+                ):
+                    raise RepositoryConflict(
+                        "source artifact identity collision: "
+                        f"{source.source_record_id}"
+                    )
+            else:
+                self._connection.execute(
+                    """INSERT INTO source_artifacts(
+                        source_record_id, content_hash, provider, payload
+                    ) VALUES (?, ?, ?, ?)""",
+                    (
+                        source.source_record_id,
+                        source.content_hash,
+                        source.provider,
+                        source.model_dump_json(),
+                    ),
+                )
+            observed_at = source.retrieved_at.isoformat()
+            self._connection.execute(
+                """INSERT INTO workspace_source_observations(
+                    workspace_id, source_record_id, first_observed_at, last_observed_at
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(workspace_id, source_record_id) DO UPDATE SET
+                    last_observed_at = excluded.last_observed_at""",
+                (workspace_id, source.source_record_id, observed_at, observed_at),
+            )
+
+    def _record_tool_effect_locked(self, effect: ToolEffect | None) -> None:
+        if effect is None:
+            return
+        tool_call_id, run_id, tool_name, result = effect
+        self._connection.execute(
+            """INSERT INTO agent_tool_effects_v2(
+                run_id, tool_call_id, tool_name, payload, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, tool_call_id) DO NOTHING""",
+            (
+                run_id,
+                tool_call_id,
+                tool_name,
+                json.dumps(result, ensure_ascii=False),
+                datetime.now().astimezone().isoformat(),
+            ),
+        )
 
     def create_workspace(self, workspace: TripWorkspace) -> TripWorkspace:
         payload = workspace.model_dump_json()
@@ -175,7 +345,13 @@ class SqliteTripAgentRepository:
             ).fetchone()
         return TripWorkspace.model_validate_json(row["payload"]) if row else None
 
-    def save_workspace(self, workspace: TripWorkspace, *, expected_version: int) -> TripWorkspace:
+    def save_workspace(
+        self,
+        workspace: TripWorkspace,
+        *,
+        expected_version: int,
+        tool_effect: ToolEffect | None = None,
+    ) -> TripWorkspace:
         if workspace.version != expected_version + 1:
             raise RepositoryConflict("workspace save must advance exactly one version")
         payload = workspace.model_dump_json()
@@ -192,6 +368,7 @@ class SqliteTripAgentRepository:
                 "INSERT INTO workspace_snapshots(workspace_id, version, payload) VALUES (?, ?, ?)",
                 (workspace.workspace_id, workspace.version, payload),
             )
+            self._record_tool_effect_locked(tool_effect)
         return workspace
 
     def save_workspace_with_sources(
@@ -200,16 +377,13 @@ class SqliteTripAgentRepository:
         *,
         expected_version: int,
         sources: tuple[SourceRecord, ...],
+        tool_effect: ToolEffect | None = None,
     ) -> TripWorkspace:
         if workspace.version != expected_version + 1:
             raise RepositoryConflict("workspace save must advance exactly one version")
         payload = workspace.model_dump_json()
         with self._lock, self._connection:
-            for source in sources:
-                self._connection.execute(
-                    "INSERT INTO source_records(source_record_id, workspace_id, payload) VALUES (?, ?, ?)",
-                    (source.source_record_id, workspace.workspace_id, source.model_dump_json()),
-                )
+            self._link_sources(workspace.workspace_id, sources)
             cursor = self._connection.execute(
                 "UPDATE trip_workspaces SET version = ?, payload = ? WHERE workspace_id = ? AND version = ?",
                 (workspace.version, payload, workspace.workspace_id, expected_version),
@@ -222,6 +396,7 @@ class SqliteTripAgentRepository:
                 "INSERT INTO workspace_snapshots(workspace_id, version, payload) VALUES (?, ?, ?)",
                 (workspace.workspace_id, workspace.version, payload),
             )
+            self._record_tool_effect_locked(tool_effect)
         return workspace
 
     def create_run(self, run: AgentRun) -> AgentRun:
@@ -296,6 +471,25 @@ class SqliteTripAgentRepository:
             ).fetchone()
         return AgentRun.model_validate_json(row["payload"]) if row else None
 
+    def increment_provider_attempt(self, run_id: str) -> AgentRun:
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                "SELECT payload FROM agent_runs WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(run_id)
+            current = AgentRun.model_validate_json(row["payload"])
+            updated = current.model_copy(
+                update={"provider_attempt_count": current.provider_attempt_count + 1}
+            )
+            cursor = self._connection.execute(
+                "UPDATE agent_runs SET payload = ? WHERE run_id = ? AND payload = ?",
+                (updated.model_dump_json(), run_id, row["payload"]),
+            )
+            if cursor.rowcount != 1:
+                raise RepositoryConflict(f"run changed concurrently: {run_id}")
+        return updated
+
     def append_event(self, run_id: str, event: dict[str, object]) -> int:
         with self._lock, self._connection:
             cursor = self._connection.execute(
@@ -305,18 +499,19 @@ class SqliteTripAgentRepository:
         return int(cursor.lastrowid)
 
     def get_tool_effect(
-        self, tool_call_id: str, *, tool_name: str
+        self, tool_call_id: str, *, run_id: str, tool_name: str
     ) -> dict[str, object] | None:
         with self._lock:
             row = self._connection.execute(
-                "SELECT tool_name, payload FROM agent_tool_effects WHERE tool_call_id = ?",
-                (tool_call_id,),
+                """SELECT tool_name, payload FROM agent_tool_effects_v2
+                WHERE run_id = ? AND tool_call_id = ?""",
+                (run_id, tool_call_id),
             ).fetchone()
         if row is None:
             return None
         if row["tool_name"] != tool_name:
             raise RepositoryConflict(
-                f"tool call id {tool_call_id} was already used by {row['tool_name']}"
+                f"tool call id {tool_call_id} in run {run_id} was already used by {row['tool_name']}"
             )
         return json.loads(row["payload"])
 
@@ -331,18 +526,18 @@ class SqliteTripAgentRepository:
         payload = json.dumps(result, ensure_ascii=False)
         with self._lock, self._connection:
             self._connection.execute(
-                """INSERT INTO agent_tool_effects(tool_call_id, run_id, tool_name, payload, created_at)
+                """INSERT INTO agent_tool_effects_v2(run_id, tool_call_id, tool_name, payload, created_at)
                 VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(tool_call_id) DO NOTHING""",
+                ON CONFLICT(run_id, tool_call_id) DO NOTHING""",
                 (
-                    tool_call_id,
                     run_id,
+                    tool_call_id,
                     tool_name,
                     payload,
                     datetime.now().astimezone().isoformat(),
                 ),
             )
-        existing = self.get_tool_effect(tool_call_id, tool_name=tool_name)
+        existing = self.get_tool_effect(tool_call_id, run_id=run_id, tool_name=tool_name)
         if existing is None:
             raise RepositoryConflict(f"tool effect was not persisted: {tool_call_id}")
         return existing
@@ -406,6 +601,8 @@ class SqliteTripAgentRepository:
         *,
         error_code: str | None = None,
         error_message: str | None = None,
+        failure_class: RunFailureClass | None = None,
+        retryable: bool | None = None,
         active_interruption_id: str | None = None,
         at: datetime | None = None,
     ) -> AgentRun:
@@ -420,6 +617,8 @@ class SqliteTripAgentRepository:
                 status,
                 error_code=error_code,
                 error_message=error_message,
+                failure_class=failure_class,
+                retryable=retryable,
                 active_interruption_id=active_interruption_id,
                 at=at,
             )
@@ -574,6 +773,7 @@ class SqliteTripAgentRepository:
         expected_version: int,
         sources: tuple[SourceRecord, ...],
         claims: tuple[KnowledgeClaim, ...],
+        tool_effect: ToolEffect | None = None,
     ) -> TripWorkspace:
         if not claims:
             raise ValueError("record_facts requires at least one claim")
@@ -593,27 +793,46 @@ class SqliteTripAgentRepository:
             for claim in claims
         ):
             raise ValueError("every claim source must already exist or be in the atomic fact batch")
-        updated = workspace.with_fact_revision()
         with self._lock, self._connection:
-            for source in sources:
-                self._connection.execute(
-                    "INSERT INTO source_records(source_record_id, workspace_id, payload) VALUES (?, ?, ?)",
-                    (source.source_record_id, workspace_id, source.model_dump_json()),
-                )
+            self._link_sources(workspace_id, sources)
+            inserted = 0
             for claim in claims:
+                payload = _KNOWLEDGE_CLAIM_ADAPTER.dump_json(claim).decode()
+                fingerprint = _claim_fingerprint(claim)
+                semantic_existing = self._connection.execute(
+                    "SELECT claim_id FROM knowledge_claims WHERE workspace_id = ? AND fingerprint = ?",
+                    (workspace_id, fingerprint),
+                ).fetchone()
+                if semantic_existing is not None:
+                    continue
+                existing = self._connection.execute(
+                    "SELECT workspace_id, payload FROM knowledge_claims WHERE claim_id = ?",
+                    (claim.claim_id,),
+                ).fetchone()
+                if existing is not None:
+                    if existing["workspace_id"] == workspace_id and existing["payload"] == payload:
+                        continue
+                    raise RepositoryConflict(
+                        f"claim id collision with different content or workspace: {claim.claim_id}"
+                    )
                 self._connection.execute(
                     """INSERT INTO knowledge_claims(
-                        claim_id, workspace_id, kind, entity_id, field_name, payload
-                    ) VALUES (?, ?, ?, ?, ?, ?)""",
+                        claim_id, workspace_id, kind, entity_id, field_name, payload, fingerprint
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (
                         claim.claim_id,
                         workspace_id,
                         claim.kind,
                         claim.entity_id,
                         claim.field,
-                        _KNOWLEDGE_CLAIM_ADAPTER.dump_json(claim).decode(),
+                        payload,
+                        fingerprint,
                     ),
                 )
+                inserted += 1
+            if inserted == 0:
+                return workspace
+            updated = workspace.with_fact_revision()
             cursor = self._connection.execute(
                 "UPDATE trip_workspaces SET version = ?, payload = ? WHERE workspace_id = ? AND version = ?",
                 (updated.version, updated.model_dump_json(), workspace_id, expected_version),
@@ -624,14 +843,66 @@ class SqliteTripAgentRepository:
                 "INSERT INTO workspace_snapshots(workspace_id, version, payload) VALUES (?, ?, ?)",
                 (workspace_id, updated.version, updated.model_dump_json()),
             )
+            self._record_tool_effect_locked(tool_effect)
         return updated
 
     def list_sources(self, workspace_id: str) -> tuple[SourceRecord, ...]:
         rows = self._connection.execute(
-            "SELECT payload FROM source_records WHERE workspace_id = ? ORDER BY source_record_id",
+            """SELECT artifact.payload
+            FROM workspace_source_observations AS observation
+            JOIN source_artifacts AS artifact
+              ON artifact.source_record_id = observation.source_record_id
+            WHERE observation.workspace_id = ?
+            ORDER BY artifact.source_record_id""",
             (workspace_id,),
         ).fetchall()
         return tuple(SourceRecord.model_validate_json(row["payload"]) for row in rows)
+
+    def get_place_search_cache(
+        self, cache_key: str, *, max_age: timedelta = timedelta(days=30)
+    ) -> tuple[tuple[SourceRecord, ...], tuple[PlaceCandidate, ...]] | None:
+        row = self._connection.execute(
+            "SELECT stored_at, payload FROM place_search_cache WHERE cache_key = ?",
+            (cache_key,),
+        ).fetchone()
+        if row is None or datetime.fromisoformat(row["stored_at"]) < datetime.now().astimezone() - max_age:
+            return None
+        payload = json.loads(row["payload"])
+        return (
+            tuple(
+                SourceRecord.model_validate_json(json.dumps(item))
+                for item in payload["sources"]
+            ),
+            tuple(
+                PlaceCandidate.model_validate_json(json.dumps(item))
+                for item in payload["candidates"]
+            ),
+        )
+
+    def save_place_search_cache(
+        self,
+        cache_key: str,
+        *,
+        sources: tuple[SourceRecord, ...],
+        candidates: tuple[PlaceCandidate, ...],
+    ) -> None:
+        payload = json.dumps(
+            {
+                "sources": [item.model_dump(mode="json") for item in sources],
+                "candidates": [item.model_dump(mode="json") for item in candidates],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO place_search_cache(cache_key, stored_at, payload)
+                VALUES (?, ?, ?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                    stored_at = excluded.stored_at,
+                    payload = excluded.payload""",
+                (cache_key, datetime.now().astimezone().isoformat(), payload),
+            )
 
     def list_claims(
         self,
@@ -678,11 +949,47 @@ class SqliteTripAgentRepository:
                 raise RepositoryConflict(f"release already exists: {release.release_id}") from exc
         return release
 
+    def create_candidate_checkpoint(
+        self, checkpoint: CandidateCheckpoint
+    ) -> CandidateCheckpoint:
+        with self._lock, self._connection:
+            self._connection.execute(
+                """INSERT INTO candidate_checkpoints(
+                    checkpoint_id, workspace_id, run_id, payload
+                ) VALUES (?, ?, ?, ?)
+                ON CONFLICT(checkpoint_id) DO NOTHING""",
+                (
+                    checkpoint.checkpoint_id,
+                    checkpoint.workspace_id,
+                    checkpoint.agent_run_id,
+                    checkpoint.model_dump_json(),
+                ),
+            )
+            row = self._connection.execute(
+                "SELECT payload FROM candidate_checkpoints WHERE checkpoint_id = ?",
+                (checkpoint.checkpoint_id,),
+            ).fetchone()
+        if row is None:
+            raise RepositoryConflict(
+                f"candidate checkpoint was not persisted: {checkpoint.checkpoint_id}"
+            )
+        return CandidateCheckpoint.model_validate_json(row["payload"])
+
+    def latest_candidate_checkpoint(self, run_id: str) -> CandidateCheckpoint | None:
+        row = self._connection.execute(
+            """SELECT payload FROM candidate_checkpoints
+            WHERE run_id = ? ORDER BY rowid DESC LIMIT 1""",
+            (run_id,),
+        ).fetchone()
+        return CandidateCheckpoint.model_validate_json(row["payload"]) if row else None
+
     def publish_candidate(
         self,
         candidate: CandidateSnapshot,
         release: ReleaseRecord,
         narrative: ReleaseNarrative,
+        *,
+        tool_effect: ToolEffect | None = None,
     ) -> ReleaseRecord:
         if release.candidate_id != candidate.candidate_id:
             raise ValueError("release must reference the candidate being published")
@@ -740,6 +1047,7 @@ class SqliteTripAgentRepository:
             )
             if cursor.rowcount != 1:
                 raise RepositoryConflict(f"run changed concurrently: {published.run_id}")
+            self._record_tool_effect_locked(tool_effect)
         return release
 
     def create_candidate(self, candidate: CandidateSnapshot) -> CandidateSnapshot:

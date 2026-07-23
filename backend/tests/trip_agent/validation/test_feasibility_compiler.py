@@ -130,6 +130,55 @@ def test_missing_route_fact_is_a_structural_publication_blocker():
     assert "route_fact_missing" in {issue.code for issue in report.issues}
 
 
+def test_anchored_meal_is_compiled_as_a_real_routed_place():
+    workspace = _workspace()
+    assert workspace.current_draft is not None
+    day = workspace.current_draft.days[0]
+    draft = workspace.current_draft.model_copy(
+        update={
+            "days": (
+                day.model_copy(
+                    update={
+                        "visits": (day.visits[0],),
+                        "meals": (
+                            DraftMeal(
+                                meal_id="meal-c2",
+                                kind="lunch",
+                                duration_min=60,
+                                after_visit_id=day.visits[0].visit_id,
+                                place_candidate_id="c2",
+                                travel_mode_from_previous="walking",
+                            ),
+                        ),
+                    }
+                ),
+            )
+        }
+    )
+    workspace = workspace.model_copy(update={"current_draft": draft})
+    route = ObservedClaim(
+        claim_id="meal-route",
+        entity_id="route:c1:c2:walking",
+        field="duration_min",
+        value=15,
+        source_record_ids=("source-meal-route",),
+        extractor="fixture",
+        extractor_version="1",
+        acquired_at=NOW,
+        confidence=1,
+        release_eligible=True,
+    )
+
+    report = FeasibilityCompiler().compile(
+        workspace, (_operational("c1"), _operational("c2"), route)
+    )
+
+    assert report.ok is True
+    assert report.days[0].meals[0].candidate_id == "c2"
+    assert report.days[0].meals[0].route_minutes_from_previous == 15
+    assert report.days[0].outing_minutes == 135
+
+
 def test_spatial_route_estimate_compiles_but_can_never_be_verified():
     route = EstimateClaim(
         claim_id="route-estimate",

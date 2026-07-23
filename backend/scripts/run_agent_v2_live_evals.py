@@ -94,10 +94,28 @@ async def run_bounded(
 async def mention_prediction(case: dict) -> dict:
     adapter = DeepSeekAmapPlaceKnowledge(city=None)
     hypotheses = await adapter.analyze_mentions(case["input"]["text"])
+    route_entities = tuple(
+        item
+        for item in hypotheses
+        if item.route_relevant
+        and item.polarity == "requested"
+        and item.role not in {"destination_context", "reference"}
+    )
     return {
-        "mentions": [item.raw_name for item in hypotheses],
+        "mentions": [item.raw_name for item in route_entities],
         "spans": [
             [span.model_dump(mode="json") for span in item.spans] for item in hypotheses
+        ],
+        "hypotheses": [
+            {
+                "raw_name": item.raw_name,
+                "spans": [span.model_dump(mode="json") for span in item.spans],
+                "role": item.role,
+                "polarity": item.polarity,
+                "route_relevant": item.route_relevant,
+                "priority": item.priority,
+            }
+            for item in hypotheses
         ],
     }
 

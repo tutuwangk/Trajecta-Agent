@@ -14,6 +14,7 @@ from pydantic_ai import Agent, UnexpectedModelBehavior, UsageLimits
 from app.services.amap_client import AmapClient
 from app.services.web_search import WebSearchClient
 from app.trip_agent.adapters.provider import build_deepseek_v4_model, deepseek_v4_settings
+from app.trip_agent.adapters.provider_coordinator import ProviderRequestCoordinator
 from app.trip_agent.domain import (
     DomainModel,
     EstimateClaim,
@@ -34,6 +35,7 @@ class MentionSuggestion(DomainModel):
     role: Literal["visit", "lodging", "meal", "destination_context", "reference"] = "visit"
     polarity: Literal["requested", "excluded", "neutral"] = "requested"
     route_relevant: bool = True
+    priority: Literal["strong", "soft", "reference"] = "soft"
     brand_only: bool = False
     branch_unspecified: bool = False
 
@@ -79,10 +81,12 @@ class DeepSeekAmapPlaceKnowledge:
         city: str | None,
         amap: AmapClient | None = None,
         web: WebSearchClient | None = None,
+        coordinator: ProviderRequestCoordinator | None = None,
     ) -> None:
         self.city = city
         self.amap = amap or AmapClient()
         self.web = web or WebSearchClient()
+        self.coordinator = coordinator or ProviderRequestCoordinator()
 
     def _lightweight_model(self):
         return build_deepseek_v4_model("lightweight")
@@ -96,7 +100,9 @@ class DeepSeekAmapPlaceKnowledge:
                 "Extract every explicit place, hotel, restaurant, mall, venue, district, or activity name. "
                 "Keep the exact substring from the user text. Classify each mention as visit, lodging, meal, "
                 "destination_context, or reference; record whether it is requested, excluded, or neutral, and "
-                "whether it can affect the route. A destination city used only as context is not route-relevant. "
+                "whether it can affect the route. Set priority=strong only for an explicit must-visit or named "
+                "hotel, priority=soft for an ordinary requested option, and priority=reference for background "
+                "material. A destination city used only as context is not route-relevant. "
                 "Do not resolve identity and do not invent names."
             ),
             retries=2,
@@ -110,6 +116,16 @@ class DeepSeekAmapPlaceKnowledge:
                 continue
             seen.add((mention.raw_name, start))
             stable = sha256(f"{mention.raw_name}:{start}".encode()).hexdigest()[:16]
+            context_window = raw_request[max(0, start - 12) : start + len(mention.raw_name) + 12]
+            explicit_strong = mention.role == "lodging" or any(
+                marker in context_window
+                for marker in ("必去", "一定要", "不能删", "重点", "必须", "固定预约")
+            )
+            priority = (
+                "strong"
+                if mention.polarity == "requested" and explicit_strong
+                else mention.priority
+            )
             hypotheses.append(
                 PlaceHypothesis(
                     hypothesis_id=f"hypothesis-{stable}",
@@ -120,6 +136,7 @@ class DeepSeekAmapPlaceKnowledge:
                     role=mention.role,
                     polarity=mention.polarity,
                     route_relevant=mention.route_relevant,
+                    priority=priority,
                     brand_only=mention.brand_only,
                     branch_unspecified=mention.branch_unspecified,
                 )
@@ -127,7 +144,11 @@ class DeepSeekAmapPlaceKnowledge:
         return tuple(hypotheses)
 
     async def search_candidates(self, hypothesis: PlaceHypothesis) -> CandidateSearch:
-        raw_results = await asyncio.to_thread(self.amap.search_poi, hypothesis.raw_name, self.city)
+        raw_results = await self.coordinator.call(
+            "amap",
+            "search_poi",
+            lambda: asyncio.to_thread(self.amap.search_poi, hypothesis.raw_name, self.city),
+        )
         sources: list[SourceRecord] = []
         candidates: list[PlaceCandidate] = []
         now = utc_now()
@@ -170,7 +191,12 @@ class DeepSeekAmapPlaceKnowledge:
                     source_record_id=source_id,
                 )
             )
-        return CandidateSearch(sources=tuple(sources), candidates=tuple(candidates))
+        selected_candidates = tuple(candidates[:5])
+        selected_source_ids = {item.source_record_id for item in selected_candidates}
+        selected_sources = tuple(
+            source for source in sources if source.source_record_id in selected_source_ids
+        )
+        return CandidateSearch(sources=selected_sources, candidates=selected_candidates)
 
     async def compare_candidates(
         self, hypothesis: PlaceHypothesis, candidates: tuple[PlaceCandidate, ...]
@@ -245,18 +271,21 @@ class DeepSeekAmapPlaceKnowledge:
             query += f" {applicable_date.isoformat()}"
         results = await asyncio.to_thread(self.web.search, query, max_results=5)
         now = utc_now()
-        sources = tuple(
-            SourceRecord(
-                source_record_id=f"source-web-{uuid4()}",
-                source_type="web",
-                provider="bounded-web-search",
-                uri=result.url,
-                excerpt=f"{result.title}\n{result.snippet}"[:20_000],
-                content_hash=sha256(f"{result.url}\n{result.snippet}".encode()).hexdigest(),
-                retrieved_at=now,
+        sources_list: list[SourceRecord] = []
+        for result in results:
+            content_hash = sha256(f"{result.url}\n{result.snippet}".encode()).hexdigest()
+            sources_list.append(
+                SourceRecord(
+                    source_record_id=f"source-web-{content_hash[:24]}",
+                    source_type="web",
+                    provider="bounded-web-search",
+                    uri=result.url,
+                    excerpt=f"{result.title}\n{result.snippet}"[:20_000],
+                    content_hash=content_hash,
+                    retrieved_at=now,
+                )
             )
-            for result in results
-        )
+        sources = tuple(sources_list)
         if not sources:
             return FactAcquisition(sources=(), claims=())
         evidence = "\n\n".join(
@@ -311,17 +340,33 @@ class DeepSeekAmapPlaceKnowledge:
         origin_coord = f"{origin.location.lng},{origin.location.lat}"
         destination_coord = f"{destination.location.lng},{destination.location.lat}"
         if mode == "walking":
-            raw = await asyncio.to_thread(self.amap.walking_direction, origin_coord, destination_coord)
+            raw = await self.coordinator.call(
+                "amap",
+                "walking_direction",
+                lambda: asyncio.to_thread(
+                    self.amap.walking_direction, origin_coord, destination_coord
+                ),
+            )
         elif mode in {"driving", "taxi"}:
-            raw = await asyncio.to_thread(self.amap.driving_direction, origin_coord, destination_coord)
+            raw = await self.coordinator.call(
+                "amap",
+                "driving_direction",
+                lambda: asyncio.to_thread(
+                    self.amap.driving_direction, origin_coord, destination_coord
+                ),
+            )
         elif mode in {"transit", "public_transport", "subway"}:
             route_city = origin.city or destination.city or self.city
             raw = (
-                await asyncio.to_thread(
-                    self.amap.transit_direction,
-                    origin_coord,
-                    destination_coord,
-                    route_city,
+                await self.coordinator.call(
+                    "amap",
+                    "transit_direction",
+                    lambda: asyncio.to_thread(
+                        self.amap.transit_direction,
+                        origin_coord,
+                        destination_coord,
+                        route_city,
+                    ),
                 )
                 if route_city
                 else None

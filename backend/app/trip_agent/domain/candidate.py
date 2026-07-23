@@ -5,6 +5,7 @@ from datetime import datetime
 from pydantic import Field
 
 from app.trip_agent.domain.common import DomainModel
+from app.trip_agent.domain.draft import DraftSnapshot
 
 
 class CandidateSnapshot(DomainModel):
@@ -23,4 +24,15 @@ class CandidateRejected(DomainModel):
     rejection_id: str = Field(min_length=1, max_length=200)
     candidate_id: str = Field(min_length=1, max_length=200)
     issue_codes: tuple[str, ...] = Field(min_length=1)
+    created_at: datetime
+
+
+class CandidateCheckpoint(DomainModel):
+    checkpoint_id: str = Field(min_length=1, max_length=200)
+    workspace_id: str = Field(min_length=1, max_length=200)
+    agent_run_id: str = Field(min_length=1, max_length=200)
+    workspace_version: int = Field(ge=1)
+    fact_version: int = Field(ge=0)
+    draft: DraftSnapshot
+    claim_ids: tuple[str, ...] = ()
     created_at: datetime

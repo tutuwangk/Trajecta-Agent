@@ -19,6 +19,14 @@ class RunStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class RunFailureClass(StrEnum):
+    TRANSIENT_EXTERNAL = "transient_external"
+    PERMANENT_EXTERNAL = "permanent_external"
+    PROVIDER_PROTOCOL = "provider_protocol"
+    BUDGET = "budget"
+    INTERNAL = "internal"
+
+
 TERMINAL_RUN_STATUSES = frozenset(
     {RunStatus.PUBLISHED, RunStatus.INCOMPLETE, RunStatus.FAILED, RunStatus.CANCELLED}
 )
@@ -54,6 +62,9 @@ class AgentRun(DomainModel):
     active_interruption_id: str | None = Field(default=None, max_length=200)
     error_code: str | None = Field(default=None, max_length=200)
     error_message: str | None = Field(default=None, max_length=4_000)
+    failure_class: RunFailureClass | None = None
+    retryable: bool | None = None
+    provider_attempt_count: int = Field(default=0, ge=0)
     created_at: datetime
     updated_at: datetime
 
@@ -63,6 +74,9 @@ class AgentRun(DomainModel):
         *,
         error_code: str | None = None,
         error_message: str | None = None,
+        failure_class: RunFailureClass | None = None,
+        retryable: bool | None = None,
+        provider_attempt_count: int | None = None,
         active_interruption_id: str | None = None,
         at: datetime | None = None,
     ) -> "AgentRun":
@@ -75,6 +89,13 @@ class AgentRun(DomainModel):
                 "status": status,
                 "error_code": error_code,
                 "error_message": error_message,
+                "failure_class": failure_class,
+                "retryable": retryable,
+                "provider_attempt_count": (
+                    self.provider_attempt_count
+                    if provider_attempt_count is None
+                    else provider_attempt_count
+                ),
                 "active_interruption_id": active_interruption_id,
                 "updated_at": at or utc_now(),
             }

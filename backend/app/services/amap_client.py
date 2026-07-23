@@ -101,14 +101,20 @@ class AmapClient:
             if data.get("status") == "1":
                 return data
             info = data.get("info") or "未知错误"
-            if info in {"CUQPS_HAS_EXCEEDED_THE_LIMIT", "DAILY_QUERY_OVER_LIMIT", "UNKNOWN_ERROR"} and attempt < max_attempts - 1:
+            if info in {"CUQPS_HAS_EXCEEDED_THE_LIMIT", "UNKNOWN_ERROR"} and attempt < min(
+                1, max_attempts - 1
+            ):
                 time.sleep(_retry_delay_seconds(attempt))
                 continue
             raise AppError(
                 f"高德 API 返回错误：{info}",
                 code="amap_api_error",
                 step=step,
-                details={"request_attempts": attempt + 1},
+                details={
+                    "request_attempts": attempt + 1,
+                    "provider_code": info,
+                    "retryable": info in {"CUQPS_HAS_EXCEEDED_THE_LIMIT", "UNKNOWN_ERROR"},
+                },
             )
         raise AppError(
             "高德 API 返回错误：未知错误",

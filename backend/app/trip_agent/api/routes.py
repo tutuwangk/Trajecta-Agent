@@ -13,6 +13,7 @@ from pydantic_ai_harness.step_persistence import SqliteStepStore
 from app.trip_agent.adapters.place_knowledge import DeepSeekAmapPlaceKnowledge
 from app.trip_agent.adapters.narrative import DeepSeekNarrativeGenerator
 from app.trip_agent.adapters.provider import build_deepseek_v4_model
+from app.trip_agent.adapters.provider_coordinator import ProviderRequestCoordinator
 from app.trip_agent.domain import RunStatus, TERMINAL_RUN_STATUSES
 from app.trip_agent.repositories import SqliteTripAgentRepository
 from app.trip_agent.runtime import TripAgentService
@@ -55,11 +56,14 @@ class AgentV2Runtime:
             SqliteStepStore(database=provider_database),
             deferred_database=deferred_database,
         )
+        self.provider_coordinator = ProviderRequestCoordinator()
 
     def service(self, destination: str | None) -> TripAgentService:
         return TripAgentService(
             self.repository,
-            DeepSeekAmapPlaceKnowledge(city=destination),
+            DeepSeekAmapPlaceKnowledge(
+                city=destination, coordinator=self.provider_coordinator
+            ),
             self.persistence,
             DeepSeekNarrativeGenerator(),
         )

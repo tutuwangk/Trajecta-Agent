@@ -8,6 +8,7 @@ from app.trip_agent.toolsets.planner_tools import (
     PlaceKnowledgePort,
     TripAgentDeps,
     build_planner_toolset,
+    publish_latest_complete_checkpoint,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "PlaceKnowledgePort",
     "TripAgentDeps",
     "build_planner_toolset",
+    "publish_latest_complete_checkpoint",
 ]

@@ -99,6 +99,8 @@ def score_mentions(cases: list[dict], attempts: dict[str, list[dict]]) -> dict[s
     expected_total = 0
     matched = 0
     predicted_total = 0
+    polarity_labeled = 0
+    polarity_correct = 0
     for case in cases:
         expected = {_normalize(item) for item in case["expected"].get("mentions", [])}
         predicted = {
@@ -107,10 +109,27 @@ def score_mentions(cases: list[dict], attempts: dict[str, list[dict]]) -> dict[s
         expected_total += len(expected)
         predicted_total += len(predicted)
         matched += len(expected & predicted)
+        predicted_polarity = {
+            _normalize(str(item.get("raw_name", ""))): item.get("polarity")
+            for item in predictions.get(case["case_id"], {}).get("hypotheses", [])
+        }
+        for item in case["expected"].get("mentions", []):
+            polarity_labeled += 1
+            polarity_correct += predicted_polarity.get(_normalize(item)) == "requested"
+        for item in case["expected"].get("negative_mentions", []):
+            polarity_labeled += 1
+            polarity_correct += predicted_polarity.get(_normalize(item)) == "excluded"
     return {
         "recall": matched / expected_total if expected_total else 0.0,
         "precision": matched / predicted_total if predicted_total else 0.0,
         "expected_mentions": float(expected_total),
+        "polarity_accuracy": (
+            polarity_correct / polarity_labeled if polarity_labeled else 0.0
+        ),
+        "classification_accuracy": (
+            polarity_correct / polarity_labeled if polarity_labeled else 0.0
+        ),
+        "polarity_labeled_mentions": float(polarity_labeled),
         **_reliability(cases, attempts),
     }
 

@@ -109,10 +109,13 @@ async def test_multiple_workspace_mutations_from_one_model_turn_use_runtime_owne
         if step == 1:
             return _calls(("analyze_place_mentions", {}), step=step)
         if step == 2:
-            assert "search_place_candidates" in available
+            assert "search_place_candidates" not in available
+            assert "search_candidate_sets" in available
             return _calls(
-                ("search_place_candidates", {"hypothesis_id": "hypothesis-甲地"}),
-                ("search_place_candidates", {"hypothesis_id": "hypothesis-乙地"}),
+                (
+                    "search_candidate_sets",
+                    {"hypothesis_ids": ["hypothesis-甲地", "hypothesis-乙地"]},
+                ),
                 step=step,
             )
         if step == 3:
@@ -192,7 +195,104 @@ async def test_multiple_workspace_mutations_from_one_model_turn_use_runtime_owne
     )
     workspace = repository.get_workspace(outcome.workspace_id)
     assert workspace is not None
-    assert workspace.version == 9
-    assert workspace.fact_version == 2
-    assert len(repository.list_claims(outcome.workspace_id)) == 2
+    # The filtered toolset now rejects premature single-place fact expansion before
+    # an early draft exists, so only intent, candidates, resolutions, and the draft
+    # advance the workspace in this scripted route.
+    assert workspace.version == 6
+    assert workspace.fact_version == 0
+    assert len(repository.list_claims(outcome.workspace_id)) == 0
+    repository.close()
+
+
+@pytest.mark.anyio
+async def test_batch_grounding_collapses_many_place_mutations_into_semantic_actions(tmp_path):
+    step = 0
+
+    async def model_function(messages: list[Any], info: AgentInfo) -> ModelResponse:
+        nonlocal step
+        step += 1
+        if step == 1:
+            return _calls(("analyze_place_mentions", {}), step=step)
+        if step == 2:
+            return _calls(
+                (
+                    "search_candidate_sets",
+                    {"hypothesis_ids": ["hypothesis-甲地", "hypothesis-乙地"]},
+                ),
+                step=step,
+            )
+        if step == 3:
+            return _calls(
+                (
+                    "apply_place_resolutions",
+                    {
+                        "decisions": [
+                            {
+                                "hypothesis_id": "hypothesis-甲地",
+                                "candidate_id": "candidate-甲地",
+                                "rationale": "exact identity",
+                            },
+                            {
+                                "hypothesis_id": "hypothesis-乙地",
+                                "candidate_id": "candidate-乙地",
+                                "rationale": "exact identity",
+                            },
+                        ]
+                    },
+                ),
+                step=step,
+            )
+        if step == 4:
+            return _calls(
+                (
+                    "apply_draft_change",
+                    json.dumps({
+                        "days": [
+                            {
+                                "day_index": 1,
+                                "date": "2026-08-03",
+                                "visits": [
+                                    {
+                                        "place_candidate_id": "candidate-甲地",
+                                        "duration_min": 60,
+                                    }
+                                ],
+                            }
+                        ]
+                    }),
+                ),
+                step=step,
+            )
+        if step == 5:
+            return _calls(
+                ("submit_candidate", {"completion_reason": "complete one-day route"}),
+                step=step,
+            )
+        return ModelResponse(parts=[TextPart("published")], finish_reason="stop")
+
+    repository = SqliteTripAgentRepository(tmp_path / "batch-grounding.sqlite3")
+    service = TripAgentService(repository, MultiMutationKnowledge())
+    outcome = await service.start(
+        raw_request="2026年8月3日考虑甲地和乙地，最终可由你取舍。",
+        destination="成都",
+        start_date=date(2026, 8, 3),
+        days=1,
+        model=FunctionModel(model_function),
+    )
+
+    run = repository.get_run(outcome.run_id)
+    assert outcome.status is RunStatus.PUBLISHED, (
+        run.error_code if run else None,
+        run.error_message if run else None,
+        outcome.events,
+        outcome.output,
+        step,
+    )
+    assert step == 6
+    event_types = [item["type"] for item in outcome.events]
+    assert "place_candidate_sets_found" in event_types
+    assert "place_resolutions_applied" in event_types
+    workspace = repository.get_workspace(outcome.workspace_id)
+    assert workspace is not None
+    assert workspace.version == 5
     repository.close()

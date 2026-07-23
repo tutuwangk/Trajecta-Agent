@@ -8,10 +8,27 @@ import pytest
 from pydantic_ai import Agent
 
 from app.trip_agent.adapters.provider import (
+    DEEPSEEK_V4_FLASH,
+    DEEPSEEK_V4_PRO,
     build_deepseek_v4_model,
     deepseek_v4_settings,
     is_complete_final_response,
 )
+
+
+def test_root_authority_can_use_flash_without_changing_production_default():
+    production = build_deepseek_v4_model(
+        "root", api_key="contract-key", base_url="https://deepseek.invalid"
+    )
+    acceptance = build_deepseek_v4_model(
+        "root",
+        model_variant="flash",
+        api_key="contract-key",
+        base_url="https://deepseek.invalid",
+    )
+
+    assert production.model_name == DEEPSEEK_V4_PRO
+    assert acceptance.model_name == DEEPSEEK_V4_FLASH
 
 
 def _completion(message: dict[str, Any], *, finish_reason: str, request_id: str) -> httpx.Response:

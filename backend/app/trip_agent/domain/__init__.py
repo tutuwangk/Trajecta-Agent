@@ -1,4 +1,4 @@
-from app.trip_agent.domain.candidate import CandidateRejected, CandidateSnapshot
+from app.trip_agent.domain.candidate import CandidateCheckpoint, CandidateRejected, CandidateSnapshot
 from app.trip_agent.domain.claims import (
     DecisionClaim,
     DerivedClaim,
@@ -13,6 +13,7 @@ from app.trip_agent.domain.draft import DraftDay, DraftMeal, DraftSnapshot, Draf
 from app.trip_agent.domain.goal import CommitmentStrength, GoalCommitment, GoalLedger, RunGoal
 from app.trip_agent.domain.narrative import NarrativeDay, NarrativeVisit, ReleaseNarrative
 from app.trip_agent.domain.places import (
+    expand_visit_candidate_coverage,
     HypothesisStatus,
     PlaceCandidate,
     PlaceHypothesis,
@@ -26,6 +27,7 @@ from app.trip_agent.domain.run import (
     ClarificationAnswers,
     ClarificationBatch,
     ClarificationQuestion,
+    RunFailureClass,
     RunStatus,
     TERMINAL_RUN_STATUSES,
 )
@@ -34,6 +36,7 @@ from app.trip_agent.domain.workspace import TripWorkspace
 __all__ = [
     "AgentRun",
     "CandidateRejected",
+    "CandidateCheckpoint",
     "CandidateSnapshot",
     "ClarificationBatch",
     "ClarificationAnswer",
@@ -48,6 +51,7 @@ __all__ = [
     "DraftSnapshot",
     "DraftVisit",
     "EstimateClaim",
+    "expand_visit_candidate_coverage",
     "ExperienceStatus",
     "FactStatus",
     "GeoPoint",
@@ -65,6 +69,7 @@ __all__ = [
     "ReleaseNarrative",
     "ResolutionStatus",
     "RunGoal",
+    "RunFailureClass",
     "RunStatus",
     "SourceRecord",
     "TERMINAL_RUN_STATUSES",

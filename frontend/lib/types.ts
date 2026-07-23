@@ -288,6 +288,15 @@ export type AgentV2Run = {
   active_interruption_id?: string | null;
   error_code?: string | null;
   error_message?: string | null;
+  failure_class?:
+    | "transient_external"
+    | "permanent_external"
+    | "provider_protocol"
+    | "budget"
+    | "internal"
+    | null;
+  retryable?: boolean | null;
+  provider_attempt_count?: number;
 };
 
 export type AgentV2Question = {

@@ -12,6 +12,8 @@ from pydantic_ai import (
     UnexpectedModelBehavior,
     UsageLimitExceeded,
     UsageLimits,
+    ModelAPIError,
+    ModelHTTPError,
 )
 from pydantic_ai.models import Model
 from pydantic_ai.messages import ModelRequest, ToolReturnPart
@@ -26,14 +28,20 @@ from app.trip_agent.domain import (
     GoalLedger,
     RunGoal,
     RunStatus,
+    RunFailureClass,
     TERMINAL_RUN_STATUSES,
     TripWorkspace,
     utc_now,
 )
 from app.trip_agent.repositories import SqliteTripAgentRepository
 from app.trip_agent.runtime.harness_persistence import HarnessPersistenceAdapter
-from app.trip_agent.budget import BudgetExhausted, RuntimeBudget
-from app.trip_agent.toolsets import NarrativeGeneratorPort, PlaceKnowledgePort, TripAgentDeps
+from app.trip_agent.budget import BudgetExhausted, MUTATION_TOOLS, RuntimeBudget
+from app.trip_agent.toolsets import (
+    NarrativeGeneratorPort,
+    PlaceKnowledgePort,
+    TripAgentDeps,
+    publish_latest_complete_checkpoint,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +62,10 @@ class PersistentEventList(list[dict[str, object]]):
     def append(self, event: dict[str, object]) -> None:
         self.repository.append_event(self.run_id, event)
         super().append(event)
+
+
+class EpisodeDeadlineExceeded(TimeoutError):
+    """The Harness ended an episode to preserve time for a compact continuation."""
 
 
 def _is_recoverable_agent_exhaustion(exc: UnexpectedModelBehavior) -> bool:
@@ -77,16 +89,258 @@ class TripAgentService:
         place_knowledge: PlaceKnowledgePort,
         persistence: HarnessPersistenceAdapter | None = None,
         narrative_generator: NarrativeGeneratorPort | None = None,
+        place_cache_repository: SqliteTripAgentRepository | None = None,
     ) -> None:
         self.repository = repository
         self.place_knowledge = place_knowledge
         self.persistence = persistence or HarnessPersistenceAdapter(InMemoryStepStore())
         self.narrative_generator = narrative_generator
+        self.place_cache_repository = place_cache_repository
 
-    def _budget(self, run_id: str) -> RuntimeBudget:
-        return RuntimeBudget.from_state(
-            self.repository.get_run_budget(run_id),
-            on_change=lambda state: self.repository.save_run_budget(run_id, state),
+    def _budget(self, run_id: str, workspace: TripWorkspace) -> RuntimeBudget:
+        on_change = lambda state: self.repository.save_run_budget(run_id, state)
+        state = self.repository.get_run_budget(run_id)
+        if state is not None:
+            return RuntimeBudget.from_state(state, on_change=on_change)
+        days = workspace.goal_ledger.goal.days or 1
+        max_seconds = 480 if days == 1 else 600 if days == 2 else 720
+        return RuntimeBudget(max_seconds=max_seconds, on_change=on_change)
+
+    @staticmethod
+    def _episode_timeout(budget: RuntimeBudget) -> float:
+        remaining = max(1.0, budget.max_seconds - budget.elapsed_seconds)
+        if budget.convergence_mode:
+            return remaining
+        exploration_remaining = (
+            budget.max_seconds * (1 - budget.reserve_ratio) - budget.elapsed_seconds
+        )
+        if exploration_remaining <= 0:
+            budget.enter_convergence()
+            return remaining
+        return max(1.0, min(remaining, exploration_remaining))
+
+    async def _run_episode(
+        self,
+        *,
+        agent,
+        user_prompt,
+        deps: TripAgentDeps,
+        run: AgentRun,
+        events: PersistentEventList,
+        timeout_seconds: float,
+        message_history=None,
+        deferred_tool_results=None,
+    ):
+        attempt = self.repository.increment_provider_attempt(run.run_id)
+        usage = deps.budget.run_usage()
+        deps.budget.begin_episode()
+        deadline = asyncio.timeout(timeout_seconds)
+        try:
+            async with deadline:
+                return await agent.run(
+                    user_prompt,
+                    deps=deps,
+                    conversation_id=run.provider_conversation_id,
+                    message_history=message_history,
+                    deferred_tool_results=deferred_tool_results,
+                    usage_limits=UsageLimits(
+                        request_limit=deps.budget.max_model_requests,
+                        tool_calls_limit=deps.budget.max_tool_calls,
+                    ),
+                    usage=usage,
+                )
+        except TimeoutError as exc:
+            if deadline.expired():
+                events.append(
+                    {
+                        "type": "episode_deadline_reached",
+                        "attempt": attempt.provider_attempt_count,
+                        "elapsed_seconds": round(deps.budget.elapsed_seconds, 2),
+                    }
+                )
+                raise EpisodeDeadlineExceeded(
+                    "episode exploration window ended"
+                ) from exc
+            events.append(
+                {
+                    "type": "provider_attempt_failed",
+                    "attempt": attempt.provider_attempt_count,
+                    "error_type": type(exc).__name__,
+                    "status_code": getattr(exc, "status_code", None),
+                }
+            )
+            raise
+        except Exception as exc:
+            if isinstance(exc, ModelAPIError):
+                events.append(
+                    {
+                        "type": "provider_attempt_failed",
+                        "attempt": attempt.provider_attempt_count,
+                        "error_type": type(exc).__name__,
+                        "status_code": getattr(exc, "status_code", None),
+                    }
+                )
+            raise
+        finally:
+            deps.budget.observe_run_usage(usage)
+            deps.budget.end_episode()
+
+    @staticmethod
+    def _classify_provider_error(
+        exc: ModelAPIError,
+    ) -> tuple[RunFailureClass, bool, str]:
+        if isinstance(exc, ModelHTTPError):
+            status = exc.status_code
+            if status == 429 or status >= 500:
+                return RunFailureClass.TRANSIENT_EXTERNAL, True, "external_dependency_unavailable"
+            if status in {401, 402, 403}:
+                return RunFailureClass.PERMANENT_EXTERNAL, False, "external_account_unavailable"
+            return RunFailureClass.PROVIDER_PROTOCOL, False, "provider_protocol_error"
+        return RunFailureClass.TRANSIENT_EXTERNAL, True, "external_dependency_unavailable"
+
+    @staticmethod
+    def _blocking_tool_provider_failure(
+        workspace: TripWorkspace, events: list[dict[str, object]]
+    ) -> tuple[RunFailureClass, bool, str] | None:
+        if workspace.current_draft is not None:
+            return None
+        failures = [
+            event
+            for event in events
+            if event.get("type") in {"provider_attempt_failed", "provider_circuit_open"}
+        ]
+        if not failures:
+            return None
+        retryable = any(bool(event.get("retryable", True)) for event in failures)
+        if retryable:
+            return (
+                RunFailureClass.TRANSIENT_EXTERNAL,
+                True,
+                "external_dependency_unavailable",
+            )
+        return RunFailureClass.PERMANENT_EXTERNAL, False, "external_account_unavailable"
+
+    async def _try_provider_recovery_episode(
+        self,
+        *,
+        run: AgentRun,
+        model: Model,
+        budget: RuntimeBudget,
+        events: PersistentEventList,
+    ) -> str | None:
+        if any(event.get("type") == "provider_retry_scheduled" for event in events):
+            return None
+        workspace = self.repository.get_workspace(run.workspace_id)
+        current = self.repository.get_run(run.run_id)
+        remaining_seconds = budget.max_seconds - budget.elapsed_seconds
+        if (
+            workspace is None
+            or current is None
+            or current.status is not RunStatus.RUNNING
+            or remaining_seconds < 30
+        ):
+            return None
+        events.append(
+            {
+                "type": "provider_retry_scheduled",
+                "remaining_seconds": round(remaining_seconds, 2),
+            }
+        )
+        provider_run_id = f"provider-{run.run_id}-retry-{uuid4()}"
+        deps = TripAgentDeps(
+            repository=self.repository,
+            place_cache_repository=self.place_cache_repository,
+            place_knowledge=self.place_knowledge,
+            workspace_id=workspace.workspace_id,
+            run_id=run.run_id,
+            provider_run_id=provider_run_id,
+            events=events,
+            budget=budget,
+            narrative_generator=self.narrative_generator,
+        )
+        agent = build_trip_planner_agent(
+            model,
+            capabilities=[
+                self.persistence.capability(
+                    agent_name="trip_planner_v2_provider_retry", run_id=provider_run_id
+                )
+            ],
+        )
+        try:
+            result = await self._run_episode(
+                agent=agent,
+                user_prompt=(
+                    "Continue the same business run from the current TripWorkspace after a transient provider "
+                    "failure. Read the workspace, reuse completed work, avoid repeating discovery, form an early "
+                    "complete draft, validate it, and submit."
+                ),
+                deps=deps,
+                run=run,
+                events=events,
+                timeout_seconds=remaining_seconds,
+            )
+        except Exception:
+            return None
+        output = "waiting_user" if isinstance(result.output, DeferredToolRequests) else str(result.output)
+        current = self.repository.get_run(run.run_id)
+        if isinstance(result.output, DeferredToolRequests):
+            self.persistence.save_deferred_messages(provider_run_id, result.all_messages())
+            return output
+        if current and current.status is RunStatus.PUBLISHED:
+            events.append({"type": "provider_retry_recovered"})
+            return output
+        return None
+
+    async def _provider_failure_outcome(
+        self,
+        *,
+        run: AgentRun,
+        workspace: TripWorkspace,
+        model: Model,
+        deps: TripAgentDeps,
+        events: PersistentEventList,
+        exc: ModelAPIError,
+    ) -> TripAgentRunOutcome:
+        failure_class, retryable, error_code = self._classify_provider_error(exc)
+        if retryable:
+            recovered_output = await self._try_provider_recovery_episode(
+                run=run, model=model, budget=deps.budget, events=events
+            )
+            if recovered_output is not None:
+                current = self.repository.get_run(run.run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=workspace.workspace_id,
+                    run_id=run.run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output=recovered_output,
+                    events=tuple(events),
+                )
+        if retryable and await publish_latest_complete_checkpoint(deps) is not None:
+            current = self.repository.get_run(run.run_id)
+            return TripAgentRunOutcome(
+                workspace_id=workspace.workspace_id,
+                run_id=run.run_id,
+                status=current.status if current else RunStatus.PUBLISHED,
+                output="published_complete_checkpoint",
+                events=tuple(events),
+            )
+        current = self.repository.get_run(run.run_id)
+        target = RunStatus.INCOMPLETE if retryable else RunStatus.FAILED
+        if current and current.status not in TERMINAL_RUN_STATUSES:
+            current = self.repository.transition_run(
+                run.run_id,
+                target,
+                error_code=error_code,
+                error_message=str(exc)[:4_000],
+                failure_class=failure_class,
+                retryable=retryable,
+            )
+        return TripAgentRunOutcome(
+            workspace_id=workspace.workspace_id,
+            run_id=run.run_id,
+            status=current.status if current else target,
+            output="",
+            events=tuple(events),
         )
 
     def create_workspace(
@@ -112,6 +366,89 @@ class TripAgentService:
             updated_at=now,
         )
         return self.repository.create_workspace(workspace)
+
+    async def _try_convergence_episode(
+        self,
+        *,
+        run: AgentRun,
+        model: Model,
+        budget: RuntimeBudget,
+        events: PersistentEventList,
+        continuation_context: str | None = None,
+    ) -> str | None:
+        """Continue the same business run with a compact, publication-focused episode."""
+
+        workspace = self.repository.get_workspace(run.workspace_id)
+        current = self.repository.get_run(run.run_id)
+        if workspace is None or current is None or current.status is not RunStatus.RUNNING:
+            return None
+        remaining_seconds = budget.max_seconds - budget.elapsed_seconds
+        if remaining_seconds < 30:
+            return None
+        budget.enter_convergence()
+        provider_run_id = f"provider-{run.run_id}-convergence-{uuid4()}"
+        events.append(
+            {
+                "type": "convergence_episode_started",
+                "remaining_seconds": round(remaining_seconds, 2),
+            }
+        )
+        deps = TripAgentDeps(
+            repository=self.repository,
+            place_cache_repository=self.place_cache_repository,
+            place_knowledge=self.place_knowledge,
+            workspace_id=workspace.workspace_id,
+            run_id=run.run_id,
+            provider_run_id=provider_run_id,
+            events=events,
+            budget=budget,
+            narrative_generator=self.narrative_generator,
+        )
+        agent = build_trip_planner_agent(
+            model,
+            capabilities=[
+                self.persistence.capability(
+                    agent_name="trip_planner_v2_convergence", run_id=provider_run_id
+                )
+            ],
+        )
+        prompt = (
+            "This is the convergence episode for the same TripWorkspace. Read the current workspace. "
+            "Do not restart discovery or optimize optional references. Close only hard execution gaps; "
+            "keep omitted strong preferences as explicit experience issues rather than publication blockers. "
+            "create a complete draft that accounts for every trip day, acquire only facts required by the "
+            "current route, simulate, repair the returned structural/completeness counterexamples, and submit. "
+            "Prefer a complete honest route with explicit estimates over further candidate expansion."
+        )
+        if continuation_context:
+            prompt = f"{prompt}\nContinuation context: {continuation_context}"
+        try:
+            result = await self._run_episode(
+                agent=agent,
+                user_prompt=prompt,
+                deps=deps,
+                run=run,
+                events=events,
+                timeout_seconds=remaining_seconds,
+            )
+        except Exception as exc:
+            events.append(
+                {
+                    "type": "convergence_episode_failed",
+                    "error_type": type(exc).__name__,
+                }
+            )
+            return None
+        output = "waiting_user" if isinstance(result.output, DeferredToolRequests) else str(result.output)
+        current = self.repository.get_run(run.run_id)
+        if isinstance(result.output, DeferredToolRequests):
+            self.persistence.save_deferred_messages(provider_run_id, result.all_messages())
+            return output
+        if current and current.status is RunStatus.PUBLISHED:
+            events.append({"type": "convergence_episode_published"})
+            return output
+        events.append({"type": "convergence_episode_ended_without_publication"})
+        return None
 
     def create_run(
         self,
@@ -214,12 +551,13 @@ class TripAgentService:
         provider_run_id = f"provider-{run.run_id}-{uuid4()}"
         deps = TripAgentDeps(
             repository=self.repository,
+            place_cache_repository=self.place_cache_repository,
             place_knowledge=self.place_knowledge,
             workspace_id=workspace.workspace_id,
             run_id=run.run_id,
             provider_run_id=provider_run_id,
             events=events,
-            budget=self._budget(run.run_id),
+            budget=self._budget(run.run_id, workspace),
             narrative_generator=self.narrative_generator,
         )
         capabilities = [
@@ -228,13 +566,14 @@ class TripAgentService:
         agent = build_trip_planner_agent(model, capabilities=capabilities)
         output = ""
         try:
-            async with asyncio.timeout(deps.budget.max_seconds):
-                result = await agent.run(
-                    workspace.goal_ledger.goal.raw_request,
-                    deps=deps,
-                    conversation_id=run.provider_conversation_id,
-                    usage_limits=UsageLimits(request_limit=20, tool_calls_limit=32),
-                )
+            result = await self._run_episode(
+                agent=agent,
+                user_prompt=workspace.goal_ledger.goal.raw_request,
+                deps=deps,
+                run=run,
+                events=events,
+                timeout_seconds=self._episode_timeout(deps.budget),
+            )
             output = "waiting_user" if isinstance(result.output, DeferredToolRequests) else str(result.output)
             current = self.repository.get_run(run.run_id)
             if current is None:
@@ -264,7 +603,31 @@ class TripAgentService:
                 output=output,
                 events=tuple(events),
             )
-        except (BudgetExhausted, UsageLimitExceeded, TimeoutError) as exc:
+        except (UsageLimitExceeded, EpisodeDeadlineExceeded) as exc:
+            convergence_output = await self._try_convergence_episode(
+                run=run,
+                model=model,
+                budget=deps.budget,
+                events=events,
+            )
+            if convergence_output is not None:
+                current = self.repository.get_run(run.run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=workspace.workspace_id,
+                    run_id=run.run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output=convergence_output,
+                    events=tuple(events),
+                )
+            if await publish_latest_complete_checkpoint(deps) is not None:
+                current = self.repository.get_run(run.run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=workspace.workspace_id,
+                    run_id=run.run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output="published_complete_checkpoint",
+                    events=tuple(events),
+                )
             current = self.repository.get_run(run.run_id)
             if current and current.status not in {
                 RunStatus.PUBLISHED,
@@ -277,6 +640,8 @@ class TripAgentService:
                     RunStatus.INCOMPLETE,
                     error_code="agent_budget_exhausted",
                     error_message=str(exc)[:4_000],
+                    failure_class=RunFailureClass.BUDGET,
+                    retryable=True,
                 )
             return TripAgentRunOutcome(
                 workspace_id=workspace.workspace_id,
@@ -285,27 +650,91 @@ class TripAgentService:
                 output=output,
                 events=tuple(events),
             )
-        except UnexpectedModelBehavior as exc:
-            if not _is_recoverable_agent_exhaustion(exc):
+        except (BudgetExhausted, TimeoutError) as exc:
+            if await publish_latest_complete_checkpoint(deps) is not None:
                 current = self.repository.get_run(run.run_id)
-                if current and current.status not in TERMINAL_RUN_STATUSES:
-                    self.repository.transition_run(
-                        run.run_id,
-                        RunStatus.FAILED,
-                        error_code="provider_protocol_error",
-                        error_message=str(exc)[:4_000],
-                    )
-                raise
+                return TripAgentRunOutcome(
+                    workspace_id=workspace.workspace_id,
+                    run_id=run.run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output="published_complete_checkpoint",
+                    events=tuple(events),
+                )
             current = self.repository.get_run(run.run_id)
             if current and current.status not in TERMINAL_RUN_STATUSES:
                 current = self.repository.transition_run(
                     run.run_id,
                     RunStatus.INCOMPLETE,
-                    error_code="agent_action_repair_exhausted",
+                    error_code="agent_budget_exhausted",
+                    error_message=str(exc)[:4_000],
+                    failure_class=RunFailureClass.BUDGET,
+                    retryable=True,
+                )
+            return TripAgentRunOutcome(
+                workspace_id=workspace.workspace_id,
+                run_id=run.run_id,
+                status=current.status if current else RunStatus.INCOMPLETE,
+                output=output,
+                events=tuple(events),
+            )
+        except ModelAPIError as exc:
+            return await self._provider_failure_outcome(
+                run=run,
+                workspace=workspace,
+                model=model,
+                deps=deps,
+                events=events,
+                exc=exc,
+            )
+        except UnexpectedModelBehavior as exc:
+            if not _is_recoverable_agent_exhaustion(exc):
+                current = self.repository.get_run(run.run_id)
+                if current and current.status not in TERMINAL_RUN_STATUSES:
+                    current = self.repository.transition_run(
+                        run.run_id,
+                        RunStatus.FAILED,
+                        error_code="provider_protocol_error",
+                        error_message=str(exc)[:4_000],
+                        failure_class=RunFailureClass.PROVIDER_PROTOCOL,
+                        retryable=False,
+                    )
+                return TripAgentRunOutcome(
+                    workspace_id=workspace.workspace_id,
+                    run_id=run.run_id,
+                    status=current.status if current else RunStatus.FAILED,
+                    output="",
+                    events=tuple(events),
+                )
+            if await publish_latest_complete_checkpoint(deps) is not None:
+                current = self.repository.get_run(run.run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=workspace.workspace_id,
+                    run_id=run.run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output="published_complete_checkpoint",
+                    events=tuple(events),
+                )
+            current_workspace = self.repository.get_workspace(workspace.workspace_id) or workspace
+            provider_failure = self._blocking_tool_provider_failure(
+                current_workspace, events
+            )
+            current = self.repository.get_run(run.run_id)
+            if current and current.status not in TERMINAL_RUN_STATUSES:
+                failure_class, retryable, error_code = provider_failure or (
+                    RunFailureClass.BUDGET,
+                    True,
+                    "agent_action_repair_exhausted",
+                )
+                current = self.repository.transition_run(
+                    run.run_id,
+                    RunStatus.INCOMPLETE if retryable else RunStatus.FAILED,
+                    error_code=error_code,
                     error_message=(
                         "Agent exhausted a bounded action repair budget without publishing. "
                         "The latest workspace remains available for a revision run."
                     ),
+                    failure_class=failure_class,
+                    retryable=retryable,
                 )
             return TripAgentRunOutcome(
                 workspace_id=workspace.workspace_id,
@@ -327,8 +756,16 @@ class TripAgentService:
                     RunStatus.FAILED,
                     error_code="agent_runtime_error",
                     error_message=str(exc)[:4_000],
+                    failure_class=RunFailureClass.INTERNAL,
+                    retryable=False,
                 )
-            raise
+            return TripAgentRunOutcome(
+                workspace_id=workspace.workspace_id,
+                run_id=run.run_id,
+                status=current.status if current else RunStatus.FAILED,
+                output="",
+                events=tuple(events),
+            )
 
     async def resume(
         self,
@@ -361,6 +798,9 @@ class TripAgentService:
         message_history = self.persistence.deferred_messages(interruption.provider_run_id)
         if not self.repository.consume_answers_and_resume(answer_record):
             raise ValueError("clarification answers were already consumed")
+        workspace = self.repository.get_workspace(run.workspace_id)
+        if workspace is None:
+            raise KeyError(run.workspace_id)
         provider_run_id = f"provider-{run_id}-{uuid4()}"
         events = PersistentEventList(self.repository, run_id)
         events.append(
@@ -372,12 +812,13 @@ class TripAgentService:
         )
         deps = TripAgentDeps(
             repository=self.repository,
+            place_cache_repository=self.place_cache_repository,
             place_knowledge=self.place_knowledge,
             workspace_id=run.workspace_id,
             run_id=run_id,
             provider_run_id=provider_run_id,
             events=events,
-            budget=self._budget(run_id),
+            budget=self._budget(run_id, workspace),
             narrative_generator=self.narrative_generator,
         )
         agent = build_trip_planner_agent(
@@ -387,10 +828,13 @@ class TripAgentService:
             ],
         )
         try:
-            result = await agent.run(
-                None,
+            result = await self._run_episode(
+                agent=agent,
+                user_prompt=None,
                 deps=deps,
-                conversation_id=run.provider_conversation_id,
+                run=run,
+                events=events,
+                timeout_seconds=self._episode_timeout(deps.budget),
                 message_history=message_history,
                 deferred_tool_results=DeferredToolResults(
                     calls={
@@ -399,23 +843,151 @@ class TripAgentService:
                         }
                     }
                 ),
-                usage_limits=UsageLimits(request_limit=20, tool_calls_limit=32),
             )
-        except UnexpectedModelBehavior as exc:
-            if not _is_recoverable_agent_exhaustion(exc):
-                raise
+        except ModelAPIError as exc:
+            return await self._provider_failure_outcome(
+                run=run,
+                workspace=workspace,
+                model=model,
+                deps=deps,
+                events=events,
+                exc=exc,
+            )
+        except (UsageLimitExceeded, EpisodeDeadlineExceeded) as exc:
+            convergence_output = await self._try_convergence_episode(
+                run=run,
+                model=model,
+                budget=deps.budget,
+                events=events,
+                continuation_context=(
+                    "The user answered the pending clarification with: "
+                    + "; ".join(
+                        f"{item.question_id}={item.value}" for item in answer_record.answers
+                    )
+                ),
+            )
+            if convergence_output is not None:
+                current = self.repository.get_run(run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=run.workspace_id,
+                    run_id=run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output=convergence_output,
+                    events=tuple(events),
+                )
+            if await publish_latest_complete_checkpoint(deps) is not None:
+                current = self.repository.get_run(run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=run.workspace_id,
+                    run_id=run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output="published_complete_checkpoint",
+                    events=tuple(events),
+                )
             current = self.repository.get_run(run_id)
             if current and current.status not in TERMINAL_RUN_STATUSES:
                 current = self.repository.transition_run(
                     run_id,
                     RunStatus.INCOMPLETE,
-                    error_code="agent_action_repair_exhausted",
-                    error_message="Agent exhausted a bounded action repair budget after clarification.",
+                    error_code="agent_budget_exhausted",
+                    error_message=str(exc)[:4_000],
+                    failure_class=RunFailureClass.BUDGET,
+                    retryable=True,
                 )
             return TripAgentRunOutcome(
                 workspace_id=run.workspace_id,
                 run_id=run_id,
                 status=current.status if current else RunStatus.INCOMPLETE,
+                output="",
+                events=tuple(events),
+            )
+        except (BudgetExhausted, TimeoutError) as exc:
+            if await publish_latest_complete_checkpoint(deps) is not None:
+                current = self.repository.get_run(run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=run.workspace_id,
+                    run_id=run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output="published_complete_checkpoint",
+                    events=tuple(events),
+                )
+            current = self.repository.get_run(run_id)
+            if current and current.status not in TERMINAL_RUN_STATUSES:
+                current = self.repository.transition_run(
+                    run_id,
+                    RunStatus.INCOMPLETE,
+                    error_code="agent_budget_exhausted",
+                    error_message=str(exc)[:4_000],
+                    failure_class=RunFailureClass.BUDGET,
+                    retryable=True,
+                )
+            return TripAgentRunOutcome(
+                workspace_id=run.workspace_id,
+                run_id=run_id,
+                status=current.status if current else RunStatus.INCOMPLETE,
+                output="",
+                events=tuple(events),
+            )
+        except UnexpectedModelBehavior as exc:
+            if not _is_recoverable_agent_exhaustion(exc):
+                current = self.repository.get_run(run_id)
+                if current and current.status not in TERMINAL_RUN_STATUSES:
+                    current = self.repository.transition_run(
+                        run_id,
+                        RunStatus.FAILED,
+                        error_code="provider_protocol_error",
+                        error_message=str(exc)[:4_000],
+                        failure_class=RunFailureClass.PROVIDER_PROTOCOL,
+                        retryable=False,
+                    )
+                return TripAgentRunOutcome(
+                    workspace_id=run.workspace_id,
+                    run_id=run_id,
+                    status=current.status if current else RunStatus.FAILED,
+                    output="",
+                    events=tuple(events),
+                )
+            current_workspace = self.repository.get_workspace(run.workspace_id) or workspace
+            provider_failure = self._blocking_tool_provider_failure(
+                current_workspace, events
+            )
+            current = self.repository.get_run(run_id)
+            if current and current.status not in TERMINAL_RUN_STATUSES:
+                failure_class, retryable, error_code = provider_failure or (
+                    RunFailureClass.BUDGET,
+                    True,
+                    "agent_action_repair_exhausted",
+                )
+                current = self.repository.transition_run(
+                    run_id,
+                    RunStatus.INCOMPLETE if retryable else RunStatus.FAILED,
+                    error_code=error_code,
+                    error_message="Agent exhausted a bounded action repair budget after clarification.",
+                    failure_class=failure_class,
+                    retryable=retryable,
+                )
+            return TripAgentRunOutcome(
+                workspace_id=run.workspace_id,
+                run_id=run_id,
+                status=current.status if current else RunStatus.INCOMPLETE,
+                output="",
+                events=tuple(events),
+            )
+        except Exception as exc:
+            current = self.repository.get_run(run_id)
+            if current and current.status not in TERMINAL_RUN_STATUSES:
+                current = self.repository.transition_run(
+                    run_id,
+                    RunStatus.FAILED,
+                    error_code="internal_error",
+                    error_message=str(exc)[:4_000],
+                    failure_class=RunFailureClass.INTERNAL,
+                    retryable=False,
+                )
+            return TripAgentRunOutcome(
+                workspace_id=run.workspace_id,
+                run_id=run_id,
+                status=current.status if current else RunStatus.FAILED,
                 output="",
                 events=tuple(events),
             )
@@ -473,31 +1045,26 @@ class TripAgentService:
                 output="",
                 events=(),
             )
-        mutation_tools = {
-            "analyze_place_mentions",
-            "search_place_candidates",
-            "resolve_place",
-            "acquire_place_facts",
-            "acquire_route_facts",
-            "estimate_visit_profile",
-            "estimate_visit_profiles",
-            "apply_draft_change",
-            "apply_draft_operations",
-            "request_clarification",
-            "submit_candidate",
-        }
+        mutation_tools = MUTATION_TOOLS
         resolved_mutation_results = [
             (tool_call_id, tool_name, result)
             for tool_call_id, tool_name in unresolved
             if tool_name in mutation_tools
-            and (result := self.repository.get_tool_effect(tool_call_id, tool_name=tool_name))
+            and (
+                result := self.repository.get_tool_effect(
+                    tool_call_id, run_id=run_id, tool_name=tool_name
+                )
+            )
             is not None
         ]
         unknown_mutations = [
             {"tool_call_id": tool_call_id, "tool_name": tool_name}
             for tool_call_id, tool_name in unresolved
             if tool_name in mutation_tools
-            and self.repository.get_tool_effect(tool_call_id, tool_name=tool_name) is None
+            and self.repository.get_tool_effect(
+                tool_call_id, run_id=run_id, tool_name=tool_name
+            )
+            is None
         ]
         if unknown_mutations:
             current = self.repository.transition_run(
@@ -539,12 +1106,13 @@ class TripAgentService:
         )
         deps = TripAgentDeps(
             repository=self.repository,
+            place_cache_repository=self.place_cache_repository,
             place_knowledge=self.place_knowledge,
             workspace_id=run.workspace_id,
             run_id=run_id,
             provider_run_id=provider_run_id,
             events=events,
-            budget=self._budget(run_id),
+            budget=self._budget(run_id, workspace),
             narrative_generator=self.narrative_generator,
         )
         agent = build_trip_planner_agent(
@@ -554,21 +1122,125 @@ class TripAgentService:
             ],
         )
         try:
-            result = await agent.run(
-                None,
+            result = await self._run_episode(
+                agent=agent,
+                user_prompt=None,
                 deps=deps,
-                conversation_id=run.provider_conversation_id,
+                run=run,
+                events=events,
+                timeout_seconds=self._episode_timeout(deps.budget),
                 message_history=message_history,
-                usage_limits=UsageLimits(request_limit=20, tool_calls_limit=32),
             )
-        except UnexpectedModelBehavior as exc:
-            if not _is_recoverable_agent_exhaustion(exc):
-                raise
+        except ModelAPIError as exc:
+            return await self._provider_failure_outcome(
+                run=run,
+                workspace=workspace,
+                model=model,
+                deps=deps,
+                events=events,
+                exc=exc,
+            )
+        except (UsageLimitExceeded, EpisodeDeadlineExceeded) as exc:
+            convergence_output = await self._try_convergence_episode(
+                run=run,
+                model=model,
+                budget=deps.budget,
+                events=events,
+            )
+            if convergence_output is not None:
+                current = self.repository.get_run(run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=run.workspace_id,
+                    run_id=run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output=convergence_output,
+                    events=tuple(events),
+                )
+            if await publish_latest_complete_checkpoint(deps) is not None:
+                current = self.repository.get_run(run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=run.workspace_id,
+                    run_id=run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output="published_complete_checkpoint",
+                    events=tuple(events),
+                )
             current = self.repository.transition_run(
                 run_id,
                 RunStatus.INCOMPLETE,
-                error_code="agent_action_repair_exhausted",
-                error_message="Recovered Agent exhausted a bounded action repair budget.",
+                error_code="agent_budget_exhausted",
+                error_message=str(exc)[:4_000],
+                failure_class=RunFailureClass.BUDGET,
+                retryable=True,
+            )
+            return TripAgentRunOutcome(
+                workspace_id=run.workspace_id,
+                run_id=run_id,
+                status=current.status,
+                output="",
+                events=tuple(events),
+            )
+        except (BudgetExhausted, TimeoutError) as exc:
+            if await publish_latest_complete_checkpoint(deps) is not None:
+                current = self.repository.get_run(run_id)
+                return TripAgentRunOutcome(
+                    workspace_id=run.workspace_id,
+                    run_id=run_id,
+                    status=current.status if current else RunStatus.PUBLISHED,
+                    output="published_complete_checkpoint",
+                    events=tuple(events),
+                )
+            current = self.repository.transition_run(
+                run_id,
+                RunStatus.INCOMPLETE,
+                error_code="agent_budget_exhausted",
+                error_message=str(exc)[:4_000],
+                failure_class=RunFailureClass.BUDGET,
+                retryable=True,
+            )
+            return TripAgentRunOutcome(
+                workspace_id=run.workspace_id,
+                run_id=run_id,
+                status=current.status,
+                output="",
+                events=tuple(events),
+            )
+        except UnexpectedModelBehavior as exc:
+            recoverable = _is_recoverable_agent_exhaustion(exc)
+            current_workspace = self.repository.get_workspace(run.workspace_id) or workspace
+            provider_failure = (
+                self._blocking_tool_provider_failure(current_workspace, events)
+                if recoverable
+                else None
+            )
+            failure_class, retryable, error_code = provider_failure or (
+                RunFailureClass.BUDGET if recoverable else RunFailureClass.PROVIDER_PROTOCOL,
+                recoverable,
+                "agent_action_repair_exhausted" if recoverable else "provider_protocol_error",
+            )
+            current = self.repository.transition_run(
+                run_id,
+                RunStatus.INCOMPLETE if retryable else RunStatus.FAILED,
+                error_code=error_code,
+                error_message=str(exc)[:4_000],
+                failure_class=failure_class,
+                retryable=retryable,
+            )
+            return TripAgentRunOutcome(
+                workspace_id=run.workspace_id,
+                run_id=run_id,
+                status=current.status,
+                output="",
+                events=tuple(events),
+            )
+        except Exception as exc:
+            current = self.repository.transition_run(
+                run_id,
+                RunStatus.FAILED,
+                error_code="internal_error",
+                error_message=str(exc)[:4_000],
+                failure_class=RunFailureClass.INTERNAL,
+                retryable=False,
             )
             return TripAgentRunOutcome(
                 workspace_id=run.workspace_id,

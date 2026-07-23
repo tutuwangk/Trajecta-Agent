@@ -107,7 +107,7 @@ def test_tool_effect_result_is_durable_and_idempotent(tmp_path):
     assert first == result
     assert second == result
     assert repository.get_tool_effect(
-        "tool-call-1", tool_name="search_place_candidates"
+        "tool-call-1", run_id=run.run_id, tool_name="search_place_candidates"
     ) == result
     repository.close()
 
@@ -278,6 +278,126 @@ def test_source_backed_claims_advance_fact_and_workspace_versions_atomically(tmp
     assert updated.fact_version == 1
     assert repository.list_sources("workspace-1") == (source,)
     assert repository.list_claims("workspace-1", entity_id="candidate-1") == (claim,)
+    repository.close()
+
+
+def test_reobserving_same_source_is_idempotent_within_workspace(tmp_path):
+    repository = SqliteTripAgentRepository(tmp_path / "trip-agent.sqlite3")
+    repository.create_workspace(_workspace())
+    source = SourceRecord(
+        source_record_id="source-shared",
+        source_type="amap",
+        provider="fixture",
+        payload={"id": "amap-shared"},
+        content_hash="hash-shared",
+        retrieved_at=NOW,
+    )
+    first_claim = ObservedClaim(
+        claim_id="claim-first",
+        entity_id="candidate-1",
+        field="opening_hours",
+        value="09:00-18:00",
+        source_record_ids=(source.source_record_id,),
+        extractor="fixture",
+        extractor_version="1",
+        acquired_at=NOW,
+        confidence=1,
+        release_eligible=True,
+    )
+    second_claim = first_claim.model_copy(
+        update={"claim_id": "claim-second", "field": "last_entry", "value": "17:00"}
+    )
+
+    repository.record_facts(
+        "workspace-1", expected_version=1, sources=(source,), claims=(first_claim,)
+    )
+    repository.record_facts(
+        "workspace-1", expected_version=2, sources=(source,), claims=(second_claim,)
+    )
+
+    assert repository.list_sources("workspace-1") == (source,)
+    assert len(repository.list_claims("workspace-1")) == 2
+    repository.close()
+
+
+def test_semantically_identical_claim_reuses_fingerprint_without_version_bump(tmp_path):
+    repository = SqliteTripAgentRepository(tmp_path / "claim-fingerprint.sqlite3")
+    repository.create_workspace(_workspace())
+    source = SourceRecord(
+        source_record_id="source-fingerprint",
+        source_type="web",
+        provider="fixture",
+        uri="https://example.test/hours",
+        excerpt="09:00-18:00",
+        content_hash="hash-fingerprint",
+        retrieved_at=NOW,
+    )
+    first = ObservedClaim(
+        claim_id="claim-first",
+        entity_id="candidate-1",
+        field="opening_hours",
+        value="09:00-18:00",
+        source_record_ids=(source.source_record_id,),
+        extractor="fixture",
+        extractor_version="1",
+        acquired_at=NOW,
+        confidence=1,
+        release_eligible=True,
+    )
+    after_first = repository.record_facts(
+        "workspace-1", expected_version=1, sources=(source,), claims=(first,)
+    )
+    duplicate = first.model_copy(update={"claim_id": "claim-replayed"})
+    after_replay = repository.record_facts(
+        "workspace-1",
+        expected_version=after_first.version,
+        sources=(source,),
+        claims=(duplicate,),
+    )
+
+    assert after_replay.version == after_first.version
+    assert after_replay.fact_version == after_first.fact_version
+    assert repository.list_claims("workspace-1") == (first,)
+    repository.close()
+
+
+def test_same_source_artifact_can_be_reused_across_workspaces(tmp_path):
+    repository = SqliteTripAgentRepository(tmp_path / "trip-agent.sqlite3")
+    repository.create_workspace(_workspace())
+    second_workspace = _workspace().model_copy(update={"workspace_id": "workspace-2"})
+    repository.create_workspace(second_workspace)
+    source = SourceRecord(
+        source_record_id="source-global",
+        source_type="amap",
+        provider="fixture",
+        payload={"id": "amap-global"},
+        content_hash="hash-global",
+        retrieved_at=NOW,
+    )
+
+    for index, workspace_id in enumerate(("workspace-1", "workspace-2"), 1):
+        repository.record_facts(
+            workspace_id,
+            expected_version=1,
+            sources=(source,),
+            claims=(
+                ObservedClaim(
+                    claim_id=f"claim-global-{index}",
+                    entity_id=f"candidate-{index}",
+                    field="opening_hours",
+                    value="09:00-18:00",
+                    source_record_ids=(source.source_record_id,),
+                    extractor="fixture",
+                    extractor_version="1",
+                    acquired_at=NOW,
+                    confidence=1,
+                    release_eligible=True,
+                ),
+            ),
+        )
+
+    assert repository.list_sources("workspace-1") == (source,)
+    assert repository.list_sources("workspace-2") == (source,)
     repository.close()
 
 

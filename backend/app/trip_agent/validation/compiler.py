@@ -35,8 +35,11 @@ class CompiledVisit(DomainModel):
 class CompiledMeal(DomainModel):
     meal_id: str
     kind: str
+    candidate_id: str | None = None
     start_minute: int = Field(ge=0, le=2_880)
     end_minute: int = Field(ge=0, le=2_880)
+    route_minutes_from_previous: int = Field(default=0, ge=0, le=1_440)
+    route_fact_kind: str | None = None
 
 
 class CompiledDay(DomainModel):
@@ -113,6 +116,14 @@ class FeasibilityCompiler:
             meals_by_after: dict[str | None, list] = {}
             for meal in day.meals:
                 meals_by_after.setdefault(meal.after_visit_id, []).append(meal)
+            anchored_before_visit = next(
+                (
+                    meal
+                    for meal in meals_by_after.get(None, [])
+                    if meal.place_candidate_id
+                ),
+                None,
+            )
             hotel_departure_minutes = 0
             hotel_return_minutes = 0
             if day.hotel_candidate_id:
@@ -136,7 +147,9 @@ class FeasibilityCompiler:
                             blocking=True,
                         )
                     )
-                if day.visits:
+                if anchored_before_visit is not None:
+                    prior_candidate_id = day.hotel_candidate_id
+                elif day.visits:
                     hotel_departure_minutes, hotel_departure_kind = _route_duration(
                         claim_list,
                         day.hotel_candidate_id,
@@ -157,13 +170,21 @@ class FeasibilityCompiler:
                     elif hotel_departure_kind == "estimate":
                         fact_issues.add("route_spatial_estimate")
                     cursor += hotel_departure_minutes
-            cursor = _compile_meals(
+            cursor, prior_candidate_id = _compile_meals(
                 meals_by_after.get(None, []),
                 cursor,
                 day.day_index,
                 issues,
                 compiled_meals,
+                prior_candidate_id=prior_candidate_id,
+                claims=claim_list,
+                candidates=candidates,
+                resolved=resolved,
+                fact_issues=fact_issues,
+                applicable_date=day.date,
             )
+            if anchored_before_visit is not None and compiled_meals:
+                hotel_departure_minutes = compiled_meals[0].route_minutes_from_previous
             for visit in day.visits:
                 if visit.place_candidate_id not in candidates:
                     issues.append(
@@ -262,12 +283,18 @@ class FeasibilityCompiler:
                 )
                 cursor = end
                 prior_candidate_id = visit.place_candidate_id
-                cursor = _compile_meals(
+                cursor, prior_candidate_id = _compile_meals(
                     meals_by_after.get(visit.visit_id, []),
                     cursor,
                     day.day_index,
                     issues,
                     compiled_meals,
+                    prior_candidate_id=prior_candidate_id,
+                    claims=claim_list,
+                    candidates=candidates,
+                    resolved=resolved,
+                    fact_issues=fact_issues,
+                    applicable_date=day.date,
                 )
             if day.return_to_hotel and day.hotel_candidate_id and prior_candidate_id:
                 hotel_return_minutes, hotel_return_kind = _route_duration(
@@ -343,8 +370,77 @@ def _compile_meals(
     day_index: int,
     issues: list[SimulationIssue],
     compiled: list[CompiledMeal],
-) -> int:
+    *,
+    prior_candidate_id: str | None,
+    claims: tuple[KnowledgeClaim, ...],
+    candidates: dict[str, object],
+    resolved: set[str],
+    fact_issues: set[str],
+    applicable_date: date,
+) -> tuple[int, str | None]:
     for meal in meals:
+        route_minutes = 0
+        route_kind: str | None = None
+        if meal.place_candidate_id:
+            if meal.place_candidate_id not in candidates:
+                issues.append(
+                    SimulationIssue(
+                        code="unknown_meal_candidate",
+                        message=meal.place_candidate_id,
+                        day_index=day_index,
+                        candidate_id=meal.place_candidate_id,
+                        blocking=True,
+                    )
+                )
+            elif meal.place_candidate_id not in resolved:
+                issues.append(
+                    SimulationIssue(
+                        code="unresolved_meal_candidate",
+                        message=meal.place_candidate_id,
+                        day_index=day_index,
+                        candidate_id=meal.place_candidate_id,
+                        blocking=True,
+                    )
+                )
+            if _closed_on(claims, meal.place_candidate_id, applicable_date):
+                issues.append(
+                    SimulationIssue(
+                        code="known_closed",
+                        message=(
+                            f"Anchored meal {meal.place_candidate_id} is explicitly closed "
+                            f"on {applicable_date}."
+                        ),
+                        day_index=day_index,
+                        candidate_id=meal.place_candidate_id,
+                        blocking=True,
+                    )
+                )
+            if not _has_operational_fact(claims, meal.place_candidate_id, applicable_date):
+                fact_issues.add("place_operational_fact_missing")
+            if prior_candidate_id and prior_candidate_id != meal.place_candidate_id:
+                route_minutes, route_kind = _route_duration(
+                    claims,
+                    prior_candidate_id,
+                    meal.place_candidate_id,
+                    meal.travel_mode_from_previous,
+                )
+                if route_kind is None:
+                    issues.append(
+                        SimulationIssue(
+                            code="meal_route_fact_missing",
+                            message=(
+                                f"Missing route from {prior_candidate_id} to anchored meal "
+                                f"{meal.place_candidate_id}."
+                            ),
+                            day_index=day_index,
+                            candidate_id=meal.place_candidate_id,
+                            blocking=True,
+                        )
+                    )
+                    fact_issues.add("meal_route_fact_missing")
+                elif route_kind == "estimate":
+                    fact_issues.add("route_spatial_estimate")
+                cursor += route_minutes
         if meal.earliest_start:
             cursor = max(cursor, _minute(meal.earliest_start))
         start = cursor
@@ -362,12 +458,17 @@ def _compile_meals(
             CompiledMeal(
                 meal_id=meal.meal_id,
                 kind=meal.kind,
+                candidate_id=meal.place_candidate_id,
                 start_minute=start,
                 end_minute=end,
+                route_minutes_from_previous=route_minutes,
+                route_fact_kind=route_kind,
             )
         )
         cursor = end
-    return cursor
+        if meal.place_candidate_id:
+            prior_candidate_id = meal.place_candidate_id
+    return cursor, prior_candidate_id
 
 
 def _has_operational_fact(

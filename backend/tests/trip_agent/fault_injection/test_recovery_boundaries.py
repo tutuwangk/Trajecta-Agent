@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from pydantic_ai import ModelHTTPError
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai_harness.step_persistence import (
@@ -228,7 +229,55 @@ async def test_unresolved_read_effect_can_resume_from_safe_snapshot(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_provider_crash_before_any_tool_marks_run_failed_without_workspace_mutation(tmp_path):
+async def test_recover_uses_same_transient_provider_failure_policy(tmp_path):
+    repository = _running_repository(tmp_path)
+    store = InMemoryStepStore()
+    await store.register_run(
+        RunRecord(
+            run_id="provider-recover-transient",
+            conversation_id="conversation-recovery",
+            agent_name="trip_planner_v2",
+            started_at=NOW,
+        )
+    )
+    await store.save_snapshot(
+        ContinuableSnapshot(
+            run_id="provider-recover-transient",
+            step_index=1,
+            messages=[ModelRequest(parts=[UserPromptPart("成都一日游", timestamp=NOW)])],
+            conversation_id="conversation-recovery",
+            agent_name="trip_planner_v2",
+            timestamp=NOW,
+        )
+    )
+    attempts = 0
+
+    async def unavailable(messages, info):
+        nonlocal attempts
+        attempts += 1
+        raise ModelHTTPError(503, "fixture-provider", {"error": "temporary"})
+
+    service = TripAgentService(
+        repository,
+        UnusedKnowledge(),  # type: ignore[arg-type]
+        HarnessPersistenceAdapter(store),
+    )
+    outcome = await service.recover(
+        run_id="run-recovery",
+        model=FunctionModel(unavailable),
+    )
+
+    run = repository.get_run("run-recovery")
+    assert outcome.status is RunStatus.INCOMPLETE
+    assert run is not None
+    assert run.failure_class.value == "transient_external"
+    assert run.provider_attempt_count == 2
+    assert attempts == 2
+    repository.close()
+
+
+@pytest.mark.anyio
+async def test_provider_crash_returns_structured_failed_outcome_without_workspace_mutation(tmp_path):
     repository = _running_repository(tmp_path)
     # A workspace has one logical writer, so provider crash isolation uses another workspace.
     repository.create_workspace(
@@ -254,15 +303,17 @@ async def test_provider_crash_before_any_tool_marks_run_failed_without_workspace
         raise RuntimeError("injected provider crash")
 
     service = TripAgentService(repository, UnusedKnowledge())  # type: ignore[arg-type]
-    with pytest.raises(RuntimeError, match="injected provider crash"):
-        await service.execute(
-            run_id="run-provider-crash",
-            model=FunctionModel(crash),
-        )
+    outcome = await service.execute(
+        run_id="run-provider-crash",
+        model=FunctionModel(crash),
+    )
 
     failed = repository.get_run("run-provider-crash")
     assert failed is not None
+    assert outcome.status is RunStatus.FAILED
     assert failed.status is RunStatus.FAILED
     assert failed.error_code == "agent_runtime_error"
+    assert failed.failure_class.value == "internal"
+    assert failed.retryable is False
     assert repository.get_workspace("workspace-provider-crash").version == 1
     repository.close()

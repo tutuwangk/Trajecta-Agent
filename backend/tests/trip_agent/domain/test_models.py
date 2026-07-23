@@ -17,11 +17,15 @@ from app.trip_agent.domain import (
     GoalCommitment,
     GoalLedger,
     ObservedClaim,
+    PlaceCandidate,
+    PlaceHypothesis,
     PlaceResolution,
     ResolutionStatus,
     RunGoal,
     RunStatus,
     TripWorkspace,
+    TextSpan,
+    expand_visit_candidate_coverage,
 )
 
 
@@ -82,6 +86,34 @@ def test_place_resolution_requires_exact_candidate_only_when_resolved():
             rationale="matched",
             workspace_version=1,
         )
+
+
+def test_visit_child_covers_known_parent_but_parent_does_not_cover_child():
+    parent = PlaceCandidate(
+        candidate_id="west-lake",
+        hypothesis_id="hypothesis-west-lake",
+        provider="amap",
+        provider_place_id="amap-west-lake",
+        name="杭州西湖风景名胜区",
+        source_record_id="source-west-lake",
+    )
+    child = PlaceCandidate(
+        candidate_id="broken-bridge",
+        hypothesis_id="hypothesis-broken-bridge",
+        provider="amap",
+        provider_place_id="amap-broken-bridge",
+        parent_provider_place_id="amap-west-lake",
+        name="断桥残雪",
+        source_record_id="source-broken-bridge",
+    )
+
+    assert expand_visit_candidate_coverage((parent, child), {child.candidate_id}) == {
+        child.candidate_id,
+        parent.candidate_id,
+    }
+    assert expand_visit_candidate_coverage((parent, child), {parent.candidate_id}) == {
+        parent.candidate_id
+    }
     with pytest.raises(ValidationError):
         PlaceResolution(
             hypothesis_id="h1",
@@ -127,6 +159,48 @@ def test_terminal_run_cannot_be_overwritten_and_waiting_run_can_resume():
     assert published.status is RunStatus.PUBLISHED
     with pytest.raises(ValueError, match="terminal run"):
         published.transition(RunStatus.FAILED, at=NOW)
+
+
+def test_workspace_observations_are_idempotent_but_identity_conflicts_fail():
+    workspace = TripWorkspace(
+        workspace_id="w-observation",
+        goal_ledger=GoalLedger(goal=RunGoal(raw_request="去武侯祠")),
+        created_at=NOW,
+        updated_at=NOW,
+    )
+    hypothesis = PlaceHypothesis(
+        hypothesis_id="h1",
+        raw_name="武侯祠",
+        context="去武侯祠",
+        spans=(TextSpan(start=1, end=4),),
+    )
+    observed = workspace.with_hypotheses((hypothesis,), at=NOW)
+    assert observed.with_hypotheses((hypothesis,), at=NOW) is observed
+
+    candidate = PlaceCandidate(
+        candidate_id="candidate-stable",
+        hypothesis_id="h1",
+        provider="amap",
+        provider_place_id="provider-1",
+        name="成都武侯祠博物馆",
+        source_record_id="source-1",
+    )
+    with_candidate = observed.with_candidates((candidate,), at=NOW)
+    assert with_candidate.with_candidates((candidate,), at=NOW) is with_candidate
+
+    refreshed = candidate.model_copy(update={"address": "武侯祠大街231号"})
+    updated = with_candidate.with_candidates((refreshed,), at=NOW)
+    assert updated.version == with_candidate.version + 1
+    assert updated.place_candidates == (refreshed,)
+
+    alternate_local_id = refreshed.model_copy(update={"candidate_id": "cache-local-id"})
+    stable = updated.with_candidates((alternate_local_id,), at=NOW)
+    assert stable.version == updated.version
+    assert stable.place_candidates[0].candidate_id == "candidate-stable"
+
+    conflicting = candidate.model_copy(update={"provider_place_id": "provider-2"})
+    with pytest.raises(ValueError, match="identity conflict"):
+        updated.with_candidates((conflicting,), at=NOW)
 
 
 def test_workspace_rejects_stale_draft_and_advances_version_for_current_draft():

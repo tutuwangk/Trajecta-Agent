@@ -20,6 +20,7 @@ from app.core import MissingConfigurationError
 DEEPSEEK_V4_PRO = "deepseek-v4-pro"
 DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
 DeepSeekRole = Literal["root", "lightweight"]
+DeepSeekModelVariant = Literal["pro", "flash"]
 
 
 class DeepSeekV4ChatModel(OpenAIChatModel):
@@ -50,6 +51,7 @@ class DeepSeekV4ChatModel(OpenAIChatModel):
 def build_deepseek_v4_model(
     role: DeepSeekRole = "root",
     *,
+    model_variant: DeepSeekModelVariant | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
     http_client: httpx.AsyncClient | None = None,
@@ -76,7 +78,8 @@ def build_deepseek_v4_model(
         openai_supports_strict_tool_definition=False,
         openai_system_prompt_role="system",
     )
-    model_name = DEEPSEEK_V4_PRO if role == "root" else DEEPSEEK_V4_FLASH
+    resolved_variant = model_variant or ("pro" if role == "root" else "flash")
+    model_name = DEEPSEEK_V4_PRO if resolved_variant == "pro" else DEEPSEEK_V4_FLASH
     return DeepSeekV4ChatModel(model_name, provider=provider, profile=profile)
 
 

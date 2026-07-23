@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, time
+from typing import Literal
 
 from pydantic import Field, model_validator
 
@@ -29,6 +30,8 @@ class DraftMeal(DomainModel):
     kind: str = Field(min_length=1, max_length=50)
     duration_min: int = Field(ge=15, le=240)
     after_visit_id: str | None = Field(default=None, max_length=200)
+    place_candidate_id: str | None = Field(default=None, max_length=200)
+    travel_mode_from_previous: str = Field(default="walking", min_length=1, max_length=50)
     earliest_start: time | None = None
     latest_end: time | None = None
 
@@ -42,6 +45,7 @@ class DraftMeal(DomainModel):
 class DraftDay(DomainModel):
     day_index: int = Field(ge=1, le=60)
     date: date
+    day_purpose: Literal["touring", "arrival", "departure", "rest"] = "touring"
     visits: tuple[DraftVisit, ...] = ()
     meals: tuple[DraftMeal, ...] = ()
     meal_strategy: str | None = Field(default=None, max_length=1_000)
@@ -82,7 +86,12 @@ class DraftSnapshot(DomainModel):
         visit_ids = [visit.visit_id for day in self.days for visit in day.visits]
         if len(visit_ids) != len(set(visit_ids)):
             raise ValueError("visit ids must be unique across the draft")
-        place_ids = [visit.place_candidate_id for day in self.days for visit in day.visits]
+        place_ids = [visit.place_candidate_id for day in self.days for visit in day.visits] + [
+            meal.place_candidate_id
+            for day in self.days
+            for meal in day.meals
+            if meal.place_candidate_id
+        ]
         if len(place_ids) != len(set(place_ids)):
-            raise ValueError("a place candidate may appear only once in a draft")
+            raise ValueError("a place candidate may appear only once as a visit or anchored meal")
         return self

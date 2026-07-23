@@ -27,6 +27,7 @@ class GoalCommitment(DomainModel):
     field: str = Field(min_length=1, max_length=100)
     value: str = Field(min_length=1, max_length=2_000)
     evidence_text: str = Field(min_length=1, max_length=4_000)
+    subject_hypothesis_id: str | None = Field(default=None, min_length=1, max_length=200)
     strength: CommitmentStrength = CommitmentStrength.SOFT
     immutable: bool = False
     source: Literal["user"] = "user"

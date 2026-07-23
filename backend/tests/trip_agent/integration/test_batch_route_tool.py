@@ -10,6 +10,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from app.trip_agent.domain import (
     GeoPoint,
+    EstimateClaim,
     ObservedClaim,
     PlaceCandidate,
     PlaceHypothesis,
@@ -94,6 +95,63 @@ class TwoPlaceKnowledge:
             ),
         )
 
+    async def acquire_place_facts(
+        self, candidate: PlaceCandidate, applicable_date: date | None
+    ) -> FactAcquisition:
+        source = SourceRecord(
+            source_record_id=f"source-place-{candidate.candidate_id}",
+            source_type="web",
+            provider="fixture",
+            payload={"opening_hours": "09:00-18:00"},
+            content_hash=f"hash-place-{candidate.candidate_id}",
+            retrieved_at=utc_now(),
+        )
+        return FactAcquisition(
+            sources=(source,),
+            claims=(
+                ObservedClaim(
+                    claim_id=f"claim-place-{candidate.candidate_id}",
+                    entity_id=candidate.candidate_id,
+                    field="opening_hours",
+                    value="09:00-18:00",
+                    source_record_ids=(source.source_record_id,),
+                    extractor="fixture",
+                    extractor_version="1",
+                    acquired_at=utc_now(),
+                    confidence=1,
+                    release_eligible=True,
+                ),
+            ),
+        )
+
+    async def estimate_visit_profile(self, candidate: PlaceCandidate) -> FactAcquisition:
+        source = SourceRecord(
+            source_record_id=f"source-profile-{candidate.candidate_id}",
+            source_type="system",
+            provider="fixture",
+            payload={"recommended_min": 60},
+            content_hash=f"hash-profile-{candidate.candidate_id}",
+            retrieved_at=utc_now(),
+        )
+        return FactAcquisition(
+            sources=(source,),
+            claims=(
+                EstimateClaim(
+                    claim_id=f"claim-profile-{candidate.candidate_id}",
+                    entity_id=candidate.candidate_id,
+                    field="recommended_visit_min",
+                    value=60,
+                    source_record_ids=(source.source_record_id,),
+                    extractor="fixture",
+                    extractor_version="1",
+                    acquired_at=utc_now(),
+                    confidence=0.8,
+                    release_eligible=False,
+                    method="fixture_estimate",
+                ),
+            ),
+        )
+
 
 def _tool(name: str, args: dict[str, Any] | str, index: int) -> ModelResponse:
     return ModelResponse(
@@ -112,13 +170,10 @@ async def test_route_batch_commits_multiple_route_queries_as_one_workspace_revis
         scripted: dict[int, tuple[str, dict[str, Any] | str]] = {
             1: ("analyze_place_mentions", {}),
             2: (
-                "search_place_candidates",
-                {"hypothesis_id": "hypothesis-甲地"},
+                "search_candidate_sets",
+                {"hypothesis_ids": ["hypothesis-甲地", "hypothesis-乙地"]},
             ),
-            3: (
-                "search_place_candidates",
-                {"hypothesis_id": "hypothesis-乙地"},
-            ),
+            3: ("read_workspace", {}),
             4: (
                 "resolve_place",
                 {
@@ -201,10 +256,107 @@ async def test_route_batch_commits_multiple_route_queries_as_one_workspace_revis
     assert len(route_events[0]["routes"]) == 2
     workspace = repository.get_workspace(outcome.workspace_id)
     assert workspace is not None
-    assert workspace.version == 8
+    assert workspace.version == 7
     assert workspace.fact_version == 1
     route_claims = [
         claim for claim in repository.list_claims(outcome.workspace_id) if claim.entity_id.startswith("route:")
     ]
     assert len(route_claims) == 4
+    budget = repository.get_run_budget(outcome.run_id)
+    assert budget is not None
+    assert budget["provider_calls"]["amap:route"] == 2
+    repository.close()
+
+
+@pytest.mark.anyio
+async def test_hydrate_draft_context_commits_required_fact_classes_once(tmp_path):
+    step = 0
+
+    async def model_function(messages: list[Any], info: AgentInfo) -> ModelResponse:
+        nonlocal step
+        step += 1
+        scripted: dict[int, tuple[str, dict[str, Any] | str]] = {
+            1: ("analyze_place_mentions", {}),
+            2: (
+                "search_candidate_sets",
+                {"hypothesis_ids": ["hypothesis-甲地", "hypothesis-乙地"]},
+            ),
+            3: ("read_workspace", {}),
+            4: (
+                "resolve_place",
+                {"hypothesis_id": "hypothesis-甲地", "candidate_id": "candidate-甲地", "rationale": "exact"},
+            ),
+            5: (
+                "resolve_place",
+                {"hypothesis_id": "hypothesis-乙地", "candidate_id": "candidate-乙地", "rationale": "exact"},
+            ),
+            6: (
+                "apply_draft_change",
+                json.dumps(
+                    {
+                        "days": [
+                            {
+                                "day_index": 1,
+                                "date": "2026-08-03",
+                                "visits": [
+                                    {"place_candidate_id": "candidate-甲地", "duration_min": 60},
+                                    {"place_candidate_id": "candidate-乙地", "duration_min": 60},
+                                ],
+                            }
+                        ]
+                    }
+                ),
+            ),
+            7: ("hydrate_draft_context", {}),
+            8: ("hydrate_draft_context", {}),
+            9: ("simulate_candidate", {}),
+            10: ("submit_candidate", {"completion_reason": "hydrated draft is complete"}),
+        }
+        if step in scripted:
+            name, args = scripted[step]
+            assert name in {tool.name for tool in info.function_tools}
+            return _tool(name, args, step)
+        return ModelResponse(parts=[TextPart("published")], finish_reason="stop")
+
+    repository = SqliteTripAgentRepository(tmp_path / "hydrate-draft.sqlite3")
+    service = TripAgentService(repository, TwoPlaceKnowledge())
+    outcome = await service.start(
+        raw_request="2026年8月3日依次游览甲地和乙地。",
+        destination="成都",
+        start_date=date(2026, 8, 3),
+        days=1,
+        model=FunctionModel(model_function),
+    )
+
+    assert outcome.status is RunStatus.PUBLISHED
+    hydrate_events = [event for event in outcome.events if event["type"] == "draft_context_hydrated"]
+    assert hydrate_events == [
+        {
+            "type": "draft_context_hydrated",
+            "scheduled_candidate_count": 2,
+            "profile_candidate_count": 2,
+            "route_count": 1,
+            "queried_place_count": 2,
+            "queried_profile_count": 2,
+            "queried_route_count": 1,
+            "claim_count": 6,
+        }
+    ]
+    assert [event for event in outcome.events if event["type"] == "draft_context_reused"] == [
+        {
+            "type": "draft_context_reused",
+            "scheduled_candidate_count": 2,
+            "route_count": 1,
+        }
+    ]
+    workspace = repository.get_workspace(outcome.workspace_id)
+    assert workspace is not None
+    assert workspace.fact_version == 1
+    assert len(repository.list_claims(outcome.workspace_id)) == 6
+    budget = repository.get_run_budget(outcome.run_id)
+    assert budget is not None
+    assert budget["provider_calls"]["web:place_facts"] == 2
+    assert budget["provider_calls"]["deepseek:fact_extraction"] == 2
+    assert budget["provider_calls"]["deepseek:visit_profile"] == 2
+    assert budget["provider_calls"]["amap:route"] == 1
     repository.close()

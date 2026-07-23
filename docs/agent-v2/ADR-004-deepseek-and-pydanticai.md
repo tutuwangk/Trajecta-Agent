@@ -1,13 +1,20 @@
 # ADR-004：DeepSeek V4 与 PydanticAI/Harness
 
-- 状态：Accepted with WP1 gate
+- 状态：Accepted；WP1 provider Gate 已通过
 - 日期：2026-07-18
 
 ## 决策
 
 目标生产配置为 DeepSeek V4 Pro 根 Agent、V4 Flash 轻量结构化工具。PydanticAI Core 负责 Agent loop、Toolsets、消息类型和 Deferred Tools；`pydantic-ai-harness` 的 `StepPersistence` 是 provider step/transcript 持久化候选，通过项目 `AgentPersistencePort` 隔离。
 
-当前仓库只有 `pydantic-ai-slim[openai,retries]==2.10.0`，尚未安装 Harness，且生产 adapter 默认 V4 Flash、关闭 thinking。因此本 ADR 不把具体版本组合标为已验证；WP1 的 30 次真实 canary 是采用前硬 Gate。
+当前依赖锁定为 `pydantic-ai-slim[openai,retries]==2.10.0` 与
+`pydantic-ai-harness==0.7.1`。V2 根 Agent 使用自定义 `DeepSeekV4ChatModel` 的
+V4 Pro thinking 合同，V4 Flash 仅用于轻量结构化调用；WP1 的 30 次真实 canary 已通过。
+Legacy adapter 仍可能由旧入口读取 `deepseek-v4-flash` 默认值，但不属于 V2 生产控制面。
+
+WP8 runner 可通过独立 `model_variant` 让同一个 root Agent 在验收阶段临时使用 V4 Flash，以降低
+六场景实链成本。该开关不改变 Agent 权限、root model settings 或生产默认模型；验收工件必须记录
+实际模型，并禁止在同一输出目录混合 Pro/Flash 分布。
 
 ## Provider 合同
 
