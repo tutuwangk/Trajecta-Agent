@@ -1,0 +1,37 @@
+{
+  "destination": "成都",
+  "days": [
+    {
+      "day": 1,
+      "theme": "春熙路—太古里商圈 citywalk",
+      "summary": "第一天集中在酒店附近，减少跨区移动。",
+      "items": [
+        {
+          "time_block": "上午",
+          "poi_id": "amap_example",
+          "name": "成都IFS国际金融中心",
+          "arrival_time": "10:30",
+          "duration_min": 60,
+          "reason": "用户笔记提到爬墙熊猫适合拍照，且靠近酒店区域。",
+          "transport_to_next": {
+            "mode": "walking",
+            "duration_min": 8,
+            "distance_m": 650
+          },
+          "risk_notes": ["周末人流可能较多"],
+          "amap_link": "https://uri.amap.com/marker?position=104.080,30.657&name=IFS"
+        }
+      ],
+      "removed_pois": [
+        {
+          "name": "都江堰",
+          "reason": "用户明确不想去，且距离市区较远。"
+        }
+      ],
+      "alternatives": []
+    }
+  ],
+  "global_risks": ["小红书笔记中的排队和价格信息可能具有时效性。"],
+  "uncertain_pois": [],
+  "revision_notes": []
+}
