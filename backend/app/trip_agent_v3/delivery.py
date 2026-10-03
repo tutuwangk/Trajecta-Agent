@@ -94,10 +94,12 @@ def assess_delivery(
         for day in candidate.timeline.days
         for stop in day.stops
     }
+    has_estimated_routes = False
     for day in candidate.timeline.days:
         for leg in day.legs:
             if leg.fact_status is not FactResolutionStatus.ESTIMATED:
                 continue
+            has_estimated_routes = True
             origin = stops_by_day_and_id[(day.day_number, leg.from_stop_id)]
             destination = stops_by_day_and_id[
                 (day.day_number, leg.to_stop_id)
@@ -117,17 +119,22 @@ def assess_delivery(
             )
 
     for gap in candidate.fact_gap_report.gaps:
+        blocks_delivery = gap_blocks_delivery(gap)
         issues.append(
             _issue(
                 code=f"fact_gap_{gap.failure_code}",
-                severity=(DeliveryIssueSeverity.BLOCKING if gap_blocks_delivery(gap)
+                severity=(DeliveryIssueSeverity.BLOCKING if blocks_delivery
                           else DeliveryIssueSeverity.REVIEW),
                 message=(
                     f"第 {gap.day_number} 天 "
                     f"{' → '.join(gap.place_names)}：{gap.failure_message} "
                     f"{gap.impact}"
                 ),
-                recommendation="重试该事实查询或从路线中明确移除受影响地点。",
+                recommendation=(
+                    "重新查询相关路线和地点信息，调整受影响的行程安排。"
+                    if blocks_delivery
+                    else "出发前核对相关地点信息。"
+                ),
                 day_numbers=(gap.day_number,),
                 place_names=gap.place_names,
             )
@@ -163,12 +170,11 @@ def assess_delivery(
                     severity=DeliveryIssueSeverity.REVIEW,
                     message=(
                         f"第 {day.day_number} 天 {stop.name} 在 "
-                        f"{stop.arrival_at.strftime('%H:%M')} 到访，但没有"
-                        "可追溯的营业、闭馆、停止入场或预约核验。"
+                        f"{stop.arrival_at.strftime('%H:%M')} 到访，营业和"
+                        "预约信息待确认。"
                     ),
                     recommendation=(
-                        "仅对这个已排入行程的停靠点补充带来源的运营事实，"
-                        "再重新进入发布门禁。"
+                        "出发前确认营业时间、最晚入场时间和预约要求。"
                     ),
                     day_numbers=(day.day_number,),
                     place_names=(stop.name,),
@@ -203,12 +209,10 @@ def assess_delivery(
                 code="fact_status_inconsistent",
                 severity=DeliveryIssueSeverity.BLOCKING,
                 message=(
-                    "候选方案的事实状态不是 verified，但没有与具体路线段或"
-                    "停靠点对应的事实缺口。"
+                    "行程的事实汇总与路线、地点明细存在差异。"
                 ),
                 recommendation=(
-                    "定位下列日期和地点的事实来源，补充具体缺口后重新编译；"
-                    "不得用汇总状态代替可执行风险。"
+                    "核对下列日期和地点的查询结果，重新生成行程。"
                 ),
                 day_numbers=affected_days,
                 place_names=affected_places,
@@ -293,11 +297,6 @@ def assess_delivery(
 
     has_blocker = any(
         item.severity is DeliveryIssueSeverity.BLOCKING for item in issues
-    )
-    has_estimated_routes = any(
-        leg.fact_status is FactResolutionStatus.ESTIMATED
-        for day in candidate.timeline.days
-        for leg in day.legs
     )
     state = (
         DeliveryState.BLOCKED

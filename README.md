@@ -10,41 +10,38 @@ calculate times, and manage execution.
 
 ## Features
 
-- **Place grounding:** resolve saved place names against map candidates and ask for clarification when needed.
-- **Itinerary planning:** assign days, order stops, arrange meals, and repair drafts using tool feedback.
-- **Persistent execution:** save checkpoints, resume the same Run, and preserve results across refreshes.
+- **Place matching:** find saved places on the map and ask for clarification when names are ambiguous.
+- **Itinerary planning:** distribute stops across days, arrange meals, and adjust the plan using route and timing feedback.
+- **Saved progress:** resume interrupted planning and keep itineraries across page refreshes.
 - **Linked timeline and map:** select stops, switch days, zoom, and open navigation links on desktop or mobile.
 
 ## Agent architecture
 
-Built with Pydantic AI, DeepSeek, FastAPI, SQLite, and Next.js. Structured calls extract travel
-requirements and allowed map queries. The Agent selects places and submits drafts through typed
-tools. Python compiles route times, checks constraints, and publishes a Run-bound result.
+`TripPlannerAgent` uses Pydantic AI and DeepSeek to choose places, order stops, and arrange meals.
+It calls Python tools to look up map candidates, retrieve routes, and calculate the daily schedule.
+Tool results guide the next planning step: clarify a place, move a stop, or revise a day.
 
 ```mermaid
 flowchart TD
-  UI["Travel workspace · Next.js"] --> API["FastAPI · Workspace / Run"]
-  API --> Runtime["Runtime · checkpoints / bounded execution"]
-  Runtime --> Agent["TripPlannerAgent · Pydantic AI"]
-  Agent --> Draft["WorkingDraft"]
-  Draft --> Routes["Route FactNeed"]
-  Routes --> Timeline["CompiledTimeline"]
-  Timeline --> Operations["Operational FactNeed"]
-  Operations --> Candidate["CandidateSnapshot"]
-  Candidate --> Assessment{"DeliveryAssessment"}
-  Assessment -->|"Repair feedback"| Agent
-  Assessment -->|"Ready to publish"| Release["Release"]
-  Release --> UI
-  Runtime --> Tools["Python tools · places / routes / time / state"]
-  Tools -.-> Routes
-  Tools -.-> Timeline
-  Tools -.-> Operations
-  Tools -.-> Assessment
+  UI["Travel notes · Next.js"] --> API["Planning service · FastAPI"]
+  API --> Agent["TripPlannerAgent · Pydantic AI + DeepSeek"]
+  Agent -->|"Look up places and routes"| Maps["Map tools · Amap"]
+  Maps -->|"Coordinates and travel times"| Agent
+  Agent -->|"Submit a daily plan"| Schedule["Python · schedule calculation and checks"]
+  Schedule -->|"Adjustment feedback"| Agent
+  Schedule -->|"Check opening hours and bookings"| Hours["Operating information tools"]
+  Hours -->|"Visit conflicts"| Agent
+  Hours -->|"Check the completed itinerary"| Result["Timeline and map"]
+  Result --> UI
+  API --- Store["Saved plans and progress · SQLite"]
 ```
 
-Strict Pydantic models define the tool and data contracts. Versioned writes, idempotency keys,
-and atomic publishing protect saved state. Fact quality and travel experience are recorded
-separately.
+Pydantic models structure the Agent's tool inputs and outputs. Python calculates travel times
+from route data and checks fixed bookings before displaying the completed itinerary. Missing
+opening-hour information and comfort suggestions appear as reminders.
+
+FastAPI runs planning in the background. SQLite stores plans and execution progress so interrupted
+work can resume. Next.js presents the itinerary as a linked timeline and map.
 
 ## Quickstart
 
