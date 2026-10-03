@@ -44,7 +44,7 @@ flowchart TD
 
 Strict Pydantic models define the tool and data contracts. Versioned writes, idempotency keys,
 and atomic publishing protect saved state. Fact quality and travel experience are recorded
-separately. See [architecture details](./docs/agent-v3/ARCHITECTURE.md).
+separately.
 
 ## Quickstart
 
