@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-03",
+  "backend_tests": 235,
+  "frontend_tests": 20,
+  "python_compileall": "passed",
+  "typescript_no_unused": "passed",
+  "next_production_build": "passed",
+  "corpus": {
+    "valid": true,
+    "scenario_count": 30,
+    "city_count": 6
+  },
+  "browser_live": {
+    "checks": [
+      "empty form validation",
+      "demo day switch",
+      "drawer closes on Escape",
+      "mobile map view",
+      "mobile itinerary view",
+      "mobile no horizontal overflow",
+      "real planning submitted",
+      "active run survives refresh"
+    ],
+    "errors": [],
+    "failedApi": [],
+    "liveUrl": "http://127.0.0.1:13058/?workspace=workspace-fea6478c-01d8-4388-b302-4f2876b79c1c&run=run-0b2b902a-e682-43d4-a757-70867ea8616d"
+  },
+  "browser_offline": {
+    "mode": "offline fixtures with production runtime and HTTP API; archived provider release for screenshot",
+    "checks": [
+      "offline complete pipeline publishes",
+      "published run survives reload",
+      "revision creates new completed run",
+      "clarification answer reaches release",
+      "cancelled state survives refresh",
+      "cancelled status retained",
+      "recorded itinerary day switch",
+      "desktop no overflow",
+      "no browser runtime errors",
+      "no API server errors"
+    ],
+    "errors": [],
+    "failures": []
+  },
+  "browser_map": {
+    "checks": [
+      "map selects matching timeline stop",
+      "zoom in",
+      "zoom out",
+      "fit all stops",
+      "schematic map",
+      "mobile map",
+      "mobile timeline",
+      "no horizontal overflow"
+    ],
+    "selected": "2\n杜甫草堂\n景点\n90 分钟\n青华路37号\n13:55\n15:25",
+    "errors": []
+  },
+  "real_provider": {
+    "run": {
+      "run_id": "run-0b2b902a-e682-43d4-a757-70867ea8616d",
+      "workspace_id": "workspace-fea6478c-01d8-4388-b302-4f2876b79c1c",
+      "goal_revision_id": "goal-ee9657ab-cb48-4acc-a49e-82d471981b51",
+      "status": "needs_resume"
+    },
+    "blockers": [
+      {
+        "event_id": 23,
+        "created_at": "2026-10-03 08:39:24",
+        "type": "provider_blocked",
+        "reason_code": "provider_balance_insufficient",
+        "provider": "deepseek-v4-flash",
+        "http_status": 402,
+        "retryable_now": false,
+        "message": "外部模型服务当前不可用，运行已安全暂停；当前候选不会发布。"
+      }
+    ],
+    "release_created": false,
+    "event_count": 23
+  },
+  "screenshot": {
+    "path": "docs/agent-v3/ui-evidence/completed-itinerary-2026-10-03.png",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "source": "docs/agent-v3/evidence/2026-10-02-round2/round2-cd-two-day-final-delivery.json",
+    "render": "current production frontend with recorded real-provider release"
+  },
+  "initial_existing_server": {
+    "run_id": "run-78b06949-3bf8-4f50-848a-d5997e7c8da0",
+    "observation": "One HTTP 500 during immediate refresh; subsequent direct and proxied reads returned 200. Test cancelled. Not reproduced in isolated current-code live or offline tests.",
+    "root_cause": "unconfirmed"
+  }
+}

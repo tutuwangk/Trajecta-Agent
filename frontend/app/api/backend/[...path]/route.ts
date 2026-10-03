@@ -5,23 +5,25 @@ import { NextResponse } from "next/server";
 export const maxDuration = 600;
 
 const configuredBackendBase = process.env.BACKEND_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE_URL;
+const localHostnames = new Set(["localhost", "127.0.0.1", "::1"]);
 
 type RouteContext = {
   params: Promise<{ path: string[] }>;
 };
 
-function resolveBackendBase(): string | null {
+function resolveBackendBase(request: Request): string | null {
   if (configuredBackendBase?.startsWith("http")) {
     return configuredBackendBase.replace(/\/+$/, "");
   }
-  if (process.env.NODE_ENV !== "production") {
+  const requestHost = new URL(request.url).hostname;
+  if (process.env.NODE_ENV !== "production" || localHostnames.has(requestHost)) {
     return "http://127.0.0.1:8000";
   }
   return null;
 }
 
 async function proxy(request: Request, context: RouteContext) {
-  const backendBase = resolveBackendBase();
+  const backendBase = resolveBackendBase(request);
   if (!backendBase) {
     return NextResponse.json(
       {
@@ -59,18 +61,15 @@ async function proxy(request: Request, context: RouteContext) {
       }
     });
   } catch {
-    const isPlanningRequest = path.at(-1) === "plan";
     return NextResponse.json(
       {
         ok: false,
         data: null,
         error: {
           code: "network_error",
-          message: isPlanningRequest
-            ? "路线生成连接意外中断，请稍后重试；服务端可能仍在处理。"
-            : process.env.NODE_ENV === "production"
-              ? "无法连接后端服务，请检查 BACKEND_API_BASE_URL 是否指向可访问的后端地址。"
-              : "整理服务暂时不可用，请确认本地服务已启动后再重试。"
+          message: localHostnames.has(new URL(backendBase).hostname)
+            ? "本地旅行规划服务未启动或连接已断开，请启动服务后重试。"
+            : "无法连接旅行规划服务，请检查服务地址后重试。"
         },
         step_status: {}
       },
@@ -81,4 +80,3 @@ async function proxy(request: Request, context: RouteContext) {
 
 export const GET = proxy;
 export const POST = proxy;
-export const PATCH = proxy;

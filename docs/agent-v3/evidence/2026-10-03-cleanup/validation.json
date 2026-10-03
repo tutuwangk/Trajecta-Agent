@@ -1,0 +1,129 @@
+{
+  "date": "2026-10-03",
+  "git_base": "660a21796ee4ffc4df197e9b9e06843f6282c8a9",
+  "initial_worktree_change": [
+    ".gitignore"
+  ],
+  "backend_tests": {
+    "before": 210,
+    "after": 207,
+    "removed_obsolete_cases": 4,
+    "added_import_side_effect_case": 1,
+    "status": "passed"
+  },
+  "frontend_tests": {
+    "before": 19,
+    "after": 17,
+    "removed_obsolete_label_cases": 2,
+    "status": "passed"
+  },
+  "python_compileall": "passed",
+  "typescript": {
+    "status": "passed",
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "next_production_build": {
+    "status": "passed",
+    "routes": [
+      "/",
+      "/_not-found",
+      "/api/backend/[...path]",
+      "/v3"
+    ]
+  },
+  "shadow_corpus": {
+    "status": "passed",
+    "scenario_count": 30,
+    "city_count": 6
+  },
+  "backend_static_import_graph": {
+    "entrypoint": "backend/main.py",
+    "reachable_modules": 40,
+    "total_modules": 41,
+    "outside_server": [
+      "backend/app/trip_agent_v3/shadow_eval.py"
+    ],
+    "outside_server_consumer": "backend/scripts/run_trip_agent_v3_shadow.py"
+  },
+  "http_smoke": {
+    "checks": [
+      {
+        "method": "GET",
+        "path": "/health",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/v3/trip-workspaces",
+        "status": 201
+      },
+      {
+        "method": "GET",
+        "path": "/api/v3/trip-workspaces/workspace-26cb191f-ce5f-45d8-aed1-715160283c37",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/v3/trip-workspaces/workspace-26cb191f-ce5f-45d8-aed1-715160283c37/runs",
+        "status": 202
+      },
+      {
+        "method": "GET",
+        "path": "/api/v3/agent-runs/run-4a080f0d-0d4a-4f93-b0bb-4e66d261e21e",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v3/agent-runs/run-4a080f0d-0d4a-4f93-b0bb-4e66d261e21e/events",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v3/agent-runs/run-4a080f0d-0d4a-4f93-b0bb-4e66d261e21e/delivery",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v3/agent-runs/run-4a080f0d-0d4a-4f93-b0bb-4e66d261e21e/metrics",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/v3/trip-workspaces/workspace-26cb191f-ce5f-45d8-aed1-715160283c37/runs",
+        "status": 202
+      },
+      {
+        "method": "POST",
+        "path": "/api/v3/agent-runs/run-4a080f0d-0d4a-4f93-b0bb-4e66d261e21e/cancel",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v3/agent-runs/run-4a080f0d-0d4a-4f93-b0bb-4e66d261e21e",
+        "status": 200
+      }
+    ],
+    "idempotency": "same_run",
+    "missing_configuration": "needs_resume",
+    "cancellation": "cancelled",
+    "database": "isolated temporary database",
+    "post_fix_model_request_count": 0,
+    "pre_fix_model_requests": {
+      "requirement_interpreter": 2,
+      "input_tokens": 4047,
+      "output_tokens": 4091
+    }
+  },
+  "desktop_browser": {
+    "status": "passed",
+    "browser": "Codex In-app Browser",
+    "checks": [
+      "initial_form_and_preview",
+      "demo_timeline_and_map",
+      "second_day_switch",
+      "schematic_map_switch"
+    ]
+  },
+  "recovery_backup": "/private/tmp/trajecta-cleanup-20261003-before.zip"
+}

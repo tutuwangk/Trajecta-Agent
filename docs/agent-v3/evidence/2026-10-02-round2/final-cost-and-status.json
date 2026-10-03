@@ -1,0 +1,37 @@
+{
+  "observed_at_utc": "2026-10-02T16:18:51.941003+00:00",
+  "user_initial_balance_cny": "2.74",
+  "round2_starting_observed_balance_cny": "2.18",
+  "final_observed_balance_cny": "0.58",
+  "balance_difference_from_user_initial_cny": "2.16",
+  "round2_balance_difference_cny": "1.60",
+  "cases": [
+    {
+      "case_id": "round2-cd-two-day",
+      "run_id": "run-ff5cb735-0ce9-4d24-9fe5-121e6869a57f",
+      "workspace_id": "shadow-round2-cd-two-day-round2-20261002",
+      "run_status": "succeeded",
+      "delivery_state": "publishable",
+      "fact_status": "verified",
+      "experience_status": "needs_adjustment"
+    },
+    {
+      "case_id": "round2-hz-one-day",
+      "run_id": "run-4bf85d75-cae0-4d95-8334-1218b679dc15",
+      "workspace_id": "shadow-round2-hz-one-day-round2-20261002",
+      "run_status": "succeeded",
+      "delivery_state": "publishable",
+      "fact_status": "verified",
+      "experience_status": "good"
+    },
+    {
+      "case_id": "round2-sh-two-day",
+      "run_id": "run-ffd18810-f23b-45b8-8e36-3d64b794ea89",
+      "workspace_id": "shadow-round2-sh-two-day-round2-20261002",
+      "run_status": "succeeded",
+      "delivery_state": "publishable",
+      "fact_status": "verified",
+      "experience_status": "good"
+    }
+  ]
+}

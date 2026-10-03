@@ -1,0 +1,106 @@
+{
+  "case_id": "round2-sh-two-day",
+  "city": "上海",
+  "days": 2,
+  "evaluation_mode": "journey",
+  "run_id": "run-93e77467-f3de-419d-9b21-569ce4274bbb",
+  "workspace_id": "shadow-round2-sh-two-day-round2-20261002",
+  "run_status": "succeeded",
+  "candidate_snapshot_id": "candidate_2dd1a56994eae4508b99",
+  "delivery_state": "publishable",
+  "release_id": "release_cf3d5c58514068e857c3",
+  "fact_status": "verified",
+  "experience_status": "needs_adjustment",
+  "coverage_ratio": 1.0,
+  "clarification_rounds": 0,
+  "provider_blocker": null,
+  "event_types": [
+    "route_quality_repair_requested",
+    "run_started",
+    "checkpoint_restored",
+    "working_draft_committed",
+    "candidate_assessed",
+    "release_published"
+  ],
+  "metrics": {
+    "candidate_snapshot_id": "candidate_2dd1a56994eae4508b99",
+    "constraint_count": 7,
+    "delivery_state": "publishable",
+    "disposition_counts": {
+      "scheduled": 7
+    },
+    "excluded_candidate_count": 0,
+    "experience_status": "needs_adjustment",
+    "fact_cache_hit_count": 0,
+    "fact_gap_count": 0,
+    "fact_need_count": 14,
+    "fact_status": "verified",
+    "input_token_count": 123878,
+    "input_tokens_by_role": {
+      "operational_fact_extractor": 8608,
+      "trip_planner_root": 115270
+    },
+    "leg_count": 8,
+    "local_context_max_chars": 4413,
+    "local_context_read_count": 2,
+    "local_context_total_chars": 8826,
+    "model_request_count": 12,
+    "model_requests_by_role": {
+      "operational_fact_extractor": 6,
+      "trip_planner_root": 6
+    },
+    "obligation_count": 7,
+    "operational_fact_need_count": 6,
+    "output_token_count": 27953,
+    "output_tokens_by_role": {
+      "operational_fact_extractor": 6380,
+      "trip_planner_root": 21573
+    },
+    "place_search_by_target": {},
+    "provider_calls": {
+      "fact_place_operation": 6,
+      "fact_route": 8
+    },
+    "provider_result_count": 0,
+    "query_target_count": 7,
+    "query_targets_seen": {
+      "qry_0032c7f453d97720ff4a": 1,
+      "qry_01b5c53e362cc3483186": 1,
+      "qry_74a2c58719eb6bb494a8": 1,
+      "qry_89585b6f3898462f5861": 1,
+      "qry_b2f9bd19c9ec96c2a504": 1,
+      "qry_f224ad056e256fe8dd74": 1,
+      "qry_fe04faceb981a225d794": 1
+    },
+    "release_id": "release_cf3d5c58514068e857c3",
+    "retained_candidate_count": 0,
+    "route_fact_need_count": 8,
+    "run_status": "succeeded",
+    "selected_grounding_count": 0,
+    "source_char_count": 162,
+    "source_count": 1,
+    "stop_count": 10,
+    "tool_call_count": 4,
+    "tool_calls_by_role": {
+      "operational_fact_extractor": 0,
+      "trip_planner_root": 4
+    },
+    "truncated_candidate_count": 0,
+    "unresolved_grounding_count": 0,
+    "wall_clock_ms": 100618
+  },
+  "checks": {
+    "explicit_place_coverage": true,
+    "named_meal_complete": true,
+    "candidate_context_cap": true,
+    "one_search_per_query_target": true,
+    "scheduled_fact_scope": true,
+    "timeline_complete": true,
+    "fact_gaps_explained": true,
+    "operational_fact_contract": true,
+    "strict_publication": true,
+    "release_lineage": true,
+    "cancelled_artifact_safety": null,
+    "blocker_specificity": true
+  }
+}

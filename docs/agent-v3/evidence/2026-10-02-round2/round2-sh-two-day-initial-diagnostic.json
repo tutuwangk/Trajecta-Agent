@@ -1,0 +1,148 @@
+{
+  "run_id": "run-c218fa1b-6e38-4ba1-a9a2-457537619553",
+  "events": [
+    {
+      "event_id": 1,
+      "created_at": "2026-10-02 11:19:32",
+      "type": "run_started",
+      "goal_revision_id": "goal-round2-sh-two-day"
+    },
+    {
+      "event_id": 2,
+      "created_at": "2026-10-02 11:20:03",
+      "type": "candidate_group_ready",
+      "target_id": "qry_f224ad056e256fe8dd74",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 1
+    },
+    {
+      "event_id": 3,
+      "created_at": "2026-10-02 11:20:04",
+      "type": "candidate_group_ready",
+      "target_id": "qry_b2f9bd19c9ec96c2a504",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 1
+    },
+    {
+      "event_id": 4,
+      "created_at": "2026-10-02 11:20:05",
+      "type": "candidate_group_ready",
+      "target_id": "qry_74a2c58719eb6bb494a8",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 3
+    },
+    {
+      "event_id": 5,
+      "created_at": "2026-10-02 11:20:06",
+      "type": "candidate_group_ready",
+      "target_id": "qry_89585b6f3898462f5861",
+      "provider_result_count": 2,
+      "retained_candidate_count": 2,
+      "excluded_result_count": 0
+    },
+    {
+      "event_id": 6,
+      "created_at": "2026-10-02 11:20:07",
+      "type": "candidate_group_ready",
+      "target_id": "qry_0032c7f453d97720ff4a",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 3
+    },
+    {
+      "event_id": 7,
+      "created_at": "2026-10-02 11:20:07",
+      "type": "candidate_group_ready",
+      "target_id": "qry_fe04faceb981a225d794",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 0
+    },
+    {
+      "event_id": 8,
+      "created_at": "2026-10-02 11:20:09",
+      "type": "candidate_group_ready",
+      "target_id": "qry_01b5c53e362cc3483186",
+      "provider_result_count": 4,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 0
+    },
+    {
+      "event_id": 9,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_f224ad056e256fe8dd74",
+      "status": "selected"
+    },
+    {
+      "event_id": 10,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_b2f9bd19c9ec96c2a504",
+      "status": "selected"
+    },
+    {
+      "event_id": 11,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_74a2c58719eb6bb494a8",
+      "status": "selected"
+    },
+    {
+      "event_id": 12,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_89585b6f3898462f5861",
+      "status": "selected"
+    },
+    {
+      "event_id": 13,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_0032c7f453d97720ff4a",
+      "status": "selected"
+    },
+    {
+      "event_id": 14,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_fe04faceb981a225d794",
+      "status": "selected"
+    },
+    {
+      "event_id": 15,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_01b5c53e362cc3483186",
+      "status": "selected"
+    },
+    {
+      "event_id": 16,
+      "created_at": "2026-10-02 11:20:19",
+      "type": "grounding_registry_compiled",
+      "selected_count": 7,
+      "unresolved_count": 0
+    },
+    {
+      "event_id": 17,
+      "created_at": "2026-10-02 11:21:29",
+      "type": "planning_repair_paused",
+      "reason_code": "tool_input_retries_exhausted",
+      "tool_name": "submit_plan",
+      "message": "本轮工具输入修正次数已用完，进度已保存，可继续当前运行。"
+    },
+    {
+      "event_id": 18,
+      "created_at": "2026-10-02 11:21:29",
+      "type": "run_needs_resume",
+      "reason": "root agent returned before strict delivery completion"
+    }
+  ],
+  "resume_reason": "submit_plan input correction exhausted; durable grounding complete, no draft yet",
+  "input_error_detail_available": false,
+  "resume_root_request_limit": 6,
+  "root_prompt_change": "Globally unique stop_key across all days is explicit; correction feedback now persists."
+}

@@ -1,0 +1,11 @@
+{
+  "run_id": "run-ffd18810-f23b-45b8-8e36-3d64b794ea89",
+  "message_count": 13,
+  "tool_calls": 7,
+  "tool_returns": 6,
+  "tool_retry_responses": 1,
+  "unanswered_tool_call_count": 0,
+  "final_message_kind": "request",
+  "release_count": 1,
+  "writes_after_publication": []
+}

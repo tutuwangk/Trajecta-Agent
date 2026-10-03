@@ -1,0 +1,17 @@
+{
+  "candidate_snapshot_id": "candidate_b88532668eea7b45bada",
+  "run_status": "succeeded",
+  "fact_status": "verified",
+  "clarification_questions": [],
+  "blocking_issues": [],
+  "verification_kind": "isolated_desktop_replay",
+  "timeline_source_run": "run-b4c9ab97-eb8a-476d-a04a-2efdc44d230c",
+  "operating_fact_source": "ifs-live-lookup.json",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "pending_question_forms_after_answer": 0,
+  "old_confirmation_labels_after_answer": 0,
+  "refresh_retains_resolved_state": true
+}

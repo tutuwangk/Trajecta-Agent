@@ -1,0 +1,43 @@
+{
+  "verification_mode": "offline saved timeline replay; no model/provider calls or persisted Release mutation",
+  "original_run_id": "run-5b959792-3cb7-472a-9275-9f746cae3600",
+  "fact_status": "verified",
+  "experience_status": "needs_adjustment",
+  "experience_issues": [
+    {
+      "severity": "review",
+      "code": "lunch_not_separately_planned",
+      "message": "第 2 天行程覆盖 11:30–14:00（杜甫草堂），尚未单独安排午餐。",
+      "recommendation": "在第 2 天 11:30–14:00 的行程中预留午餐时间，并说明自由用餐安排。",
+      "day_numbers": [
+        2
+      ],
+      "obligation_ids": [],
+      "place_names": [
+        "杜甫草堂"
+      ]
+    }
+  ],
+  "may_publish": true,
+  "assessment": {
+    "candidate_snapshot_id": "candidate_a78c31575246fedc6029",
+    "producing_run_id": "run-5b959792-3cb7-472a-9275-9f746cae3600",
+    "state": "publishable",
+    "may_publish": true,
+    "issues": [
+      {
+        "code": "lunch_not_separately_planned",
+        "severity": "review",
+        "message": "第 2 天行程覆盖 11:30–14:00（杜甫草堂），尚未单独安排午餐。",
+        "recommendation": "在第 2 天 11:30–14:00 的行程中预留午餐时间，并说明自由用餐安排。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "杜甫草堂"
+        ]
+      }
+    ]
+  }
+}

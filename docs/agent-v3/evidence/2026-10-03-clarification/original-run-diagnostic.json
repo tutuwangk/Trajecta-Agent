@@ -1,0 +1,11 @@
+{
+  "original_run_id": "run-b4c9ab97-eb8a-476d-a04a-2efdc44d230c",
+  "historical_terminal_status": "failed",
+  "current_questions": [],
+  "answer_count": 2,
+  "last_failure": {
+    "created_at": "2026-10-03 05:29:27",
+    "type": "run_failed",
+    "error_type": "V3RepositoryConflict"
+  }
+}

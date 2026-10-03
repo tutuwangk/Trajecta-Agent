@@ -1,0 +1,47 @@
+{
+  "backend_pytest": {
+    "passed": 206,
+    "seconds": 1.21
+  },
+  "python_compileall": "passed",
+  "frontend_tests": {
+    "passed": 13
+  },
+  "frontend_production_build": "passed",
+  "typescript": "passed in production build",
+  "desktop_visual": {
+    "widths": [
+      1280,
+      831
+    ],
+    "evidence_section_count": 0,
+    "horizontal_overflow_at_831": false,
+    "map_drag_delta_px": {
+      "x": 100,
+      "y": 50
+    },
+    "map_stop_and_timeline_selection": "passed",
+    "repeated_hotel_markers": "independently selectable",
+    "trip_heading_after_last_stop_selection_top_px": 88,
+    "day_switch": "passed using Chengdu two-day delivery",
+    "drawer_escape_and_focus_restore": "passed",
+    "browser_console_errors_and_warnings": 0,
+    "process_copy_match_count": 0
+  },
+  "preview": {
+    "workspace_id": "shadow-round2-sh-two-day-round2-20261002",
+    "run_id": "run-ffd18810-f23b-45b8-8e36-3d64b794ea89"
+  },
+  "transport_policy_matrix": {
+    "cases": 40,
+    "semantics": "preference / exclusive modes / independent walking limit"
+  },
+  "lifecycle_checks": [
+    "assess then revise then publish",
+    "queued tools after publication",
+    "closed execution states",
+    "provider tool-response pairs",
+    "release-bound delivery",
+    "atomic run success and release, rollback on interrupted insert"
+  ]
+}

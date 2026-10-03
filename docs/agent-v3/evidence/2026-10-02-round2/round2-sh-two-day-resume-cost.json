@@ -1,0 +1,230 @@
+{
+  "balance_before_cny": "1.61",
+  "balance_after_cny": "1.61",
+  "observed_delta_cny": "0.00",
+  "run_id": "run-c218fa1b-6e38-4ba1-a9a2-457537619553",
+  "run_status": "needs_resume",
+  "events": [
+    {
+      "event_id": 1,
+      "created_at": "2026-10-02 11:19:32",
+      "type": "run_started",
+      "goal_revision_id": "goal-round2-sh-two-day"
+    },
+    {
+      "event_id": 2,
+      "created_at": "2026-10-02 11:20:03",
+      "type": "candidate_group_ready",
+      "target_id": "qry_f224ad056e256fe8dd74",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 1
+    },
+    {
+      "event_id": 3,
+      "created_at": "2026-10-02 11:20:04",
+      "type": "candidate_group_ready",
+      "target_id": "qry_b2f9bd19c9ec96c2a504",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 1
+    },
+    {
+      "event_id": 4,
+      "created_at": "2026-10-02 11:20:05",
+      "type": "candidate_group_ready",
+      "target_id": "qry_74a2c58719eb6bb494a8",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 3
+    },
+    {
+      "event_id": 5,
+      "created_at": "2026-10-02 11:20:06",
+      "type": "candidate_group_ready",
+      "target_id": "qry_89585b6f3898462f5861",
+      "provider_result_count": 2,
+      "retained_candidate_count": 2,
+      "excluded_result_count": 0
+    },
+    {
+      "event_id": 6,
+      "created_at": "2026-10-02 11:20:07",
+      "type": "candidate_group_ready",
+      "target_id": "qry_0032c7f453d97720ff4a",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 3
+    },
+    {
+      "event_id": 7,
+      "created_at": "2026-10-02 11:20:07",
+      "type": "candidate_group_ready",
+      "target_id": "qry_fe04faceb981a225d794",
+      "provider_result_count": 10,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 0
+    },
+    {
+      "event_id": 8,
+      "created_at": "2026-10-02 11:20:09",
+      "type": "candidate_group_ready",
+      "target_id": "qry_01b5c53e362cc3483186",
+      "provider_result_count": 4,
+      "retained_candidate_count": 3,
+      "excluded_result_count": 0
+    },
+    {
+      "event_id": 9,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_f224ad056e256fe8dd74",
+      "status": "selected"
+    },
+    {
+      "event_id": 10,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_b2f9bd19c9ec96c2a504",
+      "status": "selected"
+    },
+    {
+      "event_id": 11,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_74a2c58719eb6bb494a8",
+      "status": "selected"
+    },
+    {
+      "event_id": 12,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_89585b6f3898462f5861",
+      "status": "selected"
+    },
+    {
+      "event_id": 13,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_0032c7f453d97720ff4a",
+      "status": "selected"
+    },
+    {
+      "event_id": 14,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_fe04faceb981a225d794",
+      "status": "selected"
+    },
+    {
+      "event_id": 15,
+      "created_at": "2026-10-02 11:20:18",
+      "type": "grounding_decision_submitted",
+      "target_id": "qry_01b5c53e362cc3483186",
+      "status": "selected"
+    },
+    {
+      "event_id": 16,
+      "created_at": "2026-10-02 11:20:19",
+      "type": "grounding_registry_compiled",
+      "selected_count": 7,
+      "unresolved_count": 0
+    },
+    {
+      "event_id": 17,
+      "created_at": "2026-10-02 11:21:29",
+      "type": "planning_repair_paused",
+      "reason_code": "tool_input_retries_exhausted",
+      "tool_name": "submit_plan",
+      "message": "本轮工具输入修正次数已用完，进度已保存，可继续当前运行。"
+    },
+    {
+      "event_id": 18,
+      "created_at": "2026-10-02 11:21:29",
+      "type": "run_needs_resume",
+      "reason": "root agent returned before strict delivery completion"
+    },
+    {
+      "event_id": 19,
+      "created_at": "2026-10-02 11:30:37",
+      "type": "run_started",
+      "goal_revision_id": "goal-round2-sh-two-day"
+    },
+    {
+      "event_id": 20,
+      "created_at": "2026-10-02 11:30:37",
+      "type": "checkpoint_restored",
+      "candidate_group_count": 7,
+      "grounding_decision_count": 7,
+      "draft_restored": false
+    },
+    {
+      "event_id": 21,
+      "created_at": "2026-10-02 11:31:07",
+      "type": "working_draft_committed",
+      "draft_id": "draft_3c5c6517085027b7aa35",
+      "draft_revision": 1,
+      "coverage_ratio": 1.0
+    },
+    {
+      "event_id": 22,
+      "created_at": "2026-10-02 11:31:35",
+      "type": "fact_resolution_blocked",
+      "gap_count": 1,
+      "affected_days": [
+        2
+      ],
+      "affected_places": [
+        "光明邨大酒家"
+      ],
+      "gaps": [
+        {
+          "need_id": "need_c452a533e7377af2a7bb",
+          "kind": "place_operation",
+          "day_number": 2,
+          "place_names": [
+            "光明邨大酒家"
+          ],
+          "failure_code": "planned_visit_operationally_incompatible",
+          "failure_message": "光明邨大酒家(淮海中路总店)：计划到访时间为 2026-10-18（周日）15:02，地点为光明邨大酒家(淮海中路总店)（淮海中路588号）。高德地点详情页[0]给出该总店营业时间为「周一至周日 07:30-14:00,17:00-20:30」，即午市 14:00 结束、晚市 17:00 才开始。15:02 正落在 14:00-17:00 的午休停业时段，届时门店不营业，无法执行本次到访。来源[2]仅确认门店地址、电话，未提供与该时段相冲突的营业信息；[1][3][4]为品牌介绍与点评，不含总店具体营业时段。",
+          "still_scheduled": true,
+          "impact": "无法确认该地点在计划到访时段可执行，发布前需要复核。"
+        }
+      ]
+    },
+    {
+      "event_id": 23,
+      "created_at": "2026-10-02 11:31:35",
+      "type": "candidate_assessed",
+      "candidate_snapshot_id": "candidate_84c39f8d682fd9462318",
+      "delivery_state": "blocked",
+      "issue_codes": [
+        "fact_gap_planned_visit_operationally_incompatible",
+        "operational_fact_missing",
+        "required_time_window_violated",
+        "preferred_time_window_violated",
+        "preferred_pace_limit_violated",
+        "required_transport_mode_violated",
+        "required_transport_mode_violated",
+        "required_transport_mode_violated",
+        "required_transport_mode_violated",
+        "lunch_not_separately_planned"
+      ]
+    },
+    {
+      "event_id": 24,
+      "created_at": "2026-10-02 11:32:48",
+      "type": "planning_budget_paused",
+      "reason_code": "root_execution_budget_exhausted",
+      "model_requests": 6,
+      "tool_calls": 5,
+      "message": "本轮规划调用预算已用完，已保存进度，可继续当前运行。"
+    },
+    {
+      "event_id": 25,
+      "created_at": "2026-10-02 11:32:48",
+      "type": "run_needs_resume",
+      "reason": "root agent returned before strict delivery completion"
+    }
+  ]
+}

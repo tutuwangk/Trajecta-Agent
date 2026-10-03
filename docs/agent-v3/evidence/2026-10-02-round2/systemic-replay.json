@@ -1,0 +1,57 @@
+[
+  {
+    "case_id": "round2-cd-two-day",
+    "source_run_id": "run-ff5cb735-0ce9-4d24-9fe5-121e6869a57f",
+    "experience_status": "needs_adjustment",
+    "transport_policy_issue_count": 0,
+    "walking_limit_issue_count": 0,
+    "issues": [
+      {
+        "severity": "review",
+        "code": "preferred_time_window_violated",
+        "message": "成都映象川菜馆（紫荆店） 实际于第 2 天 16:56 到达，未满足资料中的“晚餐在成都映象川菜馆（紫荆店）”时段 17:00–19:00。",
+        "recommendation": "调整第 2 天顺序，使 成都映象川菜馆（紫荆店） 在 17:00–19:00 到达。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [
+          "obl_c1edb14253adbc704337"
+        ],
+        "place_names": [
+          "成都映象川菜馆（紫荆店）"
+        ]
+      }
+    ],
+    "replay": "original published facts and timeline; current typed policy semantics; original artifacts retained"
+  },
+  {
+    "case_id": "round2-hz-one-day",
+    "source_run_id": "run-4bf85d75-cae0-4d95-8334-1218b679dc15",
+    "experience_status": "good",
+    "transport_policy_issue_count": 0,
+    "walking_limit_issue_count": 0,
+    "issues": [],
+    "replay": "original published facts and timeline; current typed policy semantics; original artifacts retained"
+  },
+  {
+    "case_id": "round2-sh-two-day",
+    "source_run_id": "run-95db7bc3-4f89-46f0-aa8c-5fbe14d07872",
+    "experience_status": "needs_adjustment",
+    "transport_policy_issue_count": 0,
+    "walking_limit_issue_count": 0,
+    "issues": [
+      {
+        "severity": "review",
+        "code": "preferred_pace_limit_violated",
+        "message": "第 2 天从 12:20 持续到 19:06，共 406 分钟，超过资料中的节奏上限 360 分钟（超出 46 分钟）。",
+        "recommendation": "从第 2 天移出一个非必需停靠点，或拆分到其他日期，使总时长不超过 360 分钟。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": []
+      }
+    ],
+    "replay": "original published facts and timeline; current typed policy semantics; original artifacts retained"
+  }
+]

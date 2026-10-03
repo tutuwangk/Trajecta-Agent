@@ -1,0 +1,18 @@
+[
+  {
+    "name": "backend_health",
+    "status": 200
+  },
+  {
+    "name": "frontend_home",
+    "status": 200
+  },
+  {
+    "name": "frontend_delivery_proxy",
+    "status": 200,
+    "run_id": "run-5b959792-3cb7-472a-9275-9f746cae3600",
+    "release_id": "release_d43577fe303ed0e1c08d",
+    "stop_count": 10,
+    "located_stop_count": 10
+  }
+]

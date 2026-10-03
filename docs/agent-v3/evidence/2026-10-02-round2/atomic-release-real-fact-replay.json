@@ -1,0 +1,16 @@
+{
+  "replay_type": "deterministic production-runtime replay of real Agent-planned draft and verified facts",
+  "source_run_id": "run-ffd18810-f23b-45b8-8e36-3d64b794ea89",
+  "run_id": "run-b20d670c-6c78-47e2-b978-8c0516a64da7",
+  "run_status": "succeeded",
+  "candidate_matches_release": true,
+  "experience_status": "good",
+  "model_request_count": 0,
+  "fact_cache_hit_count": 14,
+  "events": [
+    "run_started",
+    "checkpoint_restored",
+    "candidate_assessed",
+    "release_published"
+  ]
+}
