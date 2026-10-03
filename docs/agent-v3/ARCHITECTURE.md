@@ -141,7 +141,7 @@ Runtime 在候选组、消歧决定和草案写入后保存业务 checkpoint。�
 - `backend/app/trip_agent_v3/autonomous_runtime.py`：单根 Agent 的受控状态与局部工具；
 - `backend/app/trip_agent_v3/delivery.py`：严格交付门禁与 run-bound Release；
 - `backend/app/trip_agent_v3/repository.py`：V3 独立 SQLite 状态；
-- `frontend/components/agent-v3/DeliveryPanel.tsx`：需求、消歧、时间线、事实和门禁交付面。
+- `frontend/components/agent-v3/DeliveryPanel.tsx`：每日时间轴、联动地图、地点信息和有来源的预约提醒。
 
 ## 7. 当前边界
 

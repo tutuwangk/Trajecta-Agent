@@ -8,9 +8,9 @@ orders stops, and arranges meals. Deterministic Python code owns place identity,
 time calculations, state, idempotency, and release eligibility.
 
 A completed run accounts for every explicit place and produces an executable timeline with
-traceable key facts. Route estimates, missing key facts, pending place confirmations, and fixed
-appointment conflicts produce an itinerary preview with specific review items. Itineraries with
-verified facts can be delivered with advice on pace, long days, and transport preferences.
+traceable route facts. Route gaps, estimates, confirmed operating conflicts, and fixed appointment
+conflicts require draft repair. Place ambiguity can require user input. Missing public operating
+information allows delivery with `fact_status=degraded`; pace and transport advice remain attached.
 
 The frontend displays a daily timeline beside a linked map. It supports place selection, zoom,
 pan, navigation links, and a fallback when map tiles fail. The home page's demo uses local sample
@@ -19,10 +19,13 @@ data. Generating a plan calls the model and place services.
 The desktop trip form pairs inputs with a trip summary and provides preference shortcuts and
 button feedback. During planning, the workspace shows runtime events, current tasks, tool names,
 call durations, and total runtime. Pause, resume, and refresh retain the same run's records.
-The result map includes expandable planning records. See the
+The completed page shows the daily timeline, linked map, place details, and sourced reservation
+reminders. See the
 [UI change and validation record](./docs/agent-v3/UI_EXPERIENCE_2026-10-03.md).
 
-![Trip input screen, 2026-10-03](./docs/agent-v3/ui-evidence/create-trip-2026-10-03.jpg)
+![Completed itinerary, 2026-10-03](./docs/agent-v3/ui-evidence/completed-itinerary-2026-10-03.png)
+
+Recorded Chengdu itinerary from a real provider run, displayed in the current frontend.
 
 ## Run locally
 
@@ -86,8 +89,8 @@ flowchart TD
   Ops --> Candidate["CandidateSnapshot"]
   Candidate --> Gate{"DeliveryAssessment"}
   Gate -->|"Adjustment feedback"| Agent
-  Gate -->|"Verified facts / no blocking issues"| Release["Run-bound Release / experience advice"]
-  Gate -->|"Fact gaps / fixed commitment conflicts"| Preview["Preview / review / clarification"]
+  Gate -->|"No blocking issues"| Release["Run-bound Release / experience advice"]
+  Gate -->|"Route gaps / sourced conflicts / fixed appointments"| Preview["Preview / review / clarification"]
   Release --> View["Daily timeline / linked map"]
   RT --> Python["Deterministic Python / facts / time / versions / idempotency"]
   Python -.-> Routes
@@ -97,8 +100,10 @@ flowchart TD
 ```
 
 Route facts produce the timeline first. Operational facts are then queried for the actual visit
-times. Verified facts and zero blocking issues allow a Release bound to the current run, with
-experience advice attached. See the [V3 architecture](./docs/agent-v3/ARCHITECTURE.md).
+times. Zero blocking issues allow a Release bound to the current run. Missing ordinary operating
+information retains its degraded fact status; experience advice remains separate. Strict Pydantic
+models, versioned writes, provider-valid recovery transcripts, and atomic release commits enforce
+the execution boundaries. See the [V3 architecture](./docs/agent-v3/ARCHITECTURE.md).
 
 ## Project structure
 
@@ -129,6 +134,10 @@ cd frontend && pnpm test
 cd frontend && ./node_modules/.bin/tsc --noEmit --incremental false
 cd frontend && pnpm exec next build --webpack
 ```
+
+The 2026-10-03 check passed 235 backend tests, 20 frontend tests, the production build,
+and browser workflows with controlled provider fixtures. A new real-provider run paused
+on DeepSeek HTTP 402. See the [user acceptance record](./docs/agent-v3/USER_ACCEPTANCE_2026-10-03.md).
 
 The historical provider evaluation started 16 of 30 scenarios. Manual review passed two of
 five Releases. The remaining 14 scenarios were stopped at the user's request on 2026-08-01.

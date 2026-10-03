@@ -80,7 +80,7 @@ export function AgentV3WorkspaceApp() {
         setDestination(workspacePayload.workspace.goal.destination);
         setStartDate(workspacePayload.workspace.goal.start_date);
         setDays(String(workspacePayload.workspace.goal.days));
-      }).catch((reason) => { if (!controller.signal.aborted && token === generation.current) setError("暂时无法读取行程，请重试。"); })
+      }).catch(() => { if (!controller.signal.aborted && token === generation.current) setError("暂时无法读取行程，请重试。"); })
       .finally(() => { if (token === generation.current) { operation.current = false; setBusy(""); } });
     return () => controller.abort();
   }, [applyRun]);
