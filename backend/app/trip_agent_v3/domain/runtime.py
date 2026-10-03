@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from app.trip_agent_v3.domain.common import DomainModel
 from app.trip_agent_v3.domain.grounding import CandidateSet
@@ -93,70 +93,3 @@ class LocalAgentContext(DomainModel):
     )
     active_day_number: int | None = Field(default=None, ge=1)
     feedback: tuple[str, ...] = Field(default=(), max_length=5)
-
-
-class GoalProgress(DomainModel):
-    explicit_obligation_count: int = Field(ge=0)
-    disposed_obligation_count: int = Field(ge=0)
-    unresolved_grounding_count: int = Field(ge=0)
-    fact_gap_count: int = Field(ge=0)
-    timeline_compiled: bool
-    delivery_eligible: bool
-    blockers: tuple[str, ...] = Field(default=(), max_length=100)
-
-    @model_validator(mode="after")
-    def validate_counts(self) -> "GoalProgress":
-        if self.disposed_obligation_count > self.explicit_obligation_count:
-            raise ValueError(
-                "disposed obligation count cannot exceed explicit count"
-            )
-        if self.is_complete and self.blockers:
-            raise ValueError("complete goal progress cannot carry blockers")
-        return self
-
-    @property
-    def is_complete(self) -> bool:
-        return (
-            self.disposed_obligation_count == self.explicit_obligation_count
-            and self.unresolved_grounding_count == 0
-            and self.fact_gap_count == 0
-            and self.timeline_compiled
-            and self.delivery_eligible
-        )
-
-
-class RuntimeDisposition(StrEnum):
-    CONTINUE = "continue"
-    NEEDS_RESUME = "needs_resume"
-    READY_FOR_DELIVERY = "ready_for_delivery"
-
-
-class RuntimeBoundaryResult(DomainModel):
-    disposition: RuntimeDisposition
-    may_publish: bool
-    checkpoint_id: str | None = Field(
-        default=None, min_length=1, max_length=200
-    )
-    blockers: tuple[str, ...] = ()
-
-    @model_validator(mode="after")
-    def validate_publication_semantics(self) -> "RuntimeBoundaryResult":
-        if self.may_publish is not (
-            self.disposition is RuntimeDisposition.READY_FOR_DELIVERY
-        ):
-            raise ValueError(
-                "only ready-for-delivery runtime state may publish"
-            )
-        if (
-            self.disposition is RuntimeDisposition.NEEDS_RESUME
-            and not self.checkpoint_id
-        ):
-            raise ValueError("needs-resume state requires checkpoint_id")
-        if (
-            self.disposition is not RuntimeDisposition.NEEDS_RESUME
-            and self.checkpoint_id is not None
-        ):
-            raise ValueError(
-                "only needs-resume state may expose a checkpoint id"
-            )
-        return self

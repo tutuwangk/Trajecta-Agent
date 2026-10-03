@@ -197,7 +197,7 @@ class AgentV3Runtime:
                 )
             )
             async with asyncio.timeout(self.execution_timeout_seconds) as timeout_scope:
-                result = await execute_autonomous_journey(
+                await execute_autonomous_journey(
                     run=run,
                     goal=workspace.goal,
                     sources=workspace.sources,
@@ -428,22 +428,20 @@ def get_run(run_id: str):
     run = repository().get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    clarification_event = next(
-        (
-            event
-            for event in reversed(repository().list_events(run_id))
-            if event.get("type") == "clarification_requested"
-        ),
-        None,
-    )
+    questions = _pending_clarification_questions(run_id) if run.status is RunStatus.WAITING_USER else []
     return {
         "run": run.model_dump(mode="json"),
-        "clarification_questions": (
-            clarification_event.get("questions", [])
-            if clarification_event
-            else []
-        ),
+        "clarification_questions": questions,
     }
+
+
+def _pending_clarification_questions(run_id: str) -> list[str]:
+    for event in reversed(repository().list_events(run_id)):
+        if event.get("type") == "clarification_answered":
+            return []
+        if event.get("type") == "clarification_requested":
+            return event.get("questions", [])
+    return []
 
 
 @router.get("/agent-runs/{run_id}/events")
@@ -521,19 +519,7 @@ def answer_clarification(
         raise HTTPException(
             status_code=409, detail="run is not waiting for answers"
         )
-    clarification_event = next(
-        (
-            event
-            for event in reversed(repository().list_events(run_id))
-            if event.get("type") == "clarification_requested"
-        ),
-        None,
-    )
-    expected_questions = set(
-        clarification_event.get("questions", [])
-        if clarification_event is not None
-        else []
-    )
+    expected_questions = set(_pending_clarification_questions(run_id))
     if not expected_questions or set(payload.answers) != expected_questions:
         raise HTTPException(
             status_code=409,
@@ -551,7 +537,7 @@ def answer_clarification(
     answer_source = source_document(
         source_id=f"source-{uuid4()}",
         kind="user_revision",
-        content=f"用户对地点澄清的回答：\n{answer_text}",
+        content=f"用户对旅行信息的回答：\n{answer_text}",
     )
     updated_workspace = TripWorkspaceRecord(
         workspace_id=workspace.workspace_id,
@@ -638,10 +624,13 @@ def get_run_delivery(run_id: str):
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
     release = repository().release_for_run(run_id)
+    in_progress = run.status in {
+        RunStatus.CREATED, RunStatus.ACTIVE, RunStatus.WAITING_USER, RunStatus.NEEDS_RESUME,
+    }
     candidate = (
         repository().get_candidate(release.candidate_snapshot_id)
         if release is not None
-        else repository().latest_candidate_for_run(run_id)
+        else None if in_progress else repository().latest_candidate_for_run(run_id)
     )
     assessment = (
         repository().assessment_for_candidate(
@@ -652,12 +641,7 @@ def get_run_delivery(run_id: str):
     )
     if assessment is not None:
         delivery_state = assessment.state.value
-    elif run.status in {
-        RunStatus.CREATED,
-        RunStatus.ACTIVE,
-        RunStatus.WAITING_USER,
-        RunStatus.NEEDS_RESUME,
-    }:
+    elif in_progress:
         delivery_state = "working"
     else:
         delivery_state = "not_delivered"

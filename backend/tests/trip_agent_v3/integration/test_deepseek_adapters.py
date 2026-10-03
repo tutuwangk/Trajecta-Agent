@@ -19,7 +19,6 @@ from app.trip_agent_v3.adapters.deepseek import (
     PydanticAIRootTripPlannerAgent,
     _finalize_candidate_or_retry,
     _should_request_grounding_clarification,
-    _should_request_fact_clarification,
     _submit_plan_or_retry,
     _submit_grounding_or_retry,
     _submit_grounding_batch_or_retry,
@@ -355,48 +354,52 @@ def test_invalid_domain_plan_shape_becomes_model_retry() -> None:
         _submit_plan_or_retry(runtime, proposal)
 
 
-def test_fact_only_blockers_close_as_clarification() -> None:
+def test_fact_only_blockers_produce_runtime_repair_feedback() -> None:
+    from app.trip_agent_v3.adapters.deepseek import _root_episode_prompt
     runtime = SimpleNamespace(
+        goal=SimpleNamespace(destination="成都", start_date=date(2026, 10, 11), days=1),
+        grounding=object(), draft=object(),
         assessment=SimpleNamespace(
             may_publish=False,
             issues=(
                 SimpleNamespace(
                     code="fact_gap_operational_evidence_insufficient",
                     severity=SimpleNamespace(value="blocking"),
+                    message="营业时间待查询", recommendation="补查", day_numbers=(1,), place_names=("商场",),
                 ),
                 SimpleNamespace(
                     code="operational_fact_missing",
                     severity=SimpleNamespace(value="blocking"),
+                    message="运营事实不足", recommendation="补查", day_numbers=(1,), place_names=("商场",),
                 ),
             ),
         ),
         fact_gap_report=SimpleNamespace(gaps=(object(),)),
     )
 
-    assert _should_request_fact_clarification(runtime) is True
-
-    runtime.assessment.issues += (
-        SimpleNamespace(
-            code="required_time_window_violated",
-            severity=SimpleNamespace(value="blocking"),
-        ),
-    )
-
-    assert _should_request_fact_clarification(runtime) is False
+    prompt = _root_episode_prompt(runtime)
+    assert "Runtime lookup tools" in prompt
+    assert "营业时间待查询" in prompt
+    assert "user clarification" not in prompt
 
 
 def test_known_operational_incompatibility_is_repaired_by_agent() -> None:
+    from app.trip_agent_v3.adapters.deepseek import _root_episode_prompt
     runtime = SimpleNamespace(
+        goal=SimpleNamespace(destination="成都", start_date=date(2026, 10, 11), days=1),
+        grounding=object(), draft=object(),
         assessment=SimpleNamespace(
             may_publish=False,
             issues=(
                 SimpleNamespace(
                     code="fact_gap_planned_visit_operationally_incompatible",
                     severity=SimpleNamespace(value="blocking"),
+                    message="已闭馆", recommendation="提前", day_numbers=(1,), place_names=("博物馆",),
                 ),
                 SimpleNamespace(
                     code="operational_fact_missing",
                     severity=SimpleNamespace(value="blocking"),
+                    message="已闭馆", recommendation="提前", day_numbers=(1,), place_names=("博物馆",),
                 ),
             ),
         ),
@@ -411,7 +414,7 @@ def test_known_operational_incompatibility_is_repaired_by_agent() -> None:
         ),
     )
 
-    assert _should_request_fact_clarification(runtime) is False
+    assert "Repair visit timing" in _root_episode_prompt(runtime)
 
 
 def test_unresolved_grounding_requests_clarification_before_planning() -> None:
@@ -569,6 +572,37 @@ class _Runtime:
 
     def persist_tool_repair_feedback(self, feedback):
         self.last_tool_repair_feedback = feedback
+
+
+@pytest.mark.anyio
+async def test_public_fact_clarification_attempt_returns_soft_tool_feedback():
+    from app.trip_agent_v3.autonomous_runtime import AutonomousRuntimeError
+    from app.trip_agent_v3.adapters.deepseek import RootAgentDeps
+    from pydantic_ai.models.function import FunctionModel
+    from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturnPart, TextPart
+
+    runtime = _Runtime()
+    runtime.grounding = object()
+    runtime.draft = object()
+    runtime.assessment = SimpleNamespace(may_publish=False, issues=())
+
+    def reject_public_question():
+        raise AutonomousRuntimeError("resolve public facts through fact tools")
+    runtime.request_clarification = reject_public_question
+
+    feedback = []
+    def model_request(messages, info):
+        returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+        if returns:
+            feedback.extend(part.content for part in returns)
+            return ModelResponse(parts=[TextPart("saved continuation")])
+        return ModelResponse(parts=[ToolCallPart("request_clarification", {})])
+
+    adapter = PydanticAIRootTripPlannerAgent(FunctionModel(model_request))
+    await adapter.agent.run("Resolve the missing opening hours.", deps=RootAgentDeps(runtime=runtime))
+    assert feedback[0]["code"] == "clarification_not_needed"
+    assert feedback[0]["ok"] is False
+    assert runtime.run_record.status.value == "active"
 
 
 @pytest.mark.anyio

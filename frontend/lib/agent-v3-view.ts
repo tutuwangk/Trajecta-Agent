@@ -1,66 +1,36 @@
 import type {
+  AgentV3Candidate,
   AgentV3Delivery,
+  AgentV3Run,
   AgentV3TimelineLeg,
   AgentV3TimelineStop,
 } from "./agent-v3-types";
 
+export function deliveryMatchesRun(delivery: AgentV3Delivery, run: AgentV3Run): boolean {
+  if (delivery.run_id !== run.run_id || delivery.run_status !== run.status) return false;
+  const candidate = delivery.candidate;
+  if (candidate && candidate.producing_run_id !== run.run_id) return false;
+  return [delivery.assessment, delivery.release].every((snapshot) => !snapshot ||
+    !!candidate && snapshot.producing_run_id === run.run_id && snapshot.candidate_snapshot_id === candidate.candidate_snapshot_id);
+}
+
 export function deliveryHeading(delivery: AgentV3Delivery): string {
-  if (delivery.release) return "已核验发布方案";
-  if (delivery.delivery_state === "publishable") return "行程已准备好";
-  if (delivery.delivery_state === "review_required") return "方案待调整";
-  if (delivery.delivery_state === "blocked") return "行程预览 · 仍需完善";
-  if (delivery.delivery_state === "working") return "正在形成可执行方案";
-  return delivery.run_status === "cancelled" ? "本次运行已取消，未交付" : "本次运行未形成交付";
+  if (delivery.release || delivery.candidate) return "你的行程";
+  if (delivery.delivery_state === "working") return "正在安排你的旅程";
+  return delivery.run_status === "cancelled" ? "规划已停止" : "本次规划未完成";
 }
 
-export function coverageStatusLabel(status: string): string {
-  if (status === "scheduled") return "已安排";
-  if (status === "pending_confirmation") return "待确认";
-  if (status === "not_scheduled" || status === "excluded") return "不安排";
-  return "未处置";
-}
-
-export function groundingStatusLabel(status: string): string {
-  if (status === "selected") return "已选定";
-  if (status === "needs_confirmation") return "待确认";
-  return "未匹配";
-}
-
-export function runStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    created: "已受理",
-    active: "运行中",
-    waiting_user: "等待用户确认",
-    needs_resume: "已暂停，可继续",
-    succeeded: "行程已发布",
-    failed: "运行失败，未发布",
-    cancelled: "已取消，未发布",
-  };
-  return labels[status] || status;
-}
-
-export function factStatusLabel(status: string): string {
-  if (status === "verified") return "已核验";
-  if (status === "degraded") return "存在事实缺口";
-  if (status === "failed") return "事实核验失败";
-  return status;
-}
-
-export function experienceStatusLabel(status: string): string {
-  if (status === "good") return "合理";
-  if (status === "needs_adjustment") return "需要调整";
-  if (status === "conflict") return "存在冲突";
-  return status;
-}
-
-export function providerBlockerMessage(reasonCode: unknown): string {
-  const labels: Record<string, string> = {
-    provider_balance_insufficient: "模型账户余额不足；补充余额后可从当前检查点继续。",
-    provider_quota_exhausted: "地点服务今日额度已用完，额度恢复后可继续。",
-    provider_configuration_required: "旅行服务配置尚未完成，配置后可继续。",
-    provider_authentication_failed: "模型服务认证未通过，更新服务配置后可继续。",
-  };
-  return typeof reasonCode === "string" && labels[reasonCode] || "外部服务暂不可用，可稍后从当前检查点继续。";
+export function reservationReminders(candidate: AgentV3Candidate, dayNumber?: number) {
+  const names = new Map(candidate.timeline.days.filter((day) => dayNumber === undefined || day.day_number === dayNumber).flatMap((day) => day.stops.map((stop) => [stop.stop_id, stop.name] as const)));
+  return candidate.operational_facts.flatMap((fact) => {
+    const name = names.get(fact.stop_id);
+    if (!name) return [];
+    return fact.claims.flatMap((claim, index) => {
+      if (claim.field !== "reservation" || !claim.value.trim()) return [];
+      const sources = fact.sources.filter((source) => claim.source_ids.includes(source.source_id) && /^https?:\/\//i.test(source.uri));
+      return sources.length ? [{ id: `${fact.fact_id}-${index}`, name, value: claim.value, sources }] : [];
+    });
+  });
 }
 
 export function formatClock(value: string): string {

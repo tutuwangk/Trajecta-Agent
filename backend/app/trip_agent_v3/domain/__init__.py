@@ -65,10 +65,7 @@ from app.trip_agent_v3.domain.plan import (
 from app.trip_agent_v3.domain.runtime import (
     ContextConstraint,
     ContextObligation,
-    GoalProgress,
     LocalAgentContext,
-    RuntimeBoundaryResult,
-    RuntimeDisposition,
     RuntimePhase,
     SelectedPlaceSummary,
 )
@@ -155,10 +152,7 @@ __all__ = [
     "WorkingDraft",
     "ContextConstraint",
     "ContextObligation",
-    "GoalProgress",
     "LocalAgentContext",
-    "RuntimeBoundaryResult",
-    "RuntimeDisposition",
     "RuntimePhase",
     "SelectedPlaceSummary",
     "CandidateSnapshot",

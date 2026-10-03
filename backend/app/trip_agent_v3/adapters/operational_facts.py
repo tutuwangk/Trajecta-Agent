@@ -14,7 +14,7 @@ from app.trip_agent_v3.adapters.provider import (
     DeepSeekV4ChatModel,
     deepseek_v4_settings,
 )
-from app.trip_agent_v3.adapters.web_search import WebSearchClient
+from app.trip_agent_v3.adapters.web_search import WebSearchClient, WebSearchResult
 from app.trip_agent_v3.domain.facts import (
     FactNeed,
     FactNeedKind,
@@ -65,13 +65,14 @@ class DeepSeekOperationalFactProvider:
         self._source_cache: dict[
             str, tuple[FactSourceRecord, ...]
         ] = {}
+        self._expanded_candidates: set[str] = set()
         self.agent = Agent(
             model,
             output_type=_OperationalCompatibility,
             instructions=(
                 "Determine whether the named place is operationally compatible "
                 "with the exact planned visit date and time. Use only the numbered "
-                "search snippets. Extract only opening_hours, closure, last_entry, "
+                "source excerpts, including retrieved page text. Extract only opening_hours, closure, last_entry, "
                 "or reservation facts explicitly supported by cited snippets. "
                 "Every cited fact must apply to the exact selected place and branch/address. "
                 "Check snippet title, URL path, and text for a different park, museum branch, "
@@ -81,16 +82,21 @@ class DeepSeekOperationalFactProvider:
                 "ticket policies; a tenant shop's hours do not define an entire district's hours. "
                 "Omit claims supported only by such mismatched sources; use unknown when "
                 "the remaining correctly scoped evidence cannot execute the planned visit. "
-                "Return compatible only when the snippets contain date-applicable "
-                "evidence sufficient to execute this visit. Return incompatible for "
-                "a directly supported closure or missed operating/last-entry time. "
+                "Use the current Amap details or retrieved information as the source "
+                "of truth. Extract recurring schedules as stated; no second source, "
+                "exact-date announcement, last-entry policy, or reservation policy is "
+                "required. Return compatible when the stated schedule allows this visit. "
+                "Return incompatible only for an explicitly cited closure or a concrete "
+                "conflict with stated operating/last-entry hours. Missing information "
+                "does not imply a closure or mandatory reservation. "
                 "A currently retrieved recurring daily or weekly schedule is "
                 "date-applicable when the planned weekday matches and no cited "
                 "source states an exception; the schedule does not need to name "
                 "the exact calendar date. "
-                "Return unknown for stale, generic, conflicting, promotional, or "
-                "insufficient evidence. Never infer a fact from the place name. "
-                "Write rationale and claim values in concise Chinese for the traveler. "
+                "Return unknown when the available information does not determine "
+                "the visit window; still extract any supported operating claims. "
+                "Never infer a fact from the place name. Omit speculative claims. "
+                "Write rationale and claim values in concise Chinese. "
                 "For an incompatible visit, name the applicable date or hours and "
                 "the concrete conflict; keep source indexes in source_indexes."
             ),
@@ -99,7 +105,7 @@ class DeepSeekOperationalFactProvider:
                 if isinstance(model, DeepSeekV4ChatModel)
                 else None
             ),
-            retries={"output": 3},
+            retries={"output": 1},
         )
 
     async def resolve(
@@ -126,7 +132,7 @@ class DeepSeekOperationalFactProvider:
         if sources is None:
             query = (
                 f"{candidate.name} {candidate.address or ''} "
-                "官方 营业时间 闭馆 停止入场 预约"
+                "官方 营业时间"
             )
             retrieved_at = datetime.now(timezone.utc)
             provider_source = _provider_source_record(
@@ -134,26 +140,17 @@ class DeepSeekOperationalFactProvider:
                 retrieved_at=retrieved_at,
             )
             try:
-                if self.telemetry is not None:
+                if self.telemetry is not None and provider_source is None:
                     self.telemetry.record_provider_call(
                         "operational_web_search"
                     )
-                raw_results = await asyncio.to_thread(
+                raw_results = [] if provider_source is not None else await asyncio.to_thread(
                     self.web.search,
                     query,
                     max_results=5,
                 )
             except Exception:
                 raw_results = []
-                if provider_source is None:
-                    return _failed(
-                        need,
-                        code="operational_web_search_failed",
-                        message=(
-                            f"{candidate.name} 的网络运营事实查询失败；"
-                            "该地点仍在行程中，发布被阻止。"
-                        ),
-                    )
             web_sources = tuple(
                 _source_record(
                     candidate=candidate,
@@ -170,8 +167,74 @@ class DeepSeekOperationalFactProvider:
                 ((provider_source,) if provider_source is not None else ())
                 + web_sources
             )[:5]
-            if sources:
-                self._source_cache[candidate.candidate_id] = sources
+            self._source_cache[candidate.candidate_id] = sources
+        resolution = await self._extract(need=need, candidate=candidate, sources=sources)
+        if (
+            resolution.need.failure_code in {
+                "operational_evidence_insufficient", "operational_sources_missing",
+            }
+            and candidate.candidate_id not in self._expanded_candidates
+        ):
+            self._expanded_candidates.add(candidate.candidate_id)
+            if self.telemetry is not None:
+                self.telemetry.record_provider_call("operational_web_search")
+            try:
+                results = await asyncio.to_thread(
+                    self.web.search,
+                    f"{candidate.name} 营业时间 开放时间",
+                    max_results=5,
+                )
+            except Exception:
+                results = []
+            retrieved_at = datetime.now(timezone.utc)
+            follow_up = tuple(
+                _source_record(
+                    candidate=candidate, index=index, title=item.title,
+                    uri=item.url, excerpt=item.snippet or item.title,
+                    retrieved_at=retrieved_at,
+                )
+                for index, item in enumerate(results)
+            )
+            enriched = await self._read_pages(candidate, follow_up or sources)
+            by_uri: dict[str, FactSourceRecord] = {}
+            # The focused query can return a better excerpt at the same URL.
+            # Prefer page text, then the new snippet, then the earlier evidence.
+            for source in (*enriched, *follow_up, *sources):
+                by_uri.setdefault(source.uri, source)
+            expanded = tuple(by_uri.values())[:5]
+            self._source_cache[candidate.candidate_id] = expanded
+            if expanded != sources:
+                resolution = await self._extract(need=need, candidate=candidate, sources=expanded)
+        return resolution
+
+    async def _read_pages(
+        self, candidate: GroundingCandidate, sources: tuple[FactSourceRecord, ...],
+    ) -> tuple[FactSourceRecord, ...]:
+        fetch = getattr(self.web, "fetch", None)
+        if fetch is None:
+            return ()
+
+        async def read(index: int, source: FactSourceRecord):
+            try:
+                if self.telemetry is not None:
+                    self.telemetry.record_provider_call("operational_web_page")
+                page = await asyncio.to_thread(
+                    fetch, WebSearchResult(title=source.title, url=source.uri, snippet=source.excerpt),
+                )
+                return _source_record(
+                    candidate=candidate, index=index, title=page.title,
+                    uri=page.url, excerpt=page.snippet,
+                    retrieved_at=datetime.now(timezone.utc),
+                )
+            except Exception:
+                return source
+
+        return tuple(await asyncio.gather(*(read(i, source) for i, source in enumerate(sources[:2]))))
+
+    async def _extract(
+        self, *, need: FactNeed, candidate: GroundingCandidate,
+        sources: tuple[FactSourceRecord, ...],
+    ) -> FactResolution:
         if not sources:
             return _failed(
                 need,
@@ -196,9 +259,22 @@ class DeepSeekOperationalFactProvider:
                     },
                     ensure_ascii=False,
                 ),
-                usage_limits=UsageLimits(request_limit=4),
+                usage_limits=UsageLimits(request_limit=2),
             )
         except Exception:
+            # Keep map-provider values even when the extraction service is unavailable.
+            amap_source = next((source for source in sources if source.provider == "amap_place_search"), None)
+            if amap_source is not None and candidate.opening_hours:
+                return FactResolution(
+                    need=need.model_copy(update={"status": FactNeedStatus.SUCCEEDED}),
+                    operational_fact=OperationalFact(
+                        fact_id=f"operation_{need.need_id}", candidate_id=candidate.candidate_id,
+                        stop_id=need.stop_ids[0], visit_at=need.visit_at, visit_compatible=None,
+                        claims=(OperationalClaim(field="opening_hours", value=candidate.opening_hours,
+                                source_ids=(amap_source.source_id,), confidence=1),),
+                        sources=(amap_source,),
+                    ),
+                )
             return _failed(
                 need,
                 code="operational_extraction_failed",
@@ -214,8 +290,6 @@ class DeepSeekOperationalFactProvider:
         output = result.output
         claims: list[OperationalClaim] = []
         for claim in output.claims:
-            if claim.confidence < 0.8:
-                continue
             indexes = tuple(sorted(set(claim.source_indexes)))
             if any(index < 0 or index >= len(sources) for index in indexes):
                 continue
@@ -229,13 +303,10 @@ class DeepSeekOperationalFactProvider:
                     confidence=claim.confidence,
                 )
             )
-        if (
-            output.compatibility != "compatible"
-            or not claims
-        ):
+        if not claims or output.compatibility == "incompatible":
             code = (
                 "planned_visit_operationally_incompatible"
-                if output.compatibility == "incompatible"
+                if output.compatibility == "incompatible" and claims
                 else "operational_evidence_insufficient"
             )
             return _failed(
@@ -252,6 +323,7 @@ class DeepSeekOperationalFactProvider:
                 candidate_id=candidate.candidate_id,
                 stop_id=need.stop_ids[0],
                 visit_at=need.visit_at,
+                visit_compatible=True if output.compatibility == "compatible" else None,
                 claims=tuple(claims),
                 sources=sources,
             ),

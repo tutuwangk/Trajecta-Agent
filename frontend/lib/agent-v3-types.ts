@@ -109,7 +109,7 @@ export type AgentV3Candidate = {
     candidate_id: string;
     stop_id: string;
     visit_at: string;
-    visit_compatible: true;
+    visit_compatible: true | null;
     claims: Array<{
       field: "opening_hours" | "closure" | "last_entry" | "reservation";
       value: string;

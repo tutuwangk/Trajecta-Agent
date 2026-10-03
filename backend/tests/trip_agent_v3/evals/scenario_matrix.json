@@ -75,9 +75,9 @@
     },
     {
       "scenario_id": "scheduled_operation_provider_failure",
-      "user_risk": "运营事实失败只显示抽象错误且没有可审阅候选",
-      "expected_delivery_state": "blocked",
-      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_operational_fact_gap_persists_blocked_candidate_with_exact_stops"
+      "user_risk": "普通营业资料缺失导致整份行程停止",
+      "expected_delivery_state": "publishable",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_operational_fact_gap_publishes_trip_with_available_route_facts"
     },
     {
       "scenario_id": "local_context_only",
@@ -87,9 +87,9 @@
     },
     {
       "scenario_id": "budget_boundary_resumable",
-      "user_risk": "工具调用量或检查点替代真实目标闭环",
+      "user_risk": "执行超时丢失检查点或覆盖已有终态",
       "expected_delivery_state": "needs_resume",
-      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_goal_loop.py::test_budget_exhaustion_never_forces_incomplete_plan_to_delivery"
+      "pytest_nodeid": "backend/tests/trip_agent_v3/api/test_delivery_routes.py::test_execution_time_budget_preserves_checkpoint_and_terminal_races"
     },
     {
       "scenario_id": "terminal_run_immutable",
@@ -158,10 +158,10 @@
       "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_deepseek_adapters.py::test_root_agent_compacts_provider_history_at_business_checkpoint"
     },
     {
-      "scenario_id": "fact_only_blocker_requests_user",
-      "user_risk": "外部事实无法继续调查后 Agent 仍反复改写相同行程而不形成具体确认",
-      "expected_delivery_state": "waiting_user",
-      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_deepseek_adapters.py::test_fact_only_blockers_close_as_clarification"
+      "scenario_id": "public_facts_owned_by_tools",
+      "user_risk": "公开营业时间或路线查询失败后转而要求用户自行查证",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_public_fact_gaps_remain_owned_by_runtime_tools"
     },
     {
       "scenario_id": "provider_balance_is_resumable",

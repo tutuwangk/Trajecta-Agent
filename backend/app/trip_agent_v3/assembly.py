@@ -20,6 +20,7 @@ from app.trip_agent_v3.domain.plan import CompiledTimeline, StopLocation
 from app.trip_agent_v3.domain.plan import StopKind
 from app.trip_agent_v3.domain.requirements import RequirementLedger
 from app.trip_agent_v3.experience import evaluate_timeline_constraints
+from app.trip_agent_v3.fact_policy import gap_blocks_delivery
 
 
 def assemble_candidate_snapshot(
@@ -134,15 +135,16 @@ def assemble_candidate_snapshot(
         }
     }
     operational_stop_ids = {fact.stop_id for fact in operational_facts}
-    if (
-        fact_gap_report.gaps
-        or operational_stop_ids != required_operational_stop_ids
-    ):
+    if any(gap_blocks_delivery(gap) for gap in fact_gap_report.gaps):
         fact_status = FactStatus.FAILED
-    elif any(
-        leg.fact_status is FactResolutionStatus.ESTIMATED
-        for day in timeline.days
-        for leg in day.legs
+    elif (
+        operational_stop_ids != required_operational_stop_ids
+        or any(fact.visit_compatible is None for fact in operational_facts)
+        or any(
+            leg.fact_status is FactResolutionStatus.ESTIMATED
+            for day in timeline.days
+            for leg in day.legs
+        )
     ):
         fact_status = FactStatus.DEGRADED
     else:

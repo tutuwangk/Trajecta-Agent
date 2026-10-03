@@ -1,3 +1,1 @@
-from app.env import load_project_env
-
-load_project_env()
+"""Trajecta application package; configuration loads at executable entry points."""

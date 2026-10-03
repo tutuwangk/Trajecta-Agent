@@ -3,7 +3,7 @@
 @tailwind components;
 @tailwind utilities;
 
-:root { color-scheme: light; background: #fafaf8; color: #26332e; --nav-h: 64px; --page: #fafaf8; --bg: #fdfdfb; --panel-2: #f4f5f0; --ink-1: #26332e; --ink-2: #4d5b52; --ink-3: #627164; --border: #26332e17; --accent: #cf5035; --accent-hover: #b64028; --accent-soft: #fff0eb; --on-accent: #fffdfb; --ease: cubic-bezier(.2,.8,.2,1); }
+:root { color-scheme: light; background: #fafaf8; color: #26332e; --bg: #fdfdfb; --panel-2: #f4f5f0; --ink-2: #4d5b52; --ink-3: #627164; --border: #26332e17; --accent: #cf5035; --accent-hover: #b64028; --accent-soft: #fff0eb; --on-accent: #fffdfb; --ease: cubic-bezier(.2,.8,.2,1); }
 html, body { overflow-x: clip; }
 body { margin: 0; background: #fafaf8; color: #26332e; font-family: Arial, "PingFang SC", "Microsoft YaHei", sans-serif; }
 input, textarea, select, button { font: inherit; }
@@ -12,15 +12,10 @@ button, a, summary { -webkit-tap-highlight-color: transparent; }
 button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid #ef6a4b; outline-offset: 3px; }
 h1, h2 { min-width: 0; overflow-wrap: anywhere; }
 .field { @apply min-w-0 w-full rounded-lg border border-line bg-white px-3 py-3 text-sm text-ink outline-none transition placeholder:text-muted/70 focus:border-brand focus:ring-2 focus:ring-brand/10 disabled:bg-surface disabled:text-muted; }
-.field.field-with-icon { padding-left: 40px; }
 .btn { @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50; }
 .btn-primary { @apply btn; background: var(--accent); color: var(--on-accent); }
 .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
 .btn-secondary { @apply btn border border-line bg-white text-ink hover:bg-surface; }
-.panel, .panel-flat { @apply rounded-xl border border-line bg-white p-5; }
-.eyebrow { @apply text-[10px] font-semibold uppercase tracking-[0.15em] text-muted; }
-.subtle { @apply text-sm leading-6 text-muted; }
-.metric { @apply rounded-lg border border-line bg-surface px-4 py-3; }
 .form-label { @apply block min-w-0 text-xs font-semibold leading-5; }
 .travel-workspace { min-height: 100dvh; width: 100%; }
 .travel-header { height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 24px; border-bottom: 1px solid #e6e8e2; background: #fdfdfb; }
@@ -36,7 +31,6 @@ h1, h2 { min-width: 0; overflow-wrap: anywhere; }
 .planning-panel { padding: 24px; }
 .planning-date-row { display: grid; grid-template-columns: minmax(0,1.6fr) minmax(0,1fr); gap: 12px; }
 .travel-result { min-width: 0; }
-.journey-empty { min-height: calc(100dvh - 64px); background: #f4f5f0; }
 .error-feedback { padding: 12px 24px; border-bottom: 1px solid #f6d9cf; background: #fff3ee; color: #9b3d25; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
 .form-error-feedback { border: 1px solid #f6d9cf; border-radius: 10px; padding: 12px 14px; }
 .error-feedback button { min-height: 32px; }
@@ -226,7 +220,6 @@ h1, h2 { min-width: 0; overflow-wrap: anywhere; }
   .travel-columns { grid-template-columns: minmax(0,1fr); }
   .planning-column { border-right: 0; }
   .planning-panel, .clarification-panel, .itinerary-column { padding: 20px 16px; }
-  .journey-empty { min-height: 160px; }
   .error-feedback { padding: 12px 16px; }
   .travel-columns.is-start, .travel-columns.is-planning { padding-left: 18px; padding-right: 18px; }
   .new-trip-intro { margin-bottom: 26px; }

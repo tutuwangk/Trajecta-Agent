@@ -7,15 +7,17 @@ import type {
 
 const API_BASE = "/api/backend/api/v3";
 
-function responseMessage(payload: unknown): string {
+function responseMessage(payload: unknown, status: number): string {
+  if (status === 422) return "请检查目的地、出发日期和旅行天数后再试。";
   if (payload && typeof payload === "object" && "error" in payload) {
     const error = (payload as { error: unknown }).error;
-    if (error && typeof error === "object" && "message" in error && typeof error.message === "string") return error.message;
-  }
-  if (payload && typeof payload === "object" && "detail" in payload) {
-    const detail = (payload as { detail: unknown }).detail;
-    if (typeof detail === "string") return detail;
-    if (Array.isArray(detail)) return "请检查旅行信息后再试。";
+    if (error && typeof error === "object" && "code" in error) {
+      const labels: Record<string, string> = {
+        network_error: "旅行规划服务暂时无法连接，请稍后重试。",
+        timeout: "连接等待超时，请重试。",
+      };
+      if (typeof error.code === "string" && Object.hasOwn(labels, error.code)) return labels[error.code];
+    }
   }
   return "旅行规划服务暂时无法连接，请稍后重试。";
 }
@@ -35,7 +37,7 @@ async function request<T>(path: string, init?: RequestInit, allowMissing = false
     });
     if (allowMissing && response.status === 404) return null as T;
     const payload: unknown = await response.json().catch(() => null);
-    if (!response.ok) throw new Error(responseMessage(payload));
+    if (!response.ok) throw new Error(responseMessage(payload, response.status));
     if (payload === null) throw new Error("服务返回的内容不完整，请稍后重试。");
     return payload as T;
   } catch (reason) {

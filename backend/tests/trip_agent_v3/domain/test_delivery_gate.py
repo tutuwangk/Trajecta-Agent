@@ -20,6 +20,8 @@ from app.trip_agent_v3.domain.delivery import (
     RunStatus,
 )
 from app.trip_agent_v3.domain.facts import (
+    FactGap,
+    FactNeedKind,
     FactGapReport,
     FactSourceRecord,
     OperationalClaim,
@@ -230,6 +232,45 @@ def test_only_verified_good_closed_candidate_is_publishable() -> None:
     assert assessment.state is DeliveryState.PUBLISHABLE
     assert assessment.may_publish is True
     assert assessment.issues == ()
+
+
+@pytest.mark.parametrize("code", [
+    "operational_sources_missing", "operational_evidence_insufficient",
+    "operational_extraction_failed", "planned_visit_operationally_incompatible",
+    "scheduled_candidate_missing",
+])
+def test_operating_information_availability_and_visit_conflicts(code) -> None:
+    candidate = _candidate().model_copy(update={
+        "fact_status": FactStatus.DEGRADED,
+        "operational_facts": (),
+        "fact_gap_report": FactGapReport(fact_need_plan_id="operations", gaps=(FactGap(
+            need_id="hours", kind=FactNeedKind.PLACE_OPERATION, day_number=1,
+            stop_ids=("stop-visit",), place_names=("武侯祠",),
+            failure_code=code, failure_message="运营查询结果。",
+            still_scheduled=True, impact="运营信息。",
+        ),)),
+    })
+    assessment = assess_delivery(run=_run(), candidate=candidate)
+    expected = code in {
+        "operational_sources_missing", "operational_evidence_insufficient",
+        "operational_extraction_failed",
+    }
+    assert assessment.may_publish is expected
+    if expected:
+        release = publish_release(release_id="release-partial-hours", run=_run(),
+                                  candidate=candidate, assessment=assessment)
+        assert release.candidate_snapshot_id == candidate.candidate_snapshot_id
+
+
+def test_sourced_operating_information_with_unspecified_window_can_publish():
+    base = _candidate()
+    candidate = base.model_copy(update={
+        "fact_status": FactStatus.DEGRADED,
+        "operational_facts": (base.operational_facts[0].model_copy(update={"visit_compatible": None}),),
+    })
+    assessment = assess_delivery(run=_run(), candidate=candidate)
+    assert assessment.may_publish is True
+    assert candidate.fact_status is FactStatus.DEGRADED
 
 
 def test_degraded_fact_or_estimated_leg_cannot_be_immutable_release() -> None:

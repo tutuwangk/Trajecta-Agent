@@ -214,7 +214,9 @@ def _save_publishable(
     *,
     publish: bool,
 ) -> None:
-    repository.save_run(run)
+    repository.save_run(
+        run.model_copy(update={"status": RunStatus.ACTIVE}) if publish else run
+    )
     candidate = _candidate(run, suffix)
     assessment = assess_delivery(run=run, candidate=candidate)
     repository.save_candidate(candidate, assessment)
@@ -226,7 +228,7 @@ def _save_publishable(
             assessment=assessment,
             published_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
         )
-        repository.save_release(release)
+        repository.commit_release(release)
 
 
 def test_clarification_payload_supports_multiple_specific_blockers() -> None:
@@ -323,6 +325,20 @@ def test_published_delivery_uses_its_release_candidate(tmp_path, monkeypatch):
     assert payload["candidate"]["candidate_snapshot_id"] == "candidate-published"
     assert payload["assessment"]["candidate_snapshot_id"] == "candidate-published"
     assert payload["release"]["candidate_snapshot_id"] == "candidate-published"
+
+
+@pytest.mark.parametrize("status", [RunStatus.CREATED, RunStatus.ACTIVE, RunStatus.WAITING_USER, RunStatus.NEEDS_RESUME])
+def test_pending_execution_does_not_return_historical_candidate(tmp_path, monkeypatch, status):
+    routes = importlib.import_module("app.trip_agent_v3.api.routes")
+    repo = SqliteTripAgentV3Repository(tmp_path / "pending.sqlite3")
+    run = RunRecord(run_id="run-pending", workspace_id="workspace-1", goal_revision_id="goal-1", status=status)
+    _save_publishable(repo, run, "historical", publish=False)
+    monkeypatch.setattr(routes, "repository", lambda: repo)
+    payload = TestClient(create_app()).get("/api/v3/agent-runs/run-pending/delivery").json()
+    assert payload["delivery_state"] == "working"
+    assert payload["candidate"] is None
+    assert payload["assessment"] is None
+    assert repo.latest_candidate_for_run(run.run_id) is not None
 
 
 def test_publication_rolls_back_run_status_when_release_write_fails(tmp_path, monkeypatch):
@@ -732,6 +748,7 @@ def test_clarification_resumes_same_business_run_and_revision_is_idempotent(
             "questions": ["你想去骡马市店还是太古里店？"],
         },
     )
+    assert client.get(f"/api/v3/agent-runs/{run_id}").json()["clarification_questions"] == ["你想去骡马市店还是太古里店？"]
     mismatched = client.post(
         f"/api/v3/agent-runs/{run_id}/answers",
         json={"answers": {"另一个问题": "骡马市店"}},
@@ -750,6 +767,7 @@ def test_clarification_resumes_same_business_run_and_revision_is_idempotent(
     assert answered.status_code == 202
     assert answered.json()["run"]["run_id"] == run_id
     assert answered.json()["run"]["status"] == "needs_resume"
+    assert client.get(f"/api/v3/agent-runs/{run_id}").json()["clarification_questions"] == []
     after_answer = test_runtime.repository.get_workspace(workspace_id)
     assert after_answer is not None
     assert after_answer.version == 2
@@ -758,6 +776,7 @@ def test_clarification_resumes_same_business_run_and_revision_is_idempotent(
 
     test_runtime.repository.transition_run(run_id, RunStatus.ACTIVE)
     test_runtime.repository.transition_run(run_id, RunStatus.SUCCEEDED)
+    assert client.get(f"/api/v3/agent-runs/{run_id}").json()["clarification_questions"] == []
     revision = client.post(
         f"/api/v3/trip-workspaces/{workspace_id}/revisions",
         json={

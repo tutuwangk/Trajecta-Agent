@@ -71,6 +71,3 @@ class ProviderRequestCoordinator:
                         provider_code or exc.code
                     )
                 raise
-
-    def circuit_reason(self, provider: str) -> str | None:
-        return self._open_reasons.get(provider)

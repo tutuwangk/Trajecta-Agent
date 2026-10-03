@@ -28,7 +28,7 @@ test("parallel tools remain active independently and retries preserve measured o
   assert.equal(rows[0].state, "retry");
   assert.equal(rows[0].durationMs, 1280);
   assert.equal(rows[1].state, "running");
-  assert.equal(currentActivity(run("active"), events), "搜索地点候选");
+  assert.equal(currentActivity(run("active"), events), "寻找合适的地点");
   assert.equal(currentActivity(run("waiting_user"), events), "需要你补充一些信息");
 });
 
@@ -50,4 +50,22 @@ test("source understanding stays in progress until requirements are ready", () =
   const complete = progressRows([...events, event(3, "requirements_ready", 8)], true)[1];
   assert.equal(complete.state, "done");
   assert.equal(complete.durationMs, 7000);
+});
+
+
+test("travel progress uses known activity labels and keeps diagnostic payloads private", () => {
+  const raw = "provider error: route fact failed";
+  const rows = progressRows([
+    event(1, "tool_started", 0, { tool_name: raw, object_name: raw, error: raw, context: { day_number: 2 }, call_id: "a" }),
+    event(2, "tool_finished", 1, { call_id: "a", outcome: "retry", message: raw }),
+    event(3, "candidate_assessed", 2, { message: raw }),
+    event(4, "fact_resolution_blocked", 3, { gap_count: 2, message: raw }),
+    event(5, "provider_blocked", 4, { message: raw }),
+  ], false);
+  assert.equal(rows[0].label, "整理行程安排");
+  assert.equal(rows[0].detail, "第 2 天");
+  assert.equal(rows[0].state, "retry");
+  assert.ok(!JSON.stringify(rows).includes(raw));
+  assert.ok(!JSON.stringify(rows).includes("核验"));
+  assert.ok(!JSON.stringify(rows).includes("toolName"));
 });

@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import unescape
 from html.parser import HTMLParser
 import os
+import re
 from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
@@ -19,7 +20,7 @@ class WebSearchResult(DomainModel):
 
 
 class WebSearchClient:
-    """Bounded public-search boundary; page HTML never enters the Agent."""
+    """Bounded public search and page-text retrieval for fact tools."""
 
     def __init__(
         self,
@@ -64,6 +65,58 @@ class WebSearchClient:
         parser = _DuckDuckGoParser(max_results=max_results)
         parser.feed(response.text)
         return parser.results
+
+    def fetch(self, result: WebSearchResult) -> WebSearchResult:
+        if urlparse(result.url).scheme not in {"http", "https"}:
+            raise ValueError("fact source must use HTTP or HTTPS")
+        with httpx.stream(
+            "GET", result.url,
+            timeout=self.timeout_seconds,
+            follow_redirects=True,
+            headers={"User-Agent": "Trajecta-Agent/3.0"},
+        ) as response:
+            response.raise_for_status()
+            if "html" not in response.headers.get("content-type", "").lower():
+                return result
+            chunks = []
+            size = 0
+            for chunk in response.iter_bytes():
+                size += len(chunk)
+                if size > 1_000_000:
+                    break
+                chunks.append(chunk)
+            parser = _PageTextParser()
+            parser.feed(b"".join(chunks).decode(response.encoding or "utf-8", errors="replace"))
+            text = _clean_text(" ".join(parser.parts))
+            # Retain identity context and operating sections, rather than a
+            # page's navigation and promotional content filling the excerpt.
+            sections = [text[:700]]
+            for match in list(re.finditer(
+                r"营业|开放|闭馆|入场|预约|opening\s*hours|business\s*hours|closed|reservation",
+                text, re.IGNORECASE,
+            ))[:8]:
+                sections.append(text[max(0, match.start() - 150):match.end() + 450])
+            excerpt = "\n".join(dict.fromkeys(sections))[:4_000]
+            return result.model_copy(update={"snippet": excerpt or result.snippet})
+
+
+class _PageTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._ignored_depth = 0
+
+    def handle_starttag(self, tag, attrs) -> None:
+        if tag in {"script", "style"}:
+            self._ignored_depth += 1
+
+    def handle_endtag(self, tag) -> None:
+        if tag in {"script", "style"}:
+            self._ignored_depth = max(0, self._ignored_depth - 1)
+
+    def handle_data(self, data: str) -> None:
+        if not self._ignored_depth and data.strip():
+            self.parts.append(data.strip())
 
 
 class _DuckDuckGoParser(HTMLParser):

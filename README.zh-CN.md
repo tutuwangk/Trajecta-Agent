@@ -1,5 +1,7 @@
 # Trajecta-Agent
 
+最新清理记录见 [2026-10-03 代码清理审计](./docs/agent-v3/CLEANUP_2026-10-03.md)，包含已删除的残留、实际配置、文件用途与验证结果。
+
 [English](./README.md) | **简体中文**
 
 Trajecta 是资料驱动的旅行规划 Agent。当前仓库只保留 V3 单栈：一个根

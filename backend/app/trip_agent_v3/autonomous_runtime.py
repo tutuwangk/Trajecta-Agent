@@ -57,6 +57,7 @@ from app.trip_agent_v3.fact_needs import (
     build_fact_need_plan,
     build_operational_fact_need_plan,
 )
+from app.trip_agent_v3.fact_policy import gap_blocks_delivery
 from app.trip_agent_v3.grounding import (
     GroundingDecisionProposal,
     compile_grounding_registry,
@@ -356,6 +357,7 @@ class AutonomousTripRuntime:
                 _restore_model(FactResolution, raw)
                 for raw in fact_resolutions
             )
+            if item.need.status is FactNeedStatus.SUCCEEDED
         }
         grounding = payload.get("grounding")
         draft = payload.get("draft")
@@ -678,7 +680,7 @@ class AutonomousTripRuntime:
                     f"{gap.failure_message}"
                 )[:1_000]
                 for gap in self.fact_gap_report.gaps
-                if gap.day_number == day_number
+                if gap.day_number == day_number and gap_blocks_delivery(gap)
             )
         if self.assessment is not None:
             feedback.extend(
@@ -821,6 +823,7 @@ class AutonomousTripRuntime:
                     "draft",
                     self.run_record.run_id,
                     self.goal.goal_revision_id,
+                    self.input_fingerprint,
                 ),
                 "goal_revision_id": self.goal.goal_revision_id,
                 "revision": revision,
@@ -959,6 +962,7 @@ class AutonomousTripRuntime:
                 self.run_record.run_id,
                 self.draft.draft_id,
                 str(self.draft.revision),
+                *(resolution.model_dump_json() for resolution in all_resolutions),
             ),
             workspace_id=self.run_record.workspace_id,
             producing_run_id=self.run_record.run_id,
@@ -983,7 +987,7 @@ class AutonomousTripRuntime:
                 self.candidate, self.assessment
             )
         self._persist_checkpoint()
-        if self.fact_gap_report.gaps:
+        if any(gap_blocks_delivery(gap) for gap in self.fact_gap_report.gaps):
             self._record_fact_gap_event()
         self._record_event(
             {
@@ -1152,79 +1156,34 @@ class AutonomousTripRuntime:
         obligations = {
             item.obligation_id: item for item in self.ledger.obligations
         }
-        grounding_questions = tuple(
-            (
-                (
-                    resolution.clarification_question
-                    or f"请确认 {resolution.target_id} 的具体地点。"
+        grounding_questions = []
+        for resolution in self.grounding.resolutions if self.grounding is not None else ():
+            if resolution.status is ResolutionStatus.SELECTED:
+                continue
+            mention = " / ".join(obligations[item].mention for item in resolution.obligation_ids)
+            if resolution.status is ResolutionStatus.NEEDS_CONFIRMATION:
+                choices = tuple(
+                    f"{candidate.name}（{candidate.address}）" if candidate.address else candidate.name
+                    for candidate in self.candidate_sets[resolution.target_id].candidates
                 )
-                if resolution.status is ResolutionStatus.NEEDS_CONFIRMATION
-                else (
-                    "地图服务没有找到与“"
-                    + " / ".join(
-                        obligations[obligation_id].mention
-                        for obligation_id in resolution.obligation_ids
-                    )
-                    + "”匹配的地点。请补充地址、门店或链接，"
-                    "或明确允许不安排。"
-                )
-            )
-            for resolution in (
-                self.grounding.resolutions
-                if self.grounding is not None
-                else ()
-            )
-            if resolution.status is not ResolutionStatus.SELECTED
-        )
-        fact_questions = tuple(
-            (
-                f"第 {gap.day_number} 天 "
-                f"{' → '.join(gap.place_names)} 的"
-                + (
-                    "路线方式或时长"
-                    if gap.kind is FactNeedKind.ROUTE
-                    else "营业、闭馆、停止入场或预约信息"
-                )
-                + f"无法核验（{gap.failure_message}）。"
-                + (
-                    "请补充官方来源或确认改换到访时段／地点，"
-                    "也可以明确允许不安排。"
-                )
-            )
-            for gap in (
-                self.fact_gap_report.gaps
-                if self.fact_gap_report is not None
-                else ()
-            )
-        )
-        issue_questions = tuple(
-            (
-                f"{issue.message} {issue.recommendation}"
-            )
-            for issue in (
-                self.assessment.issues
-                if self.assessment is not None
-                and not fact_questions
-                else ()
-            )
-            if issue.severity.value == "blocking"
-            and (
-                issue.day_numbers
-                or issue.obligation_ids
-                or issue.place_names
-            )
-        )
+                # A grounding decision asks for intended identity. Free model
+                # prose cannot turn that choice into a public-fact research task.
+                question = f"你想去“{mention}”的哪个地点或门店？"
+                if choices:
+                    question += "候选：" + "；".join(choices) + "。"
+            else:
+                question = f"请补充“{mention}”的地址、门店或链接，或选择不安排。"
+            grounding_questions.append(question)
         questions = tuple(
             dict.fromkeys(
                 self.input_gap_questions
-                + grounding_questions
-                + fact_questions
-                + issue_questions
+                + tuple(grounding_questions)
             )
         )
         if not questions:
             raise AutonomousRuntimeError(
-                "no run-bound ambiguity or delivery blocker requires clarification"
+                "no user-owned information requires clarification; resolve public "
+                "facts through fact tools and repair the draft using assessment feedback"
             )
         self.clarification_questions = questions
         self.run_record = RunRecord(

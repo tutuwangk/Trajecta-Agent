@@ -112,6 +112,9 @@ experience advice attached. See the [V3 architecture](./docs/agent-v3/ARCHITECTU
 See the [2026-10-02 redesign record](./docs/agent-v3/REDESIGN_2026-10-02.md) for the recent
 architecture and product changes.
 
+See the [2026-10-03 cleanup audit](./docs/agent-v3/CLEANUP_2026-10-03.md) for removed legacy
+code, active configuration, runtime consumers, and validation results.
+
 V1 and V2 execution code, routes, frontend, tests, scripts, and evaluation datasets were removed
 on 2026-08-01.
 

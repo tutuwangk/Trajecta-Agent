@@ -18,6 +18,7 @@ from app.trip_agent_v3.domain.delivery import (
 )
 from app.trip_agent_v3.domain.facts import FactResolutionStatus
 from app.trip_agent_v3.domain.plan import StopKind
+from app.trip_agent_v3.fact_policy import gap_blocks_delivery
 from app.trip_agent_v3.domain.requirements import (
     DispositionStatus,
     ObligationPriority,
@@ -119,7 +120,8 @@ def assess_delivery(
         issues.append(
             _issue(
                 code=f"fact_gap_{gap.failure_code}",
-                severity=DeliveryIssueSeverity.BLOCKING,
+                severity=(DeliveryIssueSeverity.BLOCKING if gap_blocks_delivery(gap)
+                          else DeliveryIssueSeverity.REVIEW),
                 message=(
                     f"第 {gap.day_number} 天 "
                     f"{' → '.join(gap.place_names)}：{gap.failure_message} "
@@ -134,6 +136,14 @@ def assess_delivery(
     operational_stop_ids = {
         fact.stop_id for fact in candidate.operational_facts
     }
+    for fact in candidate.operational_facts:
+        if fact.visit_compatible is None:
+            issues.append(_issue(
+                code="operational_schedule_unspecified",
+                severity=DeliveryIssueSeverity.REVIEW,
+                message="已保留检索到的营业信息，来源未给出完整到访时段。",
+                recommendation="按现有地点与路线完成行程。",
+            ))
     for day in candidate.timeline.days:
         for stop in day.stops:
             if (
@@ -150,7 +160,7 @@ def assess_delivery(
             issues.append(
                 _issue(
                     code="operational_fact_missing",
-                    severity=DeliveryIssueSeverity.BLOCKING,
+                    severity=DeliveryIssueSeverity.REVIEW,
                     message=(
                         f"第 {day.day_number} 天 {stop.name} 在 "
                         f"{stop.arrival_at.strftime('%H:%M')} 到访，但没有"
@@ -168,6 +178,7 @@ def assess_delivery(
     has_specific_fact_issue = any(
         issue.code == "estimated_route_leg"
         or issue.code == "operational_fact_missing"
+        or issue.code == "operational_schedule_unspecified"
         or issue.code.startswith("fact_gap_")
         for issue in issues
     )
@@ -292,7 +303,7 @@ def assess_delivery(
         DeliveryState.BLOCKED
         if has_blocker
         else DeliveryState.REVIEW_REQUIRED
-        if candidate.fact_status is not FactStatus.VERIFIED or has_estimated_routes
+        if has_estimated_routes
         else DeliveryState.PUBLISHABLE
     )
     return DeliveryAssessment(
@@ -377,15 +388,12 @@ def _build_release_narrative(
     ]
     return ReleaseNarrative(
         overview=(
-            f"共 {len(candidate.timeline.days)} 天；"
-            f"显式地点已闭环 {candidate.coverage.disposed_place_count}/"
-            f"{candidate.coverage.explicit_place_count}。"
+            f"共 {len(candidate.timeline.days)} 天。"
             + (
                 "已安排：" + "、".join(scheduled_names) + "。"
                 if scheduled_names
-                else "本次没有需要安排的显式地点。"
+                else ""
             )
-            + "以下时间、交通与运营事实均来自当前运行通过门禁的候选。"
         ),
         days=tuple(day_summaries),
     )

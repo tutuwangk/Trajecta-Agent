@@ -1,17 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, CalendarDays, Check, Clock3, Compass, MapPin, Plus, Route, Sparkles, X, LoaderCircle } from "lucide-react";
+import { ArrowRight, CalendarDays, Check, Compass, MapPin, Plus, Route, Sparkles, X, LoaderCircle } from "lucide-react";
 import { answerAgentV3Clarification, cancelAgentV3Run, createAgentV3Revision, createAgentV3Run, createAgentV3Workspace, getAgentV3Delivery, getAgentV3Events, getAgentV3Run, getAgentV3Workspace, resumeAgentV3Run } from "@/lib/agent-v3-api";
 import type { AgentV3Delivery, AgentV3Event, AgentV3Run } from "@/lib/agent-v3-types";
 import { demoDelivery } from "@/lib/agent-v3-demo";
 import { mergeRunEvents } from "@/lib/agent-v3-progress";
+import { deliveryMatchesRun } from "@/lib/agent-v3-view";
 import { AgentProgress } from "./AgentProgress";
 import { DeliveryPanel } from "./DeliveryPanel";
 
 const activeStatuses = new Set(["created", "active"]);
 const terminalStatuses = new Set(["succeeded", "failed", "cancelled"]);
-const message = (reason: unknown) => reason instanceof Error ? reason.message : "操作未完成，请重试。";
+const actionMessages: Record<string, string> = {
+  "开始规划": "行程暂时无法开始，请重试。",
+  "恢复旅程": "暂时无法读取已保存的旅程，请重试。",
+  "调整中": "行程调整暂时未完成，请重试。",
+  "取消中": "规划暂时无法停止，请重试。",
+  "继续中": "规划暂时无法继续，请重试。",
+  "确认中": "旅行信息暂时未提交，请重试。",
+};
 
 export function AgentV3WorkspaceApp() {
   const [rawRequest, setRawRequest] = useState("");
@@ -48,6 +56,7 @@ export function AgentV3WorkspaceApp() {
     if (current?.run_id === value.run_id && terminalStatuses.has(current.status) && value.status !== current.status) return;
     runRef.current = value;
     setRun(value);
+    if (value.status !== "waiting_user") setQuestions([]);
   }, []);
 
   useEffect(() => {
@@ -65,13 +74,13 @@ export function AgentV3WorkspaceApp() {
         if (runPayload.run.workspace_id !== savedWorkspaceId) throw new Error("保存的旅程信息不匹配，请重新规划。");
         setWorkspaceId(savedWorkspaceId);
         applyRun(runPayload.run);
-        setQuestions(runPayload.clarification_questions);
+        setQuestions(runPayload.run.status === "waiting_user" ? runPayload.clarification_questions : []);
         const source = [...workspacePayload.workspace.sources].reverse().find((item) => item.kind === "user_request" || item.kind === "user_revision");
         setRawRequest(source?.content || "");
         setDestination(workspacePayload.workspace.goal.destination);
         setStartDate(workspacePayload.workspace.goal.start_date);
         setDays(String(workspacePayload.workspace.goal.days));
-      }).catch((reason) => { if (!controller.signal.aborted && token === generation.current) setError(message(reason)); })
+      }).catch((reason) => { if (!controller.signal.aborted && token === generation.current) setError("暂时无法读取行程，请重试。"); })
       .finally(() => { if (token === generation.current) { operation.current = false; setBusy(""); } });
     return () => controller.abort();
   }, [applyRun]);
@@ -83,23 +92,27 @@ export function AgentV3WorkspaceApp() {
     let timer: ReturnType<typeof setTimeout>;
     let attempts = 0;
     let failures = 0;
+    const token = generation.current;
     async function poll() {
       try {
-        const [runPayload, deliveryPayload] = await Promise.all([getAgentV3Run(id, controller.signal), getAgentV3Delivery(id, controller.signal)]);
-        if (controller.signal.aborted || runRef.current?.run_id !== id) return;
+        const runPayload = await getAgentV3Run(id, controller.signal);
+        if (controller.signal.aborted || token !== generation.current || operation.current || runRef.current?.run_id !== id) return;
         applyRun(runPayload.run);
-        setQuestions(runPayload.clarification_questions);
-        if (!terminalStatuses.has(runRef.current?.status || "") || deliveryPayload?.run_status === runRef.current?.status) setDelivery(deliveryPayload);
+        setQuestions(runRef.current?.status === "waiting_user" && runPayload.run.status === "waiting_user" ? runPayload.clarification_questions : []);
+        const deliveryPayload = await getAgentV3Delivery(id, controller.signal);
+        if (controller.signal.aborted || token !== generation.current || operation.current || runRef.current?.run_id !== id) return;
+        const matches = !deliveryPayload || !!runRef.current && deliveryMatchesRun(deliveryPayload, runRef.current);
+        setDelivery(matches ? deliveryPayload : null);
         failures = 0;
         attempts += 1;
-        if (activeStatuses.has(runPayload.run.status) && activeStatuses.has(runRef.current?.status || "")) {
-          if (attempts >= 120) { setError("规划仍在继续，点击重试查看结果。"); return; }
+        if (!matches || activeStatuses.has(runRef.current?.status || "")) {
+          if (attempts >= 120) { setError(activeStatuses.has(runRef.current?.status || "") ? "规划仍在继续，点击重试查看结果。" : "行程结果同步未完成，请重试。"); return; }
           timer = setTimeout(() => void poll(), 2500);
         }
       } catch (reason) {
-        if (controller.signal.aborted) return;
+        if (controller.signal.aborted || token !== generation.current || operation.current || runRef.current?.run_id !== id) return;
         failures += 1;
-        if (failures >= 3 || !active) { setError(message(reason)); return; }
+        if (failures >= 3 || !active) { setError("暂时无法读取行程，请重试。"); return; }
         timer = setTimeout(() => void poll(), failures * 3000);
       }
     }
@@ -124,7 +137,7 @@ export function AgentV3WorkspaceApp() {
         if (active) timer = setTimeout(() => void pollEvents(), 1500);
       } catch (reason) {
         if (controller.signal.aborted || runRef.current?.run_id !== id) return;
-        setEventError(message(reason)); failures += 1;
+        setEventError("暂时无法更新旅行进度"); failures += 1;
         if (active) timer = setTimeout(() => void pollEvents(), Math.min(15000, failures * 3000));
       }
     }
@@ -135,9 +148,10 @@ export function AgentV3WorkspaceApp() {
   async function perform(label: string, action: () => Promise<void>) {
     if (operation.current) return;
     operation.current = true;
+    generation.current += 1;
     setBusy(label); setError("");
-    try { await action(); } catch (reason) { setError(message(reason)); }
-    finally { operation.current = false; setBusy(""); }
+    try { await action(); } catch { setError(actionMessages[label] || "操作暂时未完成，请重试。"); }
+    finally { operation.current = false; setBusy(""); setPollVersion((value) => value + 1); }
   }
 
   function remember(id: string, value: AgentV3Run) {
@@ -217,12 +231,12 @@ export function AgentV3WorkspaceApp() {
   }
 
   const cancel = () => void perform("取消中", async () => { if (run) applyRun((await cancelAgentV3Run(run.run_id)).run); });
-  const resume = () => void perform("继续中", async () => { if (run) { applyRun((await resumeAgentV3Run(run.run_id)).run); setPollVersion((value) => value + 1); } });
+  const resume = () => void perform("继续中", async () => { if (run) { applyRun((await resumeAgentV3Run(run.run_id)).run); setDelivery(null); setAnswers({}); } });
   const clarification = run?.status === "waiting_user" && questions.length ? (
     <section className="clarification-panel" aria-label="待确认信息">
       <h2 className="mb-3 font-semibold">待确认</h2>
       <div className="space-y-3">{questions.map((question) => <label key={question} className="form-label">{question}<input className="field mt-2" value={answers[question] || ""} disabled={!!busy} onChange={(event) => setAnswers((current) => ({ ...current, [question]: event.target.value }))} /></label>)}
-        <button className="btn-primary w-full" disabled={!!busy || questions.some((question) => !answers[question]?.trim())} onClick={() => void perform("确认中", async () => { if (run) { const response = await answerAgentV3Clarification(run.run_id, answers); applyRun(response.run); setQuestions([]); setAnswers({}); setPollVersion((value) => value + 1); } })}>{busy || "确认"}</button>
+        <button className="btn-primary w-full" disabled={!!busy || questions.some((question) => !answers[question]?.trim())} onClick={() => void perform("确认中", async () => { if (run) { const response = await answerAgentV3Clarification(run.run_id, answers); applyRun(response.run); setDelivery(null); setQuestions([]); setAnswers({}); } })}>{busy || "确认"}</button>
       </div>
     </section>
   ) : null;
@@ -254,7 +268,6 @@ export function AgentV3WorkspaceApp() {
             {hasItinerary || workspaceId ? <button className="btn-primary" disabled={!!busy || active || run?.status === "waiting_user"} onClick={newTrip}><Plus size={16} />新行程</button> : null}
           </nav>
         </header>
-        {hasItinerary && !drawerOpen ? errorFeedback : null}
         {hasItinerary && clarification ? <div className="clarification-floating">{clarification}</div> : null}
         <div className={`travel-columns ${hasItinerary ? "has-itinerary" : run ? "is-planning" : "is-start"}`}>
           {!hasItinerary ? <aside className="planning-column">{planningForm}{clarification}</aside> : null}
@@ -262,14 +275,12 @@ export function AgentV3WorkspaceApp() {
             {hasItinerary && delivery ? <DeliveryPanel delivery={delivery} destination={demo ? "成都" : destination} demo={demo} /> : run ? <AgentProgress run={run} events={events} eventError={eventError} busy={!!busy} onCancel={cancel} onResume={resume} onRetry={() => setPollVersion((value) => value + 1)} /> : <JourneyPreview destination={destination} startDate={startDate} days={days} />}
           </section>
         </div>
-        {hasItinerary && run ? <div className="run-history"><details><summary><Clock3 size={15} />查看规划记录<ChevronIcon /></summary><AgentProgress run={run} events={events} eventError={eventError} busy={!!busy} onCancel={cancel} onResume={resume} onRetry={() => setPollVersion((value) => value + 1)} /></details></div> : null}
       </div>
       {drawerOpen ? <div className="drawer-overlay" onClick={() => setDrawerOpen(false)}><section ref={drawerRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label="调整行程" className="planning-drawer" onClick={(event) => event.stopPropagation()}><button className="drawer-close" aria-label="关闭" onClick={() => setDrawerOpen(false)}><X size={20} /></button>{planningForm}</section></div> : null}
     </main>
   );
 }
 
-function ChevronIcon() { return <ArrowRight size={14} className="history-arrow" />; }
 
 function JourneyPreview({ destination, startDate, days }: { destination: string; startDate: string; days: string }) {
   return <div className="journey-preview">

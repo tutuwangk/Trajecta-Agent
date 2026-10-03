@@ -203,7 +203,7 @@ class OperationalFact(DomainModel):
     candidate_id: str = Field(min_length=1, max_length=200)
     stop_id: str = Field(min_length=1, max_length=200)
     visit_at: datetime
-    visit_compatible: Literal[True] = True
+    visit_compatible: Literal[True] | None = True
     claims: tuple[OperationalClaim, ...] = Field(min_length=1, max_length=10)
     sources: tuple[FactSourceRecord, ...] = Field(min_length=1, max_length=5)
 

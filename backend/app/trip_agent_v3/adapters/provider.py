@@ -13,7 +13,6 @@ from openai.types.chat import (
 from openai.types.chat.chat_completion_tool_choice_option_param import (
     ChatCompletionToolChoiceOptionParam,
 )
-from pydantic_ai.messages import ModelResponse
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.openai import (
     OpenAIChatModel,
@@ -128,9 +127,3 @@ def deepseek_v4_settings(
         },
     }
     return settings  # type: ignore[return-value]
-
-
-def is_complete_final_response(response: ModelResponse) -> bool:
-    """Only an explicit provider stop is a complete Agent response."""
-
-    return response.finish_reason == "stop"

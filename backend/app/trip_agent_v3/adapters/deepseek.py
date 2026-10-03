@@ -32,7 +32,11 @@ from app.trip_agent_v3.adapters.provider import (
     DeepSeekV4ChatModel,
     deepseek_v4_settings,
 )
-from app.trip_agent_v3.autonomous_runtime import AutonomousTripRuntime
+from app.trip_agent_v3.autonomous_runtime import (
+    AutonomousRuntimeCancelled,
+    AutonomousRuntimeError,
+    AutonomousTripRuntime,
+)
 from app.trip_agent_v3.commitments import PlanCommitmentError
 from app.trip_agent_v3.domain.execution import JourneyGoal, PlanningSubmission
 from app.trip_agent_v3.domain.sources import RequirementProposal, SourceDocument
@@ -509,6 +513,14 @@ Use list_grounding_targets; each read returns exactly one grounding group. Submi
 decision with concrete name/city/category reasoning. Never choose an entrance, transit
 station, auxiliary facility, arbitrary branch, or child merchant for a parent place.
 Request clarification when the bounded group remains materially ambiguous.
+Clarification is for user-owned information: the intended branch, lodging, flight,
+or private booking. Public opening hours, closures, last entry, reservation rules,
+and route facts belong to Runtime fact tools. assess_candidate performs bounded
+source lookup and targeted follow-up. Use returned facts to repair timing or place
+choices. Ordinary missing operating information allows delivery with the available
+map and search facts; missing optional details are not a reason to keep repairing,
+ask the traveler to research, or stop planning. Repair explicitly sourced closures
+and concrete time conflicts before finalizing.
 Once several groups have been read, submit their clear decisions together through
 submit_grounding_decisions. Batch independent reads in one model response; each read
 still returns exactly one bounded group. Keep ambiguous groups for specific clarification.
@@ -784,7 +796,12 @@ class PydanticAIRootTripPlannerAgent:
         async def request_clarification(
             ctx: RunContext[RootAgentDeps],
         ) -> dict[str, object]:
-            questions = ctx.deps.runtime.request_clarification()
+            try:
+                questions = ctx.deps.runtime.request_clarification()
+            except AutonomousRuntimeCancelled:
+                raise
+            except AutonomousRuntimeError as exc:
+                return {"ok": False, "code": "clarification_not_needed", "feedback": str(exc)}
             return {"ok": True, "questions": questions}
 
         @agent.output_validator
@@ -857,9 +874,6 @@ class PydanticAIRootTripPlannerAgent:
                 message_history = None
         for _episode in range(6):
             if _should_request_grounding_clarification(runtime):
-                runtime.request_clarification()
-                return
-            if _should_request_fact_clarification(runtime):
                 runtime.request_clarification()
                 return
             if requests_used >= request_limit or tools_used >= tool_calls_limit:
@@ -1019,37 +1033,6 @@ def _runtime_has_compaction_checkpoint(
     )
 
 
-def _should_request_fact_clarification(
-    runtime: AutonomousTripRuntime,
-) -> bool:
-    assessment = getattr(runtime, "assessment", None)
-    fact_gap_report = getattr(runtime, "fact_gap_report", None)
-    if (
-        assessment is None
-        or assessment.may_publish
-        or fact_gap_report is None
-        or not fact_gap_report.gaps
-    ):
-        return False
-    if any(
-        getattr(gap, "failure_code", None)
-        == "planned_visit_operationally_incompatible"
-        for gap in fact_gap_report.gaps
-    ):
-        return False
-    blocking_issues = tuple(
-        issue
-        for issue in assessment.issues
-        if issue.severity.value == "blocking"
-    )
-    return bool(blocking_issues) and all(
-        issue.code == "operational_fact_missing"
-        or issue.code == "fact_status_inconsistent"
-        or issue.code.startswith("fact_gap_")
-        for issue in blocking_issues
-    )
-
-
 def _root_episode_prompt(runtime: AutonomousTripRuntime) -> str:
     base = (
         f"Plan {runtime.goal.destination} from "
@@ -1101,7 +1084,8 @@ def _root_episode_prompt(runtime: AutonomousTripRuntime) -> str:
     return (
         base
         + " The previous candidate was not publishable. Revise only what the "
-        "following run-bound feedback requires, or request specific user "
-        "clarification when external evidence cannot be resolved: "
+        "following run-bound feedback requires. Public facts are handled by "
+        "Runtime lookup tools. Repair visit timing or allowed place choices using "
+        "the returned facts; unresolved provider failures can retain a continuation: "
         + json.dumps(feedback, ensure_ascii=False, default=str)
     )

@@ -2,15 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  coverageStatusLabel,
   deliveryHeading,
-  experienceStatusLabel,
-  factStatusLabel,
+  deliveryMatchesRun,
+  reservationReminders,
   interleaveTimeline,
-  providerBlockerMessage,
-  runStatusLabel,
 } from "./agent-v3-view.ts";
-import type { AgentV3Delivery } from "./agent-v3-types.ts";
+import type { AgentV3Candidate, AgentV3Delivery } from "./agent-v3-types.ts";
 
 function delivery(overrides: Partial<AgentV3Delivery>): AgentV3Delivery {
   return {
@@ -24,14 +21,14 @@ function delivery(overrides: Partial<AgentV3Delivery>): AgentV3Delivery {
   };
 }
 
-test("delivery copy never calls cancelled or review-required output a release", () => {
+test("empty result headings describe travel progress", () => {
   assert.equal(
     deliveryHeading(delivery({ run_status: "cancelled" })),
-    "本次运行已取消，未交付",
+    "规划已停止",
   );
   assert.equal(
     deliveryHeading(delivery({ delivery_state: "review_required" })),
-    "方案待调整",
+    "本次规划未完成",
   );
   assert.equal(
     deliveryHeading(
@@ -57,28 +54,26 @@ test("delivery copy never calls cancelled or review-required output a release", 
         },
       }),
     ),
-    "已核验发布方案",
+    "你的行程",
   );
 });
 
-test("coverage labels expose the complete disposition loop", () => {
-  assert.equal(coverageStatusLabel("scheduled"), "已安排");
-  assert.equal(coverageStatusLabel("pending_confirmation"), "待确认");
-  assert.equal(coverageStatusLabel("not_scheduled"), "不安排");
-  assert.equal(coverageStatusLabel("unhandled"), "未处置");
-});
-
-test("run, fact, experience and provider states have actionable Chinese semantics", () => {
-  assert.equal(runStatusLabel("needs_resume"), "已暂停，可继续");
-  assert.equal(runStatusLabel("failed"), "运行失败，未发布");
-  assert.equal(factStatusLabel("degraded"), "存在事实缺口");
-  assert.equal(experienceStatusLabel("needs_adjustment"), "需要调整");
-  assert.equal(
-    providerBlockerMessage("provider_balance_insufficient"),
-    "模型账户余额不足；补充余额后可从当前检查点继续。",
-  );
-  assert.match(providerBlockerMessage("provider_authentication_failed"), /认证/);
-  assert.match(providerBlockerMessage("provider_quota_exhausted"), /额度/);
+test("resumed runs reject the previous waiting-user delivery and mismatched assessment", () => {
+  const run = { run_id: "run-current", workspace_id: "workspace", goal_revision_id: "goal", status: "active" as const };
+  assert.equal(deliveryMatchesRun(delivery({ run_status: "waiting_user" }), run), false);
+  assert.equal(deliveryMatchesRun(delivery({ run_status: "active" }), run), true);
+  assert.equal(deliveryMatchesRun(delivery({ run_status: "active", run_id: "run-old" }), run), false);
+  const candidate = {
+    candidate_snapshot_id: "candidate-current", producing_run_id: run.run_id,
+    fact_status: "verified" as const, experience_status: "good" as const,
+    coverage: { explicit_place_count: 0, disposed_place_count: 0, coverage_ratio: 1, open_obligation_ids: [], entries: [] },
+    grounding_decisions: [], unresolved_places: [], timeline: { snapshot_id: "timeline", days: [] },
+    fact_gap_report: { fact_need_plan_id: "needs", gaps: [] }, operational_facts: [],
+  };
+  const assessment = { candidate_snapshot_id: "candidate-old", producing_run_id: run.run_id, state: "blocked" as const, may_publish: false, issues: [] };
+  assert.equal(deliveryMatchesRun(delivery({ run_status: "active", candidate, assessment }), run), false);
+  assert.equal(deliveryMatchesRun(delivery({ run_status: "active", candidate, assessment: { ...assessment, candidate_snapshot_id: candidate.candidate_snapshot_id } }), run), true);
+  assert.equal(deliveryMatchesRun(delivery({ run_status: "active", candidate: { ...candidate, producing_run_id: "run-old" } }), run), false);
 });
 
 test("timeline rows preserve explicit stop-leg-stop sequence", () => {
@@ -200,4 +195,29 @@ test("map sequence segments preserve selectable stop IDs and interrupt at a coor
   const pairs = consecutiveMapPairs(points);
   assert.deepEqual(pairs.map((pair) => [pair.from.stop.stop_id, pair.to.stop.stop_id]), [["c", "d"]]);
   assert.equal(pairs[0].to, points[2]);
+});
+
+
+test("reservation reminders require a scheduled place and the claim's linked web source", () => {
+  const source = { source_id: "official", provider: "official", uri: "https://example.com/reservations", title: "预约指南", excerpt: "预约入口", retrieved_at: "2026-10-03T00:00:00Z" };
+  const fact = { fact_id: "fact", candidate_id: "c", stop_id: "museum", visit_at: "2026-10-03T09:00:00", visit_compatible: true as const,
+    sources: [source, { ...source, source_id: "unsafe", uri: "javascript:alert(1)" }],
+    claims: [
+      { field: "reservation" as const, value: "请提前预约入场时间", source_ids: ["official"], confidence: 1 },
+      { field: "reservation" as const, value: "没有引用来源", source_ids: [], confidence: 1 },
+      { field: "reservation" as const, value: "来源未匹配", source_ids: ["missing"], confidence: 1 },
+      { field: "reservation" as const, value: "链接不可用", source_ids: ["unsafe"], confidence: 1 },
+      { field: "opening_hours" as const, value: "内部营业时间说明", source_ids: ["official"], confidence: 1 },
+    ] };
+  const candidate: AgentV3Candidate = {
+    candidate_snapshot_id: "candidate", producing_run_id: "run", fact_status: "failed", experience_status: "good",
+    coverage: { explicit_place_count: 1, disposed_place_count: 1, coverage_ratio: 1, open_obligation_ids: [], entries: [] },
+    grounding_decisions: [], unresolved_places: [],
+    timeline: { snapshot_id: "timeline", days: [{ day_number: 1, calendar_date: "2026-10-03", title: "第一天", legs: [], stops: [{ stop_id: "museum", candidate_id: "c", obligation_ids: [], name: "博物馆", kind: "visit", arrival_at: "09:00", departure_at: "10:00", stay_duration_min: 60 }] }] },
+    fact_gap_report: { fact_need_plan_id: "needs", gaps: [] },
+    operational_facts: [fact, { ...fact, fact_id: "unscheduled", stop_id: "other" }],
+  };
+  assert.deepEqual(reservationReminders(candidate), [{ id: "fact-0", name: "博物馆", value: "请提前预约入场时间", sources: [source] }]);
+  assert.deepEqual(reservationReminders(candidate, 1), reservationReminders(candidate));
+  assert.deepEqual(reservationReminders(candidate, 2), []);
 });

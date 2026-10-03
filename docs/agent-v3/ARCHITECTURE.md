@@ -22,8 +22,8 @@ V1/V2 包。
 9. Agent 只决定地点取舍、分天、顺序和停留时长；路线事实与全部时间算术由 Runtime 编译。
 10. 事实请求只能由已提交草案的 stop 和相邻 leg 派生。先查询路线并编译真实到达时间，再只对计划内非锚点停靠查询该到访时刻的运营事实。
 11. `spatial_estimate` 永远不能成为 verified 路线事实。
-12. 可发布运营事实必须包含来源 URI、摘要、内容哈希、检索时间和带来源引用的 claim；地点身份不能替代营业、闭馆、停止入场或预约核验。
-13. `degraded` 事实和运营事实缺口保留预览并等待复核。事实已核验、无 blocking issue 的 `needs_adjustment` 行程可以形成 Release，具体体验建议保留在 Candidate 与 Assessment 中。
+12. 运营信息采用高德地点详情或检索返回的来源，保存 URI、摘要、内容哈希、检索时间及 claim 引用。常规周期营业时间直接适用，无须精确日期公告或多来源重复确认。提取器的置信度数值不决定来源事实的采用。
+13. 普通营业资料缺失或提取服务失败允许交付，内部 `fact_status=degraded` 保留资料完整性。明确的闭馆、营业时段冲突、地点身份错误和固定预约冲突要求 Agent 调整。空间估算路线继续保留 `estimated` 并等待真实路线。具体体验建议保存在 Candidate 与 Assessment。
 14. Release 必须绑定 `producing_run_id`；读取当前运行时禁止回退到工作区最新 Release。
 15. 取消、失败和成功是不可覆盖终态；等待用户、需要恢复和发布具有独立且一致的语义。
 16. Grounding 一旦完成就不可在同一 goal revision 中重新打开；候选选择、规划、事实与交付
@@ -49,9 +49,9 @@ flowchart LR
     O --> J["CandidateSnapshot<br/>覆盖、消歧、来源事实、体验"]
     J --> K{"DeliveryAssessment"}
     K -->|"Agent 调整"| G
-    K -->|"Agent 明确发布 + verified + no blocking"| L["Run-bound Release + 体验建议"]
+    K -->|"Agent 明确发布 + 真实路线 + 无执行冲突"| L["Run-bound Release"]
     L --> N["关闭工具写入"]
-    K -->|"事实待复核 / blocker"| M["行程预览 + 具体问题"]
+    K -->|"明确执行冲突"| M["Agent 调整行程"]
 ```
 
 发布顺序固定为：
@@ -96,7 +96,13 @@ Runtime 不规定 Agent 必须按固定业务脚本调用工具，但强制所�
 候选先评估，再由 Agent 调整或明确发布。`RunLifecycleToolset` 统一关闭已结束执行的所有工具；
 根执行循环在发布后停止，并补齐末次工具响应。交付接口使用 Release 绑定的候选。成功状态与 Release 由 Repository 在同一事务中提交。
 
-Agent 提前返回或达到调用预算不会触发“最好版本发布”。Runtime 在每个候选组、消歧决定和草案写入后保存业务 checkpoint；完成 Grounding 或一次不可发布 Candidate 后，provider transcript 被切断，下一回合只读取紧凑业务 checkpoint 和具体反馈。相同输入恢复时复用已收敛状态，不重复地图查询；Grounding 完成后相关工具被阶段锁拒绝。计划提交违反当前 Ledger／Grounding 时返回 `ModelRetry`，保留 Agent 修正自主性而不把偏差误报成 Runtime failure。未闭环运行转为 `needs_resume`；存在实质地点歧义、无匹配地点，或仅剩无法继续调查的外部事实 blocker 时转为 `waiting_user`，回答继续使用同一业务 `run_id`。用户修订导致输入指纹变化时，旧 checkpoint 不会污染新目标。
+Runtime 在候选组、消歧决定和草案写入后保存业务 checkpoint。完成 Grounding 或一次不可发布 Candidate 后，provider transcript 切换为紧凑业务状态和具体反馈。相同输入恢复时复用已收敛的地点和成功事实，失败事实重新查询。Grounding 完成后，Agent 继续规划和修复。计划提交违反 Ledger／Grounding 时返回 `ModelRetry`。未闭环运行转为 `needs_resume`。
+
+`waiting_user` 只用于用户掌握的住宿、航班、私人预约信息和意图地点选择。营业时间、闭馆、停止入场、公开预约规则和路线事实由工具查询。已有高德营业资料时复用这些数据；其余地点在一次执行内最多进行两次搜索和两页正文读取。工具接受现有来源中的周期营业资料，缺少完整时段的来源信息以 `visit_compatible=null` 保存。普通资料缺口经 `fact_policy.py` 允许交付；明确冲突进入 Agent 调整。地点澄清问题由候选名称、地址及意图选择生成。
+
+最终产品页展示地图、时间轴、地点信息和有来源的预约事项。Assessment、FactGap、provider 错误与工具轨迹用于内部处理。页面展示由行程和运营 claims 生成，内部诊断模块已移除。
+
+回答继续使用同一业务 `run_id`。草案编号包含输入指纹，候选编号包含本次事实结果；新输入与补查事实各自形成独立快照。API 只返回当前未回答的问题，执行中的交付状态为 `working`。发布后读取 Release 绑定的候选与评估。
 
 ## 5. 状态语义
 
@@ -115,11 +121,11 @@ Agent 提前返回或达到调用预算不会触发“最好版本发布”。Ru
 
 - `working`：没有候选交付物；
 - `publishable`：严格门禁通过；
-- `review_required`：可预览，路线或其他事实仍需核验；
-- `blocked`：存在未处置地点、歧义、事实缺口或固定预约 blocker；
+- `review_required`：路线仍为空间估算；
+- `blocked`：存在未处置地点、歧义、路线缺口、明确营业冲突或固定预约 blocker；
 - `not_delivered`：终态运行没有交付物。
 
-二者必须分别展示。例如 `run=needs_resume, delivery=blocked` 表示已经形成可审阅候选，但仍有事实或约束缺口；它不是发布版本。
+运行与交付状态分别保存，前端按状态展示旅行进度与行程。内部状态名称与诊断详情留在处理记录。
 
 ## 6. 主要实现位置
 

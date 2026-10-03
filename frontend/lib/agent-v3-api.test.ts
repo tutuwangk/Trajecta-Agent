@@ -9,11 +9,15 @@ test("travel requests handle missing delivery, structured errors and invalid res
     globalThis.fetch = async () => new Response(null, { status: 404 });
     assert.equal(await getAgentV3Delivery("missing"), null);
     globalThis.fetch = async () => Response.json({ detail: [{ msg: "invalid" }] }, { status: 422 });
-    await assert.rejects(getAgentV3Run("invalid"), /请检查旅行信息/);
+    await assert.rejects(getAgentV3Run("invalid"), /请检查目的地/);
     globalThis.fetch = async () => new Response("unavailable", { status: 502 });
     await assert.rejects(getAgentV3Run("unavailable"), /旅行规划服务暂时无法连接/);
     globalThis.fetch = async () => Response.json({ error: { code: "network_error", message: "本地旅行规划服务未启动，请启动服务后重试。" } }, { status: 502 });
-    await assert.rejects(getAgentV3Run("backend-offline"), /本地旅行规划服务未启动/);
+    await assert.rejects(getAgentV3Run("backend-offline"), /旅行规划服务暂时无法连接/);
+    globalThis.fetch = async () => Response.json({ detail: "internal provider failure" }, { status: 500 });
+    await assert.rejects(getAgentV3Run("raw-detail"), /旅行规划服务暂时无法连接/);
+    globalThis.fetch = async () => Response.json({ error: { code: "unknown", message: "internal provider failure" } }, { status: 500 });
+    await assert.rejects(getAgentV3Run("raw-message"), /旅行规划服务暂时无法连接/);
     globalThis.fetch = async () => Response.json({ error: { message: 123 } }, { status: 502 });
     await assert.rejects(getAgentV3Run("invalid-error"), /旅行规划服务暂时无法连接/);
     globalThis.fetch = async () => new Response("invalid", { status: 200 });

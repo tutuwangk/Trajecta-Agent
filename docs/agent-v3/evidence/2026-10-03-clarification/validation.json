@@ -1,0 +1,17 @@
+{
+  "backend_tests_passed": 223,
+  "frontend_tests_passed": 18,
+  "python_compile": "passed",
+  "typescript": "passed",
+  "production_build": "passed",
+  "desktop_replay": "passed",
+  "refresh_retains_resolved_state": true,
+  "local_health": {
+    "status": "ok",
+    "stack": "v3"
+  },
+  "original_run_questions_after_restart": [],
+  "original_run_pending_question_forms": 0,
+  "original_run_old_confirmation_labels": 0,
+  "original_run_internal_diagnostic_disclosure": 0
+}

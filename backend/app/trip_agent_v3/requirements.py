@@ -17,7 +17,6 @@ from app.trip_agent_v3.domain.requirements import (
     QueryDecision,
     RequirementLedger,
     TimeWindowRequirement,
-    TravelMode,
 )
 from app.trip_agent_v3.domain.sources import (
     DayAssignmentProposal,

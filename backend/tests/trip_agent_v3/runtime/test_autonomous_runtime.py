@@ -703,6 +703,7 @@ class FailingFactProvider(FactProvider):
 
 
 class OperationalFailingFactProvider(FactProvider):
+    failure_code = "operational_evidence_insufficient"
     async def resolve(
         self,
         *,
@@ -715,7 +716,7 @@ class OperationalFailingFactProvider(FactProvider):
                 need=need.model_copy(
                     update={
                         "status": FactNeedStatus.FAILED,
-                        "failure_code": "operational_evidence_insufficient",
+                        "failure_code": self.failure_code,
                         "failure_message": (
                             f"{candidate.name} 缺少计划到访时段的可追溯运营事实。"
                         ),
@@ -728,7 +729,19 @@ class OperationalFailingFactProvider(FactProvider):
 class FactClarifyingAgent(RootAgent):
     async def run(self, runtime: AutonomousTripRuntime) -> None:
         await super().run(runtime)
-        runtime.request_clarification()
+        with pytest.raises(AutonomousRuntimeError, match="user-owned information"):
+            runtime.request_clarification()
+
+
+class ClosedVisitFactProvider(OperationalFailingFactProvider):
+    async def resolve(self, *, need, candidates):
+        resolution = await super().resolve(need=need, candidates=candidates)
+        if need.kind is FactNeedKind.PLACE_OPERATION:
+            return resolution.model_copy(update={"need": resolution.need.model_copy(update={
+                "failure_code": "planned_visit_operationally_incompatible",
+                "failure_message": "检索到当日闭馆公告，需要调整到访日期。",
+            })})
+        return resolution
 
 
 def _run() -> RunRecord:
@@ -1087,7 +1100,7 @@ async def test_runtime_owns_draft_revision_and_avoids_candidate_id_collision(
         requirement_interpreter=Interpreter(),
         root_agent=agent,
         place_provider=PlaceProvider(),
-        fact_provider=OperationalFailingFactProvider(),
+        fact_provider=ClosedVisitFactProvider(),
         repository=SqliteTripAgentV3Repository(tmp_path / "v3.sqlite3"),
         telemetry=telemetry,
     )
@@ -1321,7 +1334,9 @@ async def test_material_ambiguity_waits_on_same_run_without_candidate_release(
     )
 
     assert result.run.status is RunStatus.WAITING_USER
-    assert result.clarification_questions == ("请确认具体门店。",)
+    assert len(result.clarification_questions) == 1
+    assert "测试酒店" in result.clarification_questions[0]
+    assert "哪个地点或门店" in result.clarification_questions[0]
     assert result.release is None
     assert repository.get_run(_run().run_id).status is RunStatus.WAITING_USER
 
@@ -1351,6 +1366,30 @@ async def test_no_match_requests_address_or_permission_instead_of_stalling(
     assert "测试博物馆" in result.clarification_questions[0]
     assert "地址" in result.clarification_questions[0]
     assert result.release is None
+
+
+@pytest.mark.anyio
+async def test_grounding_question_is_scoped_to_identity_even_with_wrong_model_prose(tmp_path):
+    class PublicQuestionAgent(ClarifyingAgent):
+        async def run(self, runtime):
+            submit = runtime.submit_grounding_decision
+            def submit_question(decision):
+                if decision.status is ResolutionStatus.NEEDS_CONFIRMATION:
+                    decision = decision.model_copy(update={"clarification_question": "请你查询酒店营业时间并提供官方来源。"})
+                submit(decision)
+            runtime.submit_grounding_decision = submit_question
+            await super().run(runtime)
+
+    result = await execute_autonomous_journey(
+        run=_run(), goal=_goal(), sources=(source_document(source_id="source-1", kind="user_request", content=RAW),),
+        requirement_interpreter=Interpreter(), root_agent=PublicQuestionAgent(),
+        place_provider=PlaceProvider(), fact_provider=FactProvider(),
+        repository=SqliteTripAgentV3Repository(tmp_path / "identity.sqlite3"),
+    )
+    assert result.run.status is RunStatus.WAITING_USER
+    assert "哪个地点或门店" in result.clarification_questions[0]
+    assert "营业时间" not in result.clarification_questions[0]
+    assert "官方来源" not in result.clarification_questions[0]
 
 
 @pytest.mark.anyio
@@ -1387,10 +1426,13 @@ async def test_scheduled_route_failure_names_places_and_prevents_release(
 
 
 @pytest.mark.anyio
-async def test_operational_fact_gap_persists_blocked_candidate_with_exact_stops(
-    tmp_path,
+@pytest.mark.parametrize("failure_code", ["operational_sources_missing", "operational_evidence_insufficient", "operational_extraction_failed"])
+async def test_operational_fact_gap_publishes_trip_with_available_route_facts(
+    tmp_path, failure_code,
 ) -> None:
     repository = SqliteTripAgentV3Repository(tmp_path / "v3.sqlite3")
+    provider = OperationalFailingFactProvider()
+    provider.failure_code = failure_code
     result = await execute_autonomous_journey(
         run=_run(),
         goal=_goal(),
@@ -1404,15 +1446,15 @@ async def test_operational_fact_gap_persists_blocked_candidate_with_exact_stops(
         requirement_interpreter=Interpreter(),
         root_agent=RootAgent(),
         place_provider=PlaceProvider(),
-        fact_provider=OperationalFailingFactProvider(),
+        fact_provider=provider,
         repository=repository,
     )
 
-    assert result.run.status is RunStatus.NEEDS_RESUME
-    assert result.release is None
+    assert result.run.status is RunStatus.SUCCEEDED
+    assert result.release is not None
     assert result.candidate is not None
     assert result.assessment is not None
-    assert result.assessment.state.value == "blocked"
+    assert result.assessment.state.value == "publishable"
     assert result.fact_gap_report is not None
     assert {
         gap.place_names for gap in result.fact_gap_report.gaps
@@ -1422,11 +1464,17 @@ async def test_operational_fact_gap_persists_blocked_candidate_with_exact_stops(
     )
     persisted = repository.latest_candidate_for_run(_run().run_id)
     assert persisted is not None
-    assert persisted.fact_status.value == "failed"
+    assert persisted.fact_status.value == "degraded"
+    assert result.release.candidate_snapshot_id == persisted.candidate_snapshot_id
+    assert all(event["type"] != "fact_resolution_blocked" for event in result.events)
+    assert all(leg.fact_status is FactResolutionStatus.VERIFIED
+               for day in persisted.timeline.days for leg in day.legs)
+    assert all(stop.departure_at <= next_stop.arrival_at
+               for day in persisted.timeline.days for stop, next_stop in zip(day.stops, day.stops[1:]))
 
 
 @pytest.mark.anyio
-async def test_fact_blocker_can_request_specific_user_input_without_failed_run(
+async def test_public_fact_gaps_remain_owned_by_runtime_tools(
     tmp_path,
 ) -> None:
     result = await execute_autonomous_journey(
@@ -1446,15 +1494,62 @@ async def test_fact_blocker_can_request_specific_user_input_without_failed_run(
         repository=SqliteTripAgentV3Repository(tmp_path / "v3.sqlite3"),
     )
 
-    assert result.run.status is RunStatus.WAITING_USER
-    assert result.release is None
-    assert len(result.clarification_questions) == 2
-    assert all(
-        "第 1 天" in question
-        and "官方来源" in question
-        and (
-            "测试博物馆" in question
-            or "测试餐厅" in question
-        )
-        for question in result.clarification_questions
+    assert result.run.status is RunStatus.SUCCEEDED
+    assert result.release is not None
+    assert result.clarification_questions == ()
+    assert all(event["type"] != "clarification_requested" for event in result.events)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("answer_changes_input", [False, True])
+async def test_recovered_facts_replace_blocked_snapshot_without_identity_conflict(
+    tmp_path, answer_changes_input,
+) -> None:
+    repository = SqliteTripAgentV3Repository(tmp_path / "recovery.sqlite3")
+    sources = (source_document(source_id="source-1", kind="user_request", content=RAW),)
+    first = await execute_autonomous_journey(
+        run=_run(), goal=_goal(), sources=sources,
+        requirement_interpreter=Interpreter(), root_agent=RootAgent(),
+        place_provider=PlaceProvider(), fact_provider=ClosedVisitFactProvider(),
+        repository=repository,
     )
+    assert first.candidate is not None
+    blocked_id = first.candidate.candidate_snapshot_id
+
+    class ResumeAssessmentAgent:
+        async def run(self, runtime):
+            assert runtime.draft is not None
+            await runtime.finalize_candidate()
+
+    class RecoveryProvider(FactProvider):
+        def __init__(self):
+            super().__init__()
+            self.kinds = []
+
+        async def resolve(self, *, need, candidates):
+            self.kinds.append(need.kind)
+            return await super().resolve(need=need, candidates=candidates)
+
+    provider = RecoveryProvider()
+    if answer_changes_input:
+        sources += (source_document(
+            source_id="answer-1", kind="user_revision", content="用户补充：营业时间为9点至17点。",
+        ),)
+    second = await execute_autonomous_journey(
+        run=repository.get_run(_run().run_id), goal=_goal(), sources=sources,
+        requirement_interpreter=Interpreter(),
+        root_agent=RootAgent() if answer_changes_input else ResumeAssessmentAgent(),
+        place_provider=PlaceProvider(), fact_provider=provider, repository=repository,
+    )
+    assert second.run.status is RunStatus.SUCCEEDED
+    assert second.release is not None
+    assert second.candidate.candidate_snapshot_id != blocked_id
+    assert second.candidate.fact_gap_report.gaps == ()
+    assert repository.get_candidate(blocked_id) == first.candidate
+    assert repository.latest_candidate_for_run(_run().run_id) == second.candidate
+    assert second.release.candidate_snapshot_id == second.candidate.candidate_snapshot_id
+    if answer_changes_input:
+        assert second.draft.draft_id != first.draft.draft_id
+    else:
+        assert second.draft == first.draft
+        assert provider.kinds == [FactNeedKind.PLACE_OPERATION, FactNeedKind.PLACE_OPERATION]

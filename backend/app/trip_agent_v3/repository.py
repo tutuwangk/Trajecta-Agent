@@ -640,11 +640,6 @@ class SqliteTripAgentV3Repository:
              release.candidate_snapshot_id, release.published_at.isoformat(), release.model_dump_json()),
         )
 
-    def save_release(self, release: ReleaseRecord) -> None:
-        with self._lock, self._connection:
-            self._validate_release_lineage(release)
-            self._insert_release(release)
-
     def commit_release(self, release: ReleaseRecord) -> ReleaseRecord:
         with self._lock, self._connection:
             self._validate_release_lineage(release)

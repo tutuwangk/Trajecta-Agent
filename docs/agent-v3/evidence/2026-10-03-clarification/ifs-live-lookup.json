@@ -1,0 +1,72 @@
+{
+  "planned_visit_at": "2026-10-11T13:55:00",
+  "place": "成都IFS购物中心",
+  "status": "succeeded",
+  "failure_code": null,
+  "failure_message": null,
+  "claims": [
+    {
+      "field": "opening_hours",
+      "value": "营业时间10:00-22:00（周一至周日），适用于成都IFS国际金融中心/成都IFS购物中心，地址：成都市锦江区红星路三段1号",
+      "source_ids": [
+        "source_web_B0MRAUZOLT_0_1f1a07be3ee33dd9",
+        "source_web_B0MRAUZOLT_1_a9a93ba2131e8cdb"
+      ],
+      "confidence": 0.96
+    },
+    {
+      "field": "opening_hours",
+      "value": "营业时间通常为10:00-22:00，成都IFS购物中心位于成都市锦江区红星路三段1号",
+      "source_ids": [
+        "source_web_B0MRAUZOLT_3_f541cb742214cce9"
+      ],
+      "confidence": 0.85
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "source_web_B0MRAUZOLT_0_1f1a07be3ee33dd9",
+      "title": "如何到达 - 成都国际金融中心（成都ifs）官网",
+      "uri": "https://www.cdifs.cn/zh/how-to-get-here",
+      "content_hash": "1f1a07be3ee33dd9e8781bd000302c98909fdff9e1c707f1e4f284c43fdc0864"
+    },
+    {
+      "source_id": "source_web_B0MRAUZOLT_1_a9a93ba2131e8cdb",
+      "title": "联系我们 - 成都国际金融中心（成都ifs）官网",
+      "uri": "https://www.cdifs.cn/zh/contact-us",
+      "content_hash": "a9a93ba2131e8cdbadd282d1b3b718e0f2ebfd7ef54215e0526f79d74719c902"
+    },
+    {
+      "source_id": "source_web_B0MRAUZOLT_2_6c78c3b879d726ed",
+      "title": "成都IFS商场打卡攻略：探寻城市地标的购物与文化之旅_熊猫_锦江区_信息",
+      "uri": "https://www.sohu.com/a/924499001_121956424",
+      "content_hash": "6c78c3b879d726edf0c366625646b5ce210a29fe89f00b5e0cf7bfd58daae1ed"
+    },
+    {
+      "source_id": "source_web_B0MRAUZOLT_3_f541cb742214cce9",
+      "title": "成都ifs多少层 - 爱企查",
+      "uri": "https://aiqicha.baidu.com/details/ugknowledge?id=37867392d78797696f507d9b766a4c0c",
+      "content_hash": "f541cb742214cce9d080ec01ab2f47def5d69a465556a678838313d1a7a7dd0b"
+    },
+    {
+      "source_id": "source_web_B0MRAUZOLT_4_9c4ef3d1a6f2d19e",
+      "title": "成都国金中心ifs营业时间 - 百度知道",
+      "uri": "https://zhidao.baidu.com/question/498026802091569132.html",
+      "content_hash": "9c4ef3d1a6f2d19e9911e183898cb897db32277715b7322dc19e2ae3e23f364e"
+    }
+  ],
+  "balance_before_cny": "0.12",
+  "balance_after_cny": "0.12",
+  "telemetry": {
+    "provider_calls": {
+      "operational_web_search": 1
+    },
+    "model_request_count": 1,
+    "input_token_count": 1498,
+    "output_token_count": 627,
+    "model_requests_by_role": {
+      "operational_fact_extractor": 1
+    }
+  },
+  "verification_kind": "targeted_public_fact_lookup"
+}
