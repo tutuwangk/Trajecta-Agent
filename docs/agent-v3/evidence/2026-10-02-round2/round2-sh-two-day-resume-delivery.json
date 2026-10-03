@@ -1,0 +1,1265 @@
+{
+  "run_id": "run-c218fa1b-6e38-4ba1-a9a2-457537619553",
+  "run_status": "needs_resume",
+  "delivery_state": "blocked",
+  "candidate": {
+    "candidate_snapshot_id": "candidate_84c39f8d682fd9462318",
+    "workspace_id": "shadow-round2-sh-two-day-round2-20261002",
+    "producing_run_id": "run-c218fa1b-6e38-4ba1-a9a2-457537619553",
+    "goal_revision_id": "goal-round2-sh-two-day",
+    "requirement_ledger_id": "ledger_3c5c6517085027b7aa35",
+    "grounding_registry_id": "grounding_2cee78555f533a7a1b2d",
+    "timeline": {
+      "snapshot_id": "timeline_84c39f8d682fd9462318",
+      "draft_id": "draft_3c5c6517085027b7aa35",
+      "draft_revision": 1,
+      "days": [
+        {
+          "day_number": 1,
+          "calendar_date": "2026-10-17",
+          "title": "外滩·豫园老城厢经典一日",
+          "stops": [
+            {
+              "stop_id": "stop_aeb4edf78ae888e3776e",
+              "candidate_id": "cand_440ca4c44903ba4a848d",
+              "obligation_ids": [
+                "obl_f224ad056e256fe8dd74"
+              ],
+              "name": "上海和平饭店",
+              "kind": "lodging",
+              "arrival_at": "2026-10-17T09:00:00",
+              "departure_at": "2026-10-17T09:00:00",
+              "stay_duration_min": 0,
+              "location": {
+                "longitude": 121.489233,
+                "latitude": 31.239098
+              },
+              "address": "南京东路20号上海和平饭店1层大厅",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_c32d3e0093bb5b0bb139",
+              "candidate_id": "cand_b4e55fea3deda0941c66",
+              "obligation_ids": [
+                "obl_b2f9bd19c9ec96c2a504"
+              ],
+              "name": "外滩",
+              "kind": "visit",
+              "arrival_at": "2026-10-17T09:10:00",
+              "departure_at": "2026-10-17T10:10:00",
+              "stay_duration_min": 60,
+              "location": {
+                "longitude": 121.492127,
+                "latitude": 31.233516
+              },
+              "address": "中山东一路",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_f4de0d4995d53d552329",
+              "candidate_id": "cand_977cf6113817aac4255d",
+              "obligation_ids": [
+                "obl_74a2c58719eb6bb494a8"
+              ],
+              "name": "豫园",
+              "kind": "visit",
+              "arrival_at": "2026-10-17T10:21:00",
+              "departure_at": "2026-10-17T11:21:00",
+              "stay_duration_min": 60,
+              "location": {
+                "longitude": 121.492497,
+                "latitude": 31.227714
+              },
+              "address": "福佑路168号",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_d2657e5e38eeb991f8b4",
+              "candidate_id": "cand_311599f32cf4f943f861",
+              "obligation_ids": [
+                "obl_89585b6f3898462f5861"
+              ],
+              "name": "南翔馒头店（豫园店）",
+              "kind": "meal",
+              "arrival_at": "2026-10-17T11:25:00",
+              "departure_at": "2026-10-17T12:25:00",
+              "stay_duration_min": 60,
+              "location": {
+                "longitude": 121.49151,
+                "latitude": 31.226577
+              },
+              "address": "豫园路87号(豫园地铁站7号口步行470米)",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_dbb1e44059811f42102c",
+              "candidate_id": "cand_440ca4c44903ba4a848d",
+              "obligation_ids": [],
+              "name": "上海和平饭店",
+              "kind": "lodging",
+              "arrival_at": "2026-10-17T13:56:00",
+              "departure_at": "2026-10-17T13:56:00",
+              "stay_duration_min": 0,
+              "location": {
+                "longitude": 121.489233,
+                "latitude": 31.239098
+              },
+              "address": "南京东路20号上海和平饭店1层大厅",
+              "coordinate_system": "gcj02"
+            }
+          ],
+          "legs": [
+            {
+              "leg_id": "leg_92e5bd86336162fb1d84",
+              "from_stop_id": "stop_aeb4edf78ae888e3776e",
+              "to_stop_id": "stop_c32d3e0093bb5b0bb139",
+              "departure_at": "2026-10-17T09:00:00",
+              "arrival_at": "2026-10-17T09:10:00",
+              "duration_min": 10,
+              "mode": "walk",
+              "fact_id": "route_need_6aa5cbfb42c628da1b1d",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            },
+            {
+              "leg_id": "leg_fbeeac0b508f66e56522",
+              "from_stop_id": "stop_c32d3e0093bb5b0bb139",
+              "to_stop_id": "stop_f4de0d4995d53d552329",
+              "departure_at": "2026-10-17T10:10:00",
+              "arrival_at": "2026-10-17T10:21:00",
+              "duration_min": 11,
+              "mode": "walk",
+              "fact_id": "route_need_0925454ecff1726192b1",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            },
+            {
+              "leg_id": "leg_4eee4698f4306c8e52e8",
+              "from_stop_id": "stop_f4de0d4995d53d552329",
+              "to_stop_id": "stop_d2657e5e38eeb991f8b4",
+              "departure_at": "2026-10-17T11:21:00",
+              "arrival_at": "2026-10-17T11:25:00",
+              "duration_min": 4,
+              "mode": "walk",
+              "fact_id": "route_need_dd08821d2194ca2a8806",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            },
+            {
+              "leg_id": "leg_d2200f5f398463a1da84",
+              "from_stop_id": "stop_d2657e5e38eeb991f8b4",
+              "to_stop_id": "stop_dbb1e44059811f42102c",
+              "departure_at": "2026-10-17T12:25:00",
+              "arrival_at": "2026-10-17T13:56:00",
+              "duration_min": 91,
+              "mode": "taxi",
+              "fact_id": "route_need_120a29359ba7f3681530",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            }
+          ]
+        },
+        {
+          "day_number": 2,
+          "calendar_date": "2026-10-18",
+          "title": "法租界文艺漫步与淮海路晚餐",
+          "stops": [
+            {
+              "stop_id": "stop_cbb9d5365e52f2da8a66",
+              "candidate_id": "cand_440ca4c44903ba4a848d",
+              "obligation_ids": [],
+              "name": "上海和平饭店",
+              "kind": "lodging",
+              "arrival_at": "2026-10-18T09:30:00",
+              "departure_at": "2026-10-18T09:30:00",
+              "stay_duration_min": 0,
+              "location": {
+                "longitude": 121.489233,
+                "latitude": 31.239098
+              },
+              "address": "南京东路20号上海和平饭店1层大厅",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_a31e37d6c7b31671bb49",
+              "candidate_id": "cand_fffb86e26f0bd1ed3617",
+              "obligation_ids": [
+                "obl_0032c7f453d97720ff4a"
+              ],
+              "name": "思南公馆",
+              "kind": "visit",
+              "arrival_at": "2026-10-18T10:02:00",
+              "departure_at": "2026-10-18T11:02:00",
+              "stay_duration_min": 60,
+              "location": {
+                "longitude": 121.468956,
+                "latitude": 31.214509
+              },
+              "address": "瑞金二路街道复兴中路509号",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_631ef6e833f8a6cdbfcc",
+              "candidate_id": "cand_3f34ae9a8766291d6f61",
+              "obligation_ids": [
+                "obl_fe04faceb981a225d794"
+              ],
+              "name": "田子坊",
+              "kind": "visit",
+              "arrival_at": "2026-10-18T11:18:00",
+              "departure_at": "2026-10-18T12:33:00",
+              "stay_duration_min": 75,
+              "location": {
+                "longitude": 121.468662,
+                "latitude": 31.208197
+              },
+              "address": "泰康路210号(打浦桥地铁站1号口旁)",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_8e26deb3226c67d17718",
+              "candidate_id": "cand_440ca4c44903ba4a848d",
+              "obligation_ids": [],
+              "name": "上海和平饭店",
+              "kind": "lodging",
+              "arrival_at": "2026-10-18T13:33:00",
+              "departure_at": "2026-10-18T14:33:00",
+              "stay_duration_min": 60,
+              "location": {
+                "longitude": 121.489233,
+                "latitude": 31.239098
+              },
+              "address": "南京东路20号上海和平饭店1层大厅",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_f229093cbd0a54d0577a",
+              "candidate_id": "cand_5fe0eb9262b315780605",
+              "obligation_ids": [
+                "obl_01b5c53e362cc3483186"
+              ],
+              "name": "光明邨大酒家",
+              "kind": "meal",
+              "arrival_at": "2026-10-18T15:02:00",
+              "departure_at": "2026-10-18T16:17:00",
+              "stay_duration_min": 75,
+              "location": {
+                "longitude": 121.467461,
+                "latitude": 31.220457
+              },
+              "address": "淮海中路588号(淮海中路地铁站1号口步行300米)",
+              "coordinate_system": "gcj02"
+            },
+            {
+              "stop_id": "stop_fe6e780cee710bea92fe",
+              "candidate_id": "cand_440ca4c44903ba4a848d",
+              "obligation_ids": [],
+              "name": "上海和平饭店",
+              "kind": "lodging",
+              "arrival_at": "2026-10-18T17:13:00",
+              "departure_at": "2026-10-18T17:13:00",
+              "stay_duration_min": 0,
+              "location": {
+                "longitude": 121.489233,
+                "latitude": 31.239098
+              },
+              "address": "南京东路20号上海和平饭店1层大厅",
+              "coordinate_system": "gcj02"
+            }
+          ],
+          "legs": [
+            {
+              "leg_id": "leg_6d829caf71d22a422f87",
+              "from_stop_id": "stop_cbb9d5365e52f2da8a66",
+              "to_stop_id": "stop_a31e37d6c7b31671bb49",
+              "departure_at": "2026-10-18T09:30:00",
+              "arrival_at": "2026-10-18T10:02:00",
+              "duration_min": 32,
+              "mode": "taxi",
+              "fact_id": "route_need_712d1c08cf392b6e1f85",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            },
+            {
+              "leg_id": "leg_fd1b770655967bc827aa",
+              "from_stop_id": "stop_a31e37d6c7b31671bb49",
+              "to_stop_id": "stop_631ef6e833f8a6cdbfcc",
+              "departure_at": "2026-10-18T11:02:00",
+              "arrival_at": "2026-10-18T11:18:00",
+              "duration_min": 16,
+              "mode": "walk",
+              "fact_id": "route_need_429e8defebc903ab21ba",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            },
+            {
+              "leg_id": "leg_20b996384efcd7753761",
+              "from_stop_id": "stop_631ef6e833f8a6cdbfcc",
+              "to_stop_id": "stop_8e26deb3226c67d17718",
+              "departure_at": "2026-10-18T12:33:00",
+              "arrival_at": "2026-10-18T13:33:00",
+              "duration_min": 60,
+              "mode": "taxi",
+              "fact_id": "route_need_45f9dd61c1f56deade1a",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            },
+            {
+              "leg_id": "leg_cc6bfd1c83d3147b319b",
+              "from_stop_id": "stop_8e26deb3226c67d17718",
+              "to_stop_id": "stop_f229093cbd0a54d0577a",
+              "departure_at": "2026-10-18T14:33:00",
+              "arrival_at": "2026-10-18T15:02:00",
+              "duration_min": 29,
+              "mode": "taxi",
+              "fact_id": "route_need_9a02f39e2f375bb1ae75",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            },
+            {
+              "leg_id": "leg_7fddeaf42bd26d5c1778",
+              "from_stop_id": "stop_f229093cbd0a54d0577a",
+              "to_stop_id": "stop_fe6e780cee710bea92fe",
+              "departure_at": "2026-10-18T16:17:00",
+              "arrival_at": "2026-10-18T17:13:00",
+              "duration_min": 56,
+              "mode": "taxi",
+              "fact_id": "route_need_b4d87441153d7ece2e2a",
+              "fact_source": "amap",
+              "fact_status": "verified"
+            }
+          ]
+        }
+      ]
+    },
+    "coverage": {
+      "explicit_place_count": 7,
+      "disposed_place_count": 7,
+      "coverage_ratio": 1.0,
+      "open_obligation_ids": [],
+      "entries": [
+        {
+          "obligation_id": "obl_f224ad056e256fe8dd74",
+          "mention": "上海和平饭店",
+          "role": "lodging",
+          "priority": "required",
+          "status": "scheduled",
+          "stop_id": "stop_aeb4edf78ae888e3776e",
+          "reason_code": null,
+          "rationale": null
+        },
+        {
+          "obligation_id": "obl_b2f9bd19c9ec96c2a504",
+          "mention": "外滩",
+          "role": "visit",
+          "priority": "required",
+          "status": "scheduled",
+          "stop_id": "stop_c32d3e0093bb5b0bb139",
+          "reason_code": null,
+          "rationale": null
+        },
+        {
+          "obligation_id": "obl_74a2c58719eb6bb494a8",
+          "mention": "豫园",
+          "role": "visit",
+          "priority": "required",
+          "status": "scheduled",
+          "stop_id": "stop_f4de0d4995d53d552329",
+          "reason_code": null,
+          "rationale": null
+        },
+        {
+          "obligation_id": "obl_89585b6f3898462f5861",
+          "mention": "南翔馒头店（豫园店）",
+          "role": "meal",
+          "priority": "required",
+          "status": "scheduled",
+          "stop_id": "stop_d2657e5e38eeb991f8b4",
+          "reason_code": null,
+          "rationale": null
+        },
+        {
+          "obligation_id": "obl_0032c7f453d97720ff4a",
+          "mention": "思南公馆",
+          "role": "visit",
+          "priority": "required",
+          "status": "scheduled",
+          "stop_id": "stop_a31e37d6c7b31671bb49",
+          "reason_code": null,
+          "rationale": null
+        },
+        {
+          "obligation_id": "obl_fe04faceb981a225d794",
+          "mention": "田子坊",
+          "role": "visit",
+          "priority": "required",
+          "status": "scheduled",
+          "stop_id": "stop_631ef6e833f8a6cdbfcc",
+          "reason_code": null,
+          "rationale": null
+        },
+        {
+          "obligation_id": "obl_01b5c53e362cc3483186",
+          "mention": "光明邨大酒家",
+          "role": "meal",
+          "priority": "required",
+          "status": "scheduled",
+          "stop_id": "stop_f229093cbd0a54d0577a",
+          "reason_code": null,
+          "rationale": null
+        }
+      ]
+    },
+    "fact_gap_report": {
+      "fact_need_plan_id": "facts_84c39f8d682fd9462318",
+      "gaps": [
+        {
+          "need_id": "need_c452a533e7377af2a7bb",
+          "kind": "place_operation",
+          "day_number": 2,
+          "stop_ids": [
+            "stop_f229093cbd0a54d0577a"
+          ],
+          "place_names": [
+            "光明邨大酒家"
+          ],
+          "failure_code": "planned_visit_operationally_incompatible",
+          "failure_message": "光明邨大酒家(淮海中路总店)：计划到访时间为 2026-10-18（周日）15:02，地点为光明邨大酒家(淮海中路总店)（淮海中路588号）。高德地点详情页[0]给出该总店营业时间为「周一至周日 07:30-14:00,17:00-20:30」，即午市 14:00 结束、晚市 17:00 才开始。15:02 正落在 14:00-17:00 的午休停业时段，届时门店不营业，无法执行本次到访。来源[2]仅确认门店地址、电话，未提供与该时段相冲突的营业信息；[1][3][4]为品牌介绍与点评，不含总店具体营业时段。",
+          "still_scheduled": true,
+          "impact": "无法确认该地点在计划到访时段可执行，发布前需要复核。"
+        }
+      ]
+    },
+    "operational_facts": [
+      {
+        "fact_id": "operation_need_0c2268c8155678c09e37",
+        "candidate_id": "cand_b4e55fea3deda0941c66",
+        "stop_id": "stop_c32d3e0093bb5b0bb139",
+        "visit_at": "2026-10-17T09:10:00",
+        "visit_compatible": true,
+        "claims": [
+          {
+            "field": "opening_hours",
+            "value": "外滩（中山东一路）营业时间：周一至周日00:00-24:00，全天开放",
+            "source_ids": [
+              "source_amap_B00155FXB3_c662d36af7d3ea03"
+            ],
+            "confidence": 0.9
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "source_amap_B00155FXB3_c662d36af7d3ea03",
+            "provider": "amap_place_search",
+            "uri": "https://ditu.amap.com/place/B00155FXB3",
+            "title": "高德地点详情：外滩",
+            "excerpt": "营业时间：周一至周日 00:00-24:00",
+            "content_hash": "c662d36af7d3ea03943c553581917b623d3559c5e4bd5370fc064873829fb884",
+            "retrieved_at": "2026-10-02T11:31:17.058694Z"
+          },
+          {
+            "source_id": "source_web_B00155FXB3_0_4987d6bd7c59bdf8",
+            "provider": "bounded_web_search",
+            "uri": "https://sh.bendibao.com/tour/2025924/301339.shtm",
+            "title": "上海海关大楼观展线上预约入口 - 上海本地宝",
+            "excerpt": "上海本地宝频道提供上海海关大楼观展线上预约入口有关的信息，9月29日-11月28日，2025上海城市空间艺术季黄浦展区将以\"外滩光年·时空回响\"为主题:在海关大楼 (中山东一",
+            "content_hash": "4987d6bd7c59bdf8c2fb5d36def368f42404a79ad79a036177ae99c60921e44f",
+            "retrieved_at": "2026-10-02T11:31:17.058694Z"
+          },
+          {
+            "source_id": "source_web_B00155FXB3_1_aea301d76b8c2255",
+            "provider": "bounded_web_search",
+            "uri": "https://sh.bendibao.com/xiuxian/20251014/301656.shtm",
+            "title": "上海外滩历史建筑群参观攻略大全（官方最新）- 上海本地宝",
+            "excerpt": "上海外滩历史建筑群参观攻略大全 (官方最新) 外滩1号亚细亚大楼 1916年百年地标，外滩建筑群最南端起点，必看绝美中庭天井，冰裂纹玻璃穹顶像艺术品一样透光，常设高端艺术展+巴洛克建筑细节，随手拍都是复古大片。 地址：黄浦区中山东一路1号 参观：大楼免票免预约，部分展览需预约或购票 ...",
+            "content_hash": "aea301d76b8c2255cf30eb37787f5d6be5c05ac16271449e0bb6b9586d616ce5",
+            "retrieved_at": "2026-10-02T11:31:17.058694Z"
+          },
+          {
+            "source_id": "source_web_B00155FXB3_2_37e1008df942b96d",
+            "provider": "bounded_web_search",
+            "uri": "https://news.qq.com/rain/a/20250930A01GXT00",
+            "title": "\"外滩光年地图\"发布，彩蛋附赠海关大楼线下免预约参观攻略",
+            "excerpt": "9月29日-11月28日，2025上海城市空间艺术季黄浦展区以\"外滩光年·时空回响\"为主题，在海关大楼(中山东一路13号)1层及3层，开启为期两个月的展览 ...",
+            "content_hash": "37e1008df942b96d4bc0c8532fa4eb3ee9edb686cd4491eb4f51affea0a241ed",
+            "retrieved_at": "2026-10-02T11:31:17.058694Z"
+          },
+          {
+            "source_id": "source_web_B00155FXB3_3_0a7450284431ffb4",
+            "provider": "bounded_web_search",
+            "uri": "https://mzj.sh.gov.cn/lnb-xw/20251103/a6a611fac7f147da9238cd65d56a59df.html",
+            "title": "海关大楼首次开放 想进去看一眼不容易_新闻_上海市民政局",
+            "excerpt": "海关大楼首次开放 想进去看一眼不容易 线上预约\"拼\"手速，线下排队\"拼\"体力，70岁及以上老年人凭身份证可现场登记入场 2025-11-03 作者：本报记者 吴 玮",
+            "content_hash": "0a7450284431ffb47784fe1a7f2286ac256f9c032f3f0ff34156421d6c257d7c",
+            "retrieved_at": "2026-10-02T11:31:17.058694Z"
+          }
+        ]
+      },
+      {
+        "fact_id": "operation_need_89db58f83a8321f43add",
+        "candidate_id": "cand_977cf6113817aac4255d",
+        "stop_id": "stop_f4de0d4995d53d552329",
+        "visit_at": "2026-10-17T10:21:00",
+        "visit_compatible": true,
+        "claims": [
+          {
+            "field": "opening_hours",
+            "value": "豫园（北门，福佑路168号）周二至周日 09:00-16:30 开放；每周一闭园（法定节假日除外）。2026-10-17为周六，属开放日。",
+            "source_ids": [
+              "source_amap_B00155MF55_ce75fdf6d782a985",
+              "source_web_B00155MF55_1_ee42b5f53e4be110",
+              "source_web_B00155MF55_2_901016eb8d603c01"
+            ],
+            "confidence": 0.85
+          },
+          {
+            "field": "last_entry",
+            "value": "16:00 停止入园/入馆，16:30 清场闭园。计划到访时间 10:21 未超过最后入园时间。",
+            "source_ids": [
+              "source_amap_B00155MF55_ce75fdf6d782a985",
+              "source_web_B00155MF55_1_ee42b5f53e4be110",
+              "source_web_B00155MF55_2_901016eb8d603c01"
+            ],
+            "confidence": 0.85
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "source_amap_B00155MF55_ce75fdf6d782a985",
+            "provider": "amap_place_search",
+            "uri": "https://ditu.amap.com/place/B00155MF55",
+            "title": "高德地点详情：上海豫园",
+            "excerpt": "营业时间：周一全天关闭(法定节假日除外)；周二至周日 09:00-16:30(16:00停止入馆)",
+            "content_hash": "ce75fdf6d782a985098cd3a715c393fe17990ce5ce495ef11e6faada790b5936",
+            "retrieved_at": "2026-10-02T11:31:17.058801Z"
+          },
+          {
+            "source_id": "source_web_B00155MF55_0_ec9f9e6b9f33e45e",
+            "provider": "bounded_web_search",
+            "uri": "https://www.yugarden.com.cn/Page/WxyGarden/notice.html",
+            "title": "游览指南 - yugarden.com.cn",
+            "excerpt": "1、豫园北门：上海市黄浦区福佑路168号（团队、散客入口） 2、豫园南门：上海市黄浦区豫园老街279号（九曲桥下桥口处，仅 ...",
+            "content_hash": "ec9f9e6b9f33e45e1eeea05e2393e1b44fd98be7fd9411c934e97c4d36f9d2b9",
+            "retrieved_at": "2026-10-02T11:31:17.058801Z"
+          },
+          {
+            "source_id": "source_web_B00155MF55_1_ee42b5f53e4be110",
+            "provider": "bounded_web_search",
+            "uri": "https://m.sh.bendibao.com/jingdian/yuyuan/",
+            "title": "【上海豫园】攻略2026_豫园门票_地址_好玩吗-上海本地宝",
+            "excerpt": "上海豫园地址：上海市黄浦区福佑路 168 号 (北门)；上海市黄浦区豫园老街279号 (南门)，豫园无停车场，建议绿色出行，地铁公交出行方式如下。 上海豫园开放时间：周二至周日9:00- 16:30 (16:00停止入园，16:30清场)，每周一闭园。",
+            "content_hash": "ee42b5f53e4be110c232ca10e9c538f97a9ce57cb02db55b7ce5bd402c31294c",
+            "retrieved_at": "2026-10-02T11:31:17.058801Z"
+          },
+          {
+            "source_id": "source_web_B00155MF55_2_901016eb8d603c01",
+            "provider": "bounded_web_search",
+            "uri": "https://baike.baidu.com/item/豫园北门/67372933",
+            "title": "豫园北门_百度百科",
+            "excerpt": "豫园北门是上海豫园的北侧入口，位于上海市黄浦区福佑路168号。该入口设有售票窗口，是团队和散客的入口。豫园的开放时间为9:00-16:30（16:00停止入园，16:30闭园），每周一闭园（国家法定节假日除外）。在特定活动期间，如购买夜游豫园《豫享山林》门票的游客需从北门检票入园。此外，在配合 ...",
+            "content_hash": "901016eb8d603c01d2922362915d89334b4555883730321b6ba118ccd93a90c8",
+            "retrieved_at": "2026-10-02T11:31:17.058801Z"
+          },
+          {
+            "source_id": "source_web_B00155MF55_3_83eee79a56748d6e",
+            "provider": "bounded_web_search",
+            "uri": "https://wenku.baidu.com/view/db57a27cd936a32d7375a417866fb84ae55cc314.html",
+            "title": "上海豫园预约全攻略：官方渠道、步骤详解及常见问题解答",
+            "excerpt": "豫园北门（福佑路168号）和南门（豫园老街279号）均设有现场售票窗口。 如果线上预约名额已满或您未提前预约，可尝试现场购票，但这在节假日及旺季存在无法入园的风险。 四、费用、时间与入园：关键信息一览 为方便您快速查阅，现将核心信息汇总如下。",
+            "content_hash": "83eee79a56748d6edfa1da53f2de0d1fd8733f219cf2575af46dcec6582c9565",
+            "retrieved_at": "2026-10-02T11:31:17.058801Z"
+          }
+        ]
+      },
+      {
+        "fact_id": "operation_need_4167beafc9b360a3ead9",
+        "candidate_id": "cand_311599f32cf4f943f861",
+        "stop_id": "stop_d2657e5e38eeb991f8b4",
+        "visit_at": "2026-10-17T11:25:00",
+        "visit_compatible": true,
+        "claims": [
+          {
+            "field": "opening_hours",
+            "value": "周一至周四 07:30-20:30；周五至周日 07:30-21:00",
+            "source_ids": [
+              "source_amap_B00155IMN4_37542dcd1cf55d11"
+            ],
+            "confidence": 0.85
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "source_amap_B00155IMN4_37542dcd1cf55d11",
+            "provider": "amap_place_search",
+            "uri": "https://ditu.amap.com/place/B00155IMN4",
+            "title": "高德地点详情：南翔馒头店(城隍庙店)",
+            "excerpt": "营业时间：周一至周四 07:30-20:30；周五至周日 07:30-21:00",
+            "content_hash": "37542dcd1cf55d1129f5adb968214027b7421aa2884f072b83958f0438a5cebd",
+            "retrieved_at": "2026-10-02T11:31:17.058836Z"
+          },
+          {
+            "source_id": "source_web_B00155IMN4_0_b045e6faa7bfe07e",
+            "provider": "bounded_web_search",
+            "uri": "https://gs.ctrip.com/html5/you/foods/fooddetail/2/4926728.html",
+            "title": "上海南翔馒头店（豫园店）攻略,南翔馒头店（豫园店）套餐/特色菜品推荐_菜单/人均消费/电话/地址/菜系/点评/营业时间_餐厅介绍_哪个菜好吃 ...",
+            "excerpt": "空调开放免费Wi-Fi英文菜单有宝宝椅卡座",
+            "content_hash": "b045e6faa7bfe07ea2ecc72f26d414c23417a4b7c2c26a22c705a89805d5f56b",
+            "retrieved_at": "2026-10-02T11:31:17.058836Z"
+          },
+          {
+            "source_id": "source_web_B00155IMN4_1_5b9850922f13a48d",
+            "provider": "bounded_web_search",
+            "uri": "https://m.dianping.com/shop/75199513",
+            "title": "【南翔馒头店 (豫园店)】电话_地址_价格_营业时间_城隍庙/豫园本帮菜团购 - [undefined] - 大众点评网",
+            "excerpt": "去大众点评App查看全部467道推荐菜",
+            "content_hash": "5b9850922f13a48d896611233e353d7414e27a4a729df3f488a66b317ead3efa",
+            "retrieved_at": "2026-10-02T11:31:17.058836Z"
+          },
+          {
+            "source_id": "source_web_B00155IMN4_2_d9ea4e23cd630b62",
+            "provider": "bounded_web_search",
+            "uri": "https://ditu.amap.com/place/B00155IMN4",
+            "title": "南翔馒头店(城隍庙店) - 上海市黄浦区 - 餐饮服务;中餐厅;上海菜 | 地址营业时间 | 高德地图",
+            "excerpt": "南翔馒头店(城隍庙店)是一家上海菜，位于上海市黄浦区（上海市黄浦区豫园路87号(豫园地铁站7号口步行470米)）。联系电话：021-63265265;021-63554206。高德地图提供南翔馒头店(城隍庙店)的精确位置、实时导航及周边信息查询。",
+            "content_hash": "d9ea4e23cd630b625f61fdf403350dc9d7abd20955e2bb9ee8512cae537ceca1",
+            "retrieved_at": "2026-10-02T11:31:17.058836Z"
+          },
+          {
+            "source_id": "source_web_B00155IMN4_3_13287873f1405bc0",
+            "provider": "bounded_web_search",
+            "uri": "https://you.ctrip.com/food/shanghai2/4926728-dianping169595982.html",
+            "title": "南翔馒头店（豫园店）",
+            "excerpt": "因为家里俩孩子爱吃小笼包，所以这次特地带他们去豫园的南翔小笼尝一下!直奔着3楼去，服务员态度超好，在走廊碰上都会礼貌打招呼做指引!楼上空间较大，宽敞明亮，不会很拥挤，用餐环境很好! 鲜肉小笼皮薄多汁，香菇素鸭咸香美味，至臻肴肉皮冻Q弹!所有菜品都不错，只是价格不算非常 ...",
+            "content_hash": "13287873f1405bc0af7e3fbbabcf0eb414f1171475ab54d86e7f112af72e9f5a",
+            "retrieved_at": "2026-10-02T11:31:17.058836Z"
+          }
+        ]
+      },
+      {
+        "fact_id": "operation_need_3e47c0a9c391c6e49641",
+        "candidate_id": "cand_fffb86e26f0bd1ed3617",
+        "stop_id": "stop_a31e37d6c7b31671bb49",
+        "visit_at": "2026-10-18T10:02:00",
+        "visit_compatible": true,
+        "claims": [
+          {
+            "field": "opening_hours",
+            "value": "周一至周日 10:00-22:00",
+            "source_ids": [
+              "source_amap_B001574I9I_35e969f386eb41e8"
+            ],
+            "confidence": 0.9
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "source_amap_B001574I9I_35e969f386eb41e8",
+            "provider": "amap_place_search",
+            "uri": "https://ditu.amap.com/place/B001574I9I",
+            "title": "高德地点详情：思南公馆",
+            "excerpt": "营业时间：周一至周日 10:00-22:00",
+            "content_hash": "35e969f386eb41e86d89d98c8c469ea5a7fba6bad64c9e7610c9fafb97c64107",
+            "retrieved_at": "2026-10-02T11:31:17.059721Z"
+          },
+          {
+            "source_id": "source_web_B001574I9I_0_d2f0483d1d6286e9",
+            "provider": "bounded_web_search",
+            "uri": "https://massenetatsinanmansions.hotelshanghai.cn/cn",
+            "title": "上海思南公馆酒店 (Hotel Massenet)-主页-优惠预订",
+            "excerpt": "上海思南公馆酒店 Hotel Massenet 上海思南公馆酒店 地处上海浦西市中心核心区域，北临环境优雅的复兴中路和复兴公园，东靠交通便捷的重庆南路，静谧的思南路贯穿其中。淮海中路及新天地商圈咫尺可达。项目北临孙中山故居，中国共产党上海办事处\"周公馆\"设立于此，近代历史名人柳亚子、梅 ...",
+            "content_hash": "d2f0483d1d6286e9f9fece4092f4afbf65dcf2b33ebbc433c269da2b43f6ef01",
+            "retrieved_at": "2026-10-02T11:31:17.059721Z"
+          },
+          {
+            "source_id": "source_web_B001574I9I_1_6fd58870956e4cdd",
+            "provider": "bounded_web_search",
+            "uri": "https://www.thepaper.cn/newsDetail_forward_11853961",
+            "title": "建筑可阅读 | 魔都复古地标思南公馆，带你穿越时空领略\"老上海\"_澎湃号·湃客_澎湃新闻-The Paper",
+            "excerpt": "3、公共文化空间之一——思南书局 复兴中路517号是思南公馆51幢历史保护建筑之一，该建筑为欧式近代独立式花园住宅，1926年建造。 坐北朝南，三层砖混结构，红陶机制平瓦双坡顶，山墙开圆形明窗。",
+            "content_hash": "6fd58870956e4cddbd96f4bfddefc4f30a33ec86396eaa23439546c212e465a1",
+            "retrieved_at": "2026-10-02T11:31:17.059721Z"
+          },
+          {
+            "source_id": "source_web_B001574I9I_2_c4f520fa4815539c",
+            "provider": "bounded_web_search",
+            "uri": "https://ditu.amap.com/place/B001574I9I",
+            "title": "思南公馆 - 上海市黄浦区 - 商务住宅;商务住宅相关;商务住宅相关 | 地址营业时间 | 高德地图",
+            "excerpt": "思南公馆是一家商务住宅相关，位于上海市黄浦区（上海市黄浦区瑞金二路街道复兴中路509号）。联系电话：021-36373636。高德地图提供思南公馆的精确位置、实时导航及周边信息查询。",
+            "content_hash": "c4f520fa4815539ce3d21071290bf050e7ee6fdf1ac7298edb396a9678d73330",
+            "retrieved_at": "2026-10-02T11:31:17.059721Z"
+          },
+          {
+            "source_id": "source_web_B001574I9I_3_a879e038fb2fd117",
+            "provider": "bounded_web_search",
+            "uri": "https://sh.bendibao.com/jingdian/sinangongguan/",
+            "title": "【上海思南公馆】攻略2025_思南公馆门票_地址_好玩吗-上海本地宝",
+            "excerpt": "全年 全天开放 门票信息 免费 官方电话 021-34019998,021-64379060 毕业旅游攻略 游玩时间：全年 推荐理由：是目前上海市中心唯一一个以成片花园住宅形式保留保护为特色的项目，拥有51幢风格各异的经典\"老洋房\"，冯玉祥、柳亚子、梅兰芳等名人曾在此居住过。",
+            "content_hash": "a879e038fb2fd1171622ce6280a78d9f8361d33c91fce1e601b318037dd07cf0",
+            "retrieved_at": "2026-10-02T11:31:17.059721Z"
+          }
+        ]
+      },
+      {
+        "fact_id": "operation_need_66d02ae62ece6724004a",
+        "candidate_id": "cand_3f34ae9a8766291d6f61",
+        "stop_id": "stop_631ef6e833f8a6cdbfcc",
+        "visit_at": "2026-10-18T11:18:00",
+        "visit_compatible": true,
+        "claims": [
+          {
+            "field": "opening_hours",
+            "value": "周一至周日 00:00-24:00；具体营业状态以当天开放情况为准",
+            "source_ids": [
+              "source_amap_B00155HO6Y_aa827795ad91ac58"
+            ],
+            "confidence": 0.9
+          },
+          {
+            "field": "opening_hours",
+            "value": "景区全天开放；店铺营业时间一般在10:00-22:00左右",
+            "source_ids": [
+              "source_web_B00155HO6Y_0_d304f4e5e266bc70",
+              "source_web_B00155HO6Y_1_bc39ab8d938e2620"
+            ],
+            "confidence": 0.8
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "source_amap_B00155HO6Y_aa827795ad91ac58",
+            "provider": "amap_place_search",
+            "uri": "https://ditu.amap.com/place/B00155HO6Y",
+            "title": "高德地点详情：上海田子坊",
+            "excerpt": "营业时间：周一至周日 00:00-24:00；具体营业状态以当天开放情况为准",
+            "content_hash": "aa827795ad91ac58bc9938cabc26f2b375d4db7a82ffb733d04b84558e374f99",
+            "retrieved_at": "2026-10-02T11:31:17.060165Z"
+          },
+          {
+            "source_id": "source_web_B00155HO6Y_0_d304f4e5e266bc70",
+            "provider": "bounded_web_search",
+            "uri": "https://zhuanlan.zhihu.com/p/13105901211",
+            "title": "上海田子坊游玩攻略、田子坊行李寄存指南 - 知乎",
+            "excerpt": "地点：上海市黄浦区 泰康路 210 弄 交通：乘坐地铁 9 号线，在打浦桥站 1 号口出站，步行即可到达 ‍♂️ ‍♀️。 门票：免费对外开放 开放时间：全天开放，但店铺的营业时间一般在 10:00 - 22:00 左右 历史文化景点： 石库门建筑：田子坊保留了许多典型的上海石库门建筑，这些建筑具有独特的 ...",
+            "content_hash": "d304f4e5e266bc70906aa2caa3f48bab8d6ffd969c5e9a186e2f492771aea133",
+            "retrieved_at": "2026-10-02T11:31:17.060165Z"
+          },
+          {
+            "source_id": "source_web_B00155HO6Y_1_bc39ab8d938e2620",
+            "provider": "bounded_web_search",
+            "uri": "https://www.toutiao.com/article/7449273033333686810/",
+            "title": "上海田子坊游玩攻略、田子坊行李寄存指南 - 今日头条",
+            "excerpt": "地点：上海市黄浦区泰康路 210 弄 交通：乘坐地铁 9 号线，在打浦桥站 1 号口出站，步行即可到达‍♂️‍♀️。 门票：免费对外开放 开放时间：全天开放，但店铺的营业时间一般在 10:00 - 22:00 左右 历史文化景点： 石库门建筑：田子坊保留了许多典型的上海石库门建筑，这些建筑具有独特的风格 ...",
+            "content_hash": "bc39ab8d938e26206d1621294d04745547fd0500509bcd417ee3fb917be7a1f7",
+            "retrieved_at": "2026-10-02T11:31:17.060165Z"
+          },
+          {
+            "source_id": "source_web_B00155HO6Y_2_3dcfc3188db26164",
+            "provider": "bounded_web_search",
+            "uri": "https://www.cityhui.com/shop/18357.html",
+            "title": "【田子坊】怎么样,地址,电话,价格,点评-上海次级必游景点-城市惠",
+            "excerpt": "田子坊 榜单：上海次级必游景点排行榜第5名 地址：泰康路210弄 电话：021-64672275 参考价格：¥免费 营业时间：全天 提示信息：此页面为用户创建公共信息，本站聚合展示，如有错误请联系客服反馈。 纠错反馈",
+            "content_hash": "3dcfc3188db2616461b895653890a45c07abfac57fcc89532a1a1e0ee83660c3",
+            "retrieved_at": "2026-10-02T11:31:17.060165Z"
+          },
+          {
+            "source_id": "source_web_B00155HO6Y_3_d61f10dc0e08ae07",
+            "provider": "bounded_web_search",
+            "uri": "https://www.meet-in-shanghai.net/cn/tourist-attraction/shanghai-tianzifang-scenic-area-543279/",
+            "title": "上海田子坊景区_上海田子坊景区地址/电话/开放时间-上海市文旅推广网",
+            "excerpt": "详情介绍 ： 上海田子坊风景区位于黄浦区打浦桥街道泰康路，是一个集商业、文化、餐饮于一体的上海弄堂特色风景区。园区内拥有商户300余家，其中包含170余家特色商户，涵盖传统服饰定制、手工作品、互动体验店及品牌旗舰店等多种类型。田子坊的餐饮服务丰富多样，从酒吧、茶室到咖啡店和 ...",
+            "content_hash": "d61f10dc0e08ae076b4abac4e7f7e83409b3241c406d3f1615078fd8f0d9f5ec",
+            "retrieved_at": "2026-10-02T11:31:17.060165Z"
+          }
+        ]
+      }
+    ],
+    "grounding_decisions": [
+      {
+        "target_id": "qry_f224ad056e256fe8dd74",
+        "obligation_ids": [
+          "obl_f224ad056e256fe8dd74"
+        ],
+        "mentions": [
+          "上海和平饭店"
+        ],
+        "status": "selected",
+        "selected_candidate_id": "cand_440ca4c44903ba4a848d",
+        "selected_name": "和平饭店",
+        "selected_address": "南京东路20号上海和平饭店1层大厅",
+        "rationale": "上海和平饭店 lodging obligation. Candidate B00154DRA8 '和平饭店' at 南京东路20号 is categorized 五星级宾馆 (hotel) and is the parent lodging property itself, matching the required hotel role. The other candidates are the banquet hall '和平厅' (restaurant) and the lobby '和平饭店大堂' (auxiliary), neither of which is the hotel to stay in.",
+        "confidence": 0.95,
+        "options": [
+          {
+            "candidate_id": "cand_440ca4c44903ba4a848d",
+            "name": "和平饭店",
+            "address": "南京东路20号上海和平饭店1层大厅"
+          },
+          {
+            "candidate_id": "cand_d8c91ade86ec6b96b896",
+            "name": "上海和平饭店·和平厅",
+            "address": "南京东路20号费尔蒙和平饭店8层"
+          },
+          {
+            "candidate_id": "cand_05c5494f66a1ebadeb7f",
+            "name": "和平饭店大堂",
+            "address": "和平饭店"
+          }
+        ],
+        "clarification_question": null
+      },
+      {
+        "target_id": "qry_b2f9bd19c9ec96c2a504",
+        "obligation_ids": [
+          "obl_b2f9bd19c9ec96c2a504"
+        ],
+        "mentions": [
+          "外滩"
+        ],
+        "status": "selected",
+        "selected_candidate_id": "cand_b4e55fea3deda0941c66",
+        "selected_name": "外滩",
+        "selected_address": "中山东一路",
+        "rationale": "外滩 visit obligation. Candidate B00155FXB3 '外滩' at 中山东一路 is categorized 风景名胜 and is the canonical scenic waterfront landmark. The hotname entry (B0KUN7L6A5) is a generic geographic label and '外滩-观景大道' is a sub-area, so the main scenic place is the correct parent for the visit.",
+        "confidence": 0.93,
+        "options": [
+          {
+            "candidate_id": "cand_b4e55fea3deda0941c66",
+            "name": "外滩",
+            "address": "中山东一路"
+          },
+          {
+            "candidate_id": "cand_e7325ee8a3fc4a14b1ab",
+            "name": "外滩",
+            "address": "黄浦区"
+          },
+          {
+            "candidate_id": "cand_b45179f9d825e4fab07a",
+            "name": "外滩-观景大道",
+            "address": "中山东一路(外滩)411号"
+          }
+        ],
+        "clarification_question": null
+      },
+      {
+        "target_id": "qry_74a2c58719eb6bb494a8",
+        "obligation_ids": [
+          "obl_74a2c58719eb6bb494a8"
+        ],
+        "mentions": [
+          "豫园"
+        ],
+        "status": "selected",
+        "selected_candidate_id": "cand_977cf6113817aac4255d",
+        "selected_name": "上海豫园",
+        "selected_address": "福佑路168号",
+        "rationale": "豫园 visit obligation. Candidate B00155MF55 '上海豫园' at 福佑路168号 is categorized 国家级景点 and is the classic garden attraction itself with ticketed opening hours (09:00-16:30, Monday closed). '豫园-内园' is an interior sub-section and '豫园老街' is a shopping street, so the main garden is the correct visit target.",
+        "confidence": 0.94,
+        "options": [
+          {
+            "candidate_id": "cand_977cf6113817aac4255d",
+            "name": "上海豫园",
+            "address": "福佑路168号"
+          },
+          {
+            "candidate_id": "cand_68f974f09f8d874487a9",
+            "name": "豫园-内园",
+            "address": "安仁街132号豫园内(南侧)"
+          },
+          {
+            "candidate_id": "cand_f558b53705001efac1ed",
+            "name": "豫园老街",
+            "address": "豫园"
+          }
+        ],
+        "clarification_question": null
+      },
+      {
+        "target_id": "qry_89585b6f3898462f5861",
+        "obligation_ids": [
+          "obl_89585b6f3898462f5861"
+        ],
+        "mentions": [
+          "南翔馒头店（豫园店）"
+        ],
+        "status": "selected",
+        "selected_candidate_id": "cand_311599f32cf4f943f861",
+        "selected_name": "南翔馒头店(城隍庙店)",
+        "selected_address": "豫园路87号(豫园地铁站7号口步行470米)",
+        "rationale": "南翔馒头店（豫园店）meal obligation. Candidate B00155IMN4 '南翔馒头店(城隍庙店)' at 豫园路87号 is the flagship xiaolongbao restaurant located in the 豫园/城隍庙 area, matching the requested 豫园店 location and serving 上海菜. The alternate (B0FFJ34B9O) is only a secondary sales point, so the full-service restaurant is the right meal stop.",
+        "confidence": 0.82,
+        "options": [
+          {
+            "candidate_id": "cand_311599f32cf4f943f861",
+            "name": "南翔馒头店(城隍庙店)",
+            "address": "豫园路87号(豫园地铁站7号口步行470米)"
+          },
+          {
+            "candidate_id": "cand_8aab36b0c340fcbca3ca",
+            "name": "南翔馒头店第二销售点(豫园百货店)",
+            "address": "豫园路85号九曲桥边上(豫园地铁站7号口步行430米)"
+          }
+        ],
+        "clarification_question": null
+      },
+      {
+        "target_id": "qry_0032c7f453d97720ff4a",
+        "obligation_ids": [
+          "obl_0032c7f453d97720ff4a"
+        ],
+        "mentions": [
+          "思南公馆"
+        ],
+        "status": "selected",
+        "selected_candidate_id": "cand_fffb86e26f0bd1ed3617",
+        "selected_name": "思南公馆",
+        "selected_address": "瑞金二路街道复兴中路509号",
+        "rationale": "思南公馆 visit obligation. Candidate B001574I9I '思南公馆' at 复兴中路509号 carries the exact parent name and is the heritage compound itself with opening hours 10:00-22:00. '思南公馆商业街' is a sub-street and '思南公馆-正门(打卡点)' is an entrance, both of which should not be chosen for the parent place.",
+        "confidence": 0.9,
+        "options": [
+          {
+            "candidate_id": "cand_fffb86e26f0bd1ed3617",
+            "name": "思南公馆",
+            "address": "瑞金二路街道复兴中路509号"
+          },
+          {
+            "candidate_id": "cand_607a4b8ef1ef436df62f",
+            "name": "思南公馆商业街",
+            "address": "思南路思南公馆"
+          },
+          {
+            "candidate_id": "cand_569cc4f633b827650254",
+            "name": "思南公馆-正门(打卡点)",
+            "address": "瑞金二路街道复兴中路509号思南公馆"
+          }
+        ],
+        "clarification_question": null
+      },
+      {
+        "target_id": "qry_fe04faceb981a225d794",
+        "obligation_ids": [
+          "obl_fe04faceb981a225d794"
+        ],
+        "mentions": [
+          "田子坊"
+        ],
+        "status": "selected",
+        "selected_candidate_id": "cand_3f34ae9a8766291d6f61",
+        "selected_name": "上海田子坊",
+        "selected_address": "泰康路210号(打浦桥地铁站1号口旁)",
+        "rationale": "田子坊 visit obligation. Candidate B00155HO6Y '上海田子坊' at 泰康路210号 is the canonical 特色商业街 art-district landmark, open 24h and by the 打浦桥 metro. '田子坊艺术中心' is a single gallery and '田子坊东部旅游区' is a sub-area, so the main district is the correct visit target.",
+        "confidence": 0.93,
+        "options": [
+          {
+            "candidate_id": "cand_3f34ae9a8766291d6f61",
+            "name": "上海田子坊",
+            "address": "泰康路210号(打浦桥地铁站1号口旁)"
+          },
+          {
+            "candidate_id": "cand_978dc717b3a543e25182",
+            "name": "田子坊艺术中心",
+            "address": "打浦桥街道泰康路210弄2号乙二楼(田子坊前行50米)"
+          },
+          {
+            "candidate_id": "cand_d5a08101991f0305478e",
+            "name": "田子坊东部旅游区",
+            "address": "泰康路210弄1-23号田子坊内"
+          }
+        ],
+        "clarification_question": null
+      },
+      {
+        "target_id": "qry_01b5c53e362cc3483186",
+        "obligation_ids": [
+          "obl_01b5c53e362cc3483186"
+        ],
+        "mentions": [
+          "光明邨大酒家"
+        ],
+        "status": "selected",
+        "selected_candidate_id": "cand_5fe0eb9262b315780605",
+        "selected_name": "光明邨大酒家(淮海中路总店)",
+        "selected_address": "淮海中路588号(淮海中路地铁站1号口步行300米)",
+        "rationale": "光明邨大酒家 meal obligation. Candidate B00155L02C '光明邨大酒家(淮海中路总店)' at 淮海中路588号 is the flagship (总店) 综合酒楼, the well-known original branch; it sits between 思南公馆 and 田子坊 area. The other two candidates are suburban branches (汇阳广场店, 中庚·漫游城店), so the 总店 is the correct meal stop.",
+        "confidence": 0.91,
+        "options": [
+          {
+            "candidate_id": "cand_5fe0eb9262b315780605",
+            "name": "光明邨大酒家(淮海中路总店)",
+            "address": "淮海中路588号(淮海中路地铁站1号口步行300米)"
+          },
+          {
+            "candidate_id": "cand_c3f0a05c7915f59e6d97",
+            "name": "光明邨大酒家(汇阳广场店)",
+            "address": "田林东路75号汇阳广场2层"
+          },
+          {
+            "candidate_id": "cand_b28536ae3ec00cf866b6",
+            "name": "光明邨大酒家(中庚·漫游城店)",
+            "address": "梅陇镇闵虹路8号中庚漫游城B2层"
+          }
+        ],
+        "clarification_question": null
+      }
+    ],
+    "unresolved_places": [],
+    "fact_status": "failed",
+    "experience_status": "needs_adjustment",
+    "experience_issues": [
+      {
+        "severity": "review",
+        "code": "required_time_window_violated",
+        "message": "光明邨大酒家 实际于第 2 天 15:02 到达，未满足资料中的“晚餐在光明邨大酒家”时段 17:00–20:00。",
+        "recommendation": "调整第 2 天顺序，使 光明邨大酒家 在 17:00–20:00 到达。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [
+          "obl_01b5c53e362cc3483186"
+        ],
+        "place_names": [
+          "光明邨大酒家"
+        ]
+      },
+      {
+        "severity": "review",
+        "code": "preferred_time_window_violated",
+        "message": "上海和平饭店 实际于第 2 天 09:30 到达，未满足资料中的“第二天午餐可以回酒店自由用餐并休息45分钟以上”时段 11:00–13:00。",
+        "recommendation": "调整第 2 天顺序，使 上海和平饭店 在 11:00–13:00 到达。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [
+          "obl_f224ad056e256fe8dd74"
+        ],
+        "place_names": [
+          "上海和平饭店"
+        ]
+      },
+      {
+        "severity": "review",
+        "code": "preferred_pace_limit_violated",
+        "message": "第 2 天从 09:30 持续到 17:13，共 463 分钟，超过资料中的节奏上限 360 分钟（超出 103 分钟）。",
+        "recommendation": "从第 2 天移出一个非必需停靠点，或拆分到其他日期，使总时长不超过 360 分钟。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": []
+      },
+      {
+        "severity": "review",
+        "code": "required_transport_mode_violated",
+        "message": "第 1 天 上海和平饭店 到 外滩 使用 walk，未满足资料中的交通方式偏好 taxi。",
+        "recommendation": "重新查询并采用 taxi 中的可执行方式；若不可用，请明确向用户说明并请求确认。",
+        "day_numbers": [
+          1
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "上海和平饭店",
+          "外滩"
+        ]
+      },
+      {
+        "severity": "review",
+        "code": "required_transport_mode_violated",
+        "message": "第 1 天 外滩 到 豫园 使用 walk，未满足资料中的交通方式偏好 taxi。",
+        "recommendation": "重新查询并采用 taxi 中的可执行方式；若不可用，请明确向用户说明并请求确认。",
+        "day_numbers": [
+          1
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "外滩",
+          "豫园"
+        ]
+      },
+      {
+        "severity": "review",
+        "code": "required_transport_mode_violated",
+        "message": "第 1 天 豫园 到 南翔馒头店（豫园店） 使用 walk，未满足资料中的交通方式偏好 taxi。",
+        "recommendation": "重新查询并采用 taxi 中的可执行方式；若不可用，请明确向用户说明并请求确认。",
+        "day_numbers": [
+          1
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "豫园",
+          "南翔馒头店（豫园店）"
+        ]
+      },
+      {
+        "severity": "review",
+        "code": "required_transport_mode_violated",
+        "message": "第 2 天 思南公馆 到 田子坊 使用 walk，未满足资料中的交通方式偏好 taxi。",
+        "recommendation": "重新查询并采用 taxi 中的可执行方式；若不可用，请明确向用户说明并请求确认。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "思南公馆",
+          "田子坊"
+        ]
+      },
+      {
+        "severity": "review",
+        "code": "lunch_not_separately_planned",
+        "message": "第 2 天行程覆盖 11:30–14:00（田子坊），尚未单独安排午餐。",
+        "recommendation": "在第 2 天 11:30–14:00 的行程中预留午餐时间，并说明自由用餐安排。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "田子坊"
+        ]
+      }
+    ]
+  },
+  "assessment": {
+    "candidate_snapshot_id": "candidate_84c39f8d682fd9462318",
+    "producing_run_id": "run-c218fa1b-6e38-4ba1-a9a2-457537619553",
+    "state": "blocked",
+    "may_publish": false,
+    "issues": [
+      {
+        "code": "fact_gap_planned_visit_operationally_incompatible",
+        "severity": "blocking",
+        "message": "第 2 天 光明邨大酒家：光明邨大酒家(淮海中路总店)：计划到访时间为 2026-10-18（周日）15:02，地点为光明邨大酒家(淮海中路总店)（淮海中路588号）。高德地点详情页[0]给出该总店营业时间为「周一至周日 07:30-14:00,17:00-20:30」，即午市 14:00 结束、晚市 17:00 才开始。15:02 正落在 14:00-17:00 的午休停业时段，届时门店不营业，无法执行本次到访。来源[2]仅确认门店地址、电话，未提供与该时段相冲突的营业信息；[1][3][4]为品牌介绍与点评，不含总店具体营业时段。 无法确认该地点在计划到访时段可执行，发布前需要复核。",
+        "recommendation": "重试该事实查询或从路线中明确移除受影响地点。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "光明邨大酒家"
+        ]
+      },
+      {
+        "code": "operational_fact_missing",
+        "severity": "blocking",
+        "message": "第 2 天 光明邨大酒家 在 15:02 到访，但没有可追溯的营业、闭馆、停止入场或预约核验。",
+        "recommendation": "仅对这个已排入行程的停靠点补充带来源的运营事实，再重新进入发布门禁。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "光明邨大酒家"
+        ]
+      },
+      {
+        "code": "required_time_window_violated",
+        "severity": "review",
+        "message": "光明邨大酒家 实际于第 2 天 15:02 到达，未满足资料中的“晚餐在光明邨大酒家”时段 17:00–20:00。",
+        "recommendation": "调整第 2 天顺序，使 光明邨大酒家 在 17:00–20:00 到达。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [
+          "obl_01b5c53e362cc3483186"
+        ],
+        "place_names": [
+          "光明邨大酒家"
+        ]
+      },
+      {
+        "code": "preferred_time_window_violated",
+        "severity": "review",
+        "message": "上海和平饭店 实际于第 2 天 09:30 到达，未满足资料中的“第二天午餐可以回酒店自由用餐并休息45分钟以上”时段 11:00–13:00。",
+        "recommendation": "调整第 2 天顺序，使 上海和平饭店 在 11:00–13:00 到达。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [
+          "obl_f224ad056e256fe8dd74"
+        ],
+        "place_names": [
+          "上海和平饭店"
+        ]
+      },
+      {
+        "code": "preferred_pace_limit_violated",
+        "severity": "review",
+        "message": "第 2 天从 09:30 持续到 17:13，共 463 分钟，超过资料中的节奏上限 360 分钟（超出 103 分钟）。",
+        "recommendation": "从第 2 天移出一个非必需停靠点，或拆分到其他日期，使总时长不超过 360 分钟。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": []
+      },
+      {
+        "code": "required_transport_mode_violated",
+        "severity": "review",
+        "message": "第 1 天 上海和平饭店 到 外滩 使用 walk，未满足资料中的交通方式偏好 taxi。",
+        "recommendation": "重新查询并采用 taxi 中的可执行方式；若不可用，请明确向用户说明并请求确认。",
+        "day_numbers": [
+          1
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "上海和平饭店",
+          "外滩"
+        ]
+      },
+      {
+        "code": "required_transport_mode_violated",
+        "severity": "review",
+        "message": "第 1 天 外滩 到 豫园 使用 walk，未满足资料中的交通方式偏好 taxi。",
+        "recommendation": "重新查询并采用 taxi 中的可执行方式；若不可用，请明确向用户说明并请求确认。",
+        "day_numbers": [
+          1
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "外滩",
+          "豫园"
+        ]
+      },
+      {
+        "code": "required_transport_mode_violated",
+        "severity": "review",
+        "message": "第 1 天 豫园 到 南翔馒头店（豫园店） 使用 walk，未满足资料中的交通方式偏好 taxi。",
+        "recommendation": "重新查询并采用 taxi 中的可执行方式；若不可用，请明确向用户说明并请求确认。",
+        "day_numbers": [
+          1
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "豫园",
+          "南翔馒头店（豫园店）"
+        ]
+      },
+      {
+        "code": "required_transport_mode_violated",
+        "severity": "review",
+        "message": "第 2 天 思南公馆 到 田子坊 使用 walk，未满足资料中的交通方式偏好 taxi。",
+        "recommendation": "重新查询并采用 taxi 中的可执行方式；若不可用，请明确向用户说明并请求确认。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "思南公馆",
+          "田子坊"
+        ]
+      },
+      {
+        "code": "lunch_not_separately_planned",
+        "severity": "review",
+        "message": "第 2 天行程覆盖 11:30–14:00（田子坊），尚未单独安排午餐。",
+        "recommendation": "在第 2 天 11:30–14:00 的行程中预留午餐时间，并说明自由用餐安排。",
+        "day_numbers": [
+          2
+        ],
+        "obligation_ids": [],
+        "place_names": [
+          "田子坊"
+        ]
+      }
+    ]
+  },
+  "release": null
+}

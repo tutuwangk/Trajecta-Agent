@@ -1,0 +1,233 @@
+{
+  "schema_version": 3,
+  "scenarios": [
+    {
+      "scenario_id": "poi_query_noise_bounded",
+      "user_risk": "时间词、行动词和品牌上下文进入 POI 查询并造成目标膨胀",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_requirement_compilation.py::test_chengdu_material_produces_bounded_place_queries_without_noise"
+    },
+    {
+      "scenario_id": "provider_candidate_noise_filtered",
+      "user_risk": "入口、地铁站和附属设施进入 Agent 候选上下文",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_candidate_intake.py::test_candidate_intake_filters_provider_noise_before_agent_context"
+    },
+    {
+      "scenario_id": "grounding_grouped_by_original_place",
+      "user_risk": "用户无法看出每个原始地点最终选中了谁",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/domain/test_grounding.py::test_registry_keeps_resolution_grouped_by_original_target"
+    },
+    {
+      "scenario_id": "branch_ambiguity_waits",
+      "user_risk": "同名分店被静默任选",
+      "expected_delivery_state": "waiting_user",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_material_ambiguity_waits_on_same_run_without_candidate_release"
+    },
+    {
+      "scenario_id": "named_meal_real_stop",
+      "user_risk": "指定餐厅被压缩成用餐时长占位",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/domain/test_plan_graph.py::test_named_restaurant_is_a_real_stop_not_a_meal_placeholder"
+    },
+    {
+      "scenario_id": "explicit_place_coverage_closed",
+      "user_risk": "景点、餐饮、购物或打卡点在中途静默消失",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/domain/test_requirements.py::test_explicit_place_coverage_cannot_silently_disappear"
+    },
+    {
+      "scenario_id": "visible_daily_anchors_and_titles",
+      "user_risk": "酒店到首站、末站回酒店或机场没有用户可见路径，日标题缺失",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/domain/test_plan_graph.py::test_day_title_and_visible_start_end_anchors_are_required"
+    },
+    {
+      "scenario_id": "complete_stop_leg_timeline",
+      "user_risk": "草案缺少出发、到达、交通方式、时长和停留时长",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_timeline_compiler.py::test_compiler_emits_complete_depart_arrive_transport_stay_timeline"
+    },
+    {
+      "scenario_id": "transport_preference_not_poi",
+      "user_risk": "交通偏好被当作地点或在路线中丢失",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_requirement_compilation.py::test_transport_language_becomes_constraint_not_place_query"
+    },
+    {
+      "scenario_id": "scheduled_only_fact_queries",
+      "user_risk": "候选未收敛前对未排入行程的地点浪费事实查询",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/domain/test_fact_needs.py::test_fact_needs_are_derived_only_from_scheduled_stops_and_legs"
+    },
+    {
+      "scenario_id": "operational_fact_cited",
+      "user_risk": "地点身份被误包装为营业与预约事实已核验",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_operational_fact_provider.py::test_operational_fact_requires_cited_visit_compatible_evidence"
+    },
+    {
+      "scenario_id": "scheduled_route_provider_failure",
+      "user_risk": "路线事实失败时不知道影响地点、日期和是否仍在行程",
+      "expected_delivery_state": "needs_resume",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_scheduled_route_failure_names_places_and_prevents_release"
+    },
+    {
+      "scenario_id": "scheduled_operation_provider_failure",
+      "user_risk": "运营事实失败只显示抽象错误且没有可审阅候选",
+      "expected_delivery_state": "blocked",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_operational_fact_gap_persists_blocked_candidate_with_exact_stops"
+    },
+    {
+      "scenario_id": "local_context_only",
+      "user_risk": "全量目标、候选、旧草案和事实反复污染 Agent 上下文",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_local_context.py::test_planning_context_reduces_grounding_to_selected_place_summaries"
+    },
+    {
+      "scenario_id": "budget_boundary_resumable",
+      "user_risk": "工具调用量或检查点替代真实目标闭环",
+      "expected_delivery_state": "needs_resume",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_goal_loop.py::test_budget_exhaustion_never_forces_incomplete_plan_to_delivery"
+    },
+    {
+      "scenario_id": "terminal_run_immutable",
+      "user_risk": "cancelled、failed 或 succeeded 被后续异常覆盖",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_repository_state_machine.py::test_terminal_run_status_cannot_be_overwritten"
+    },
+    {
+      "scenario_id": "current_run_release_only",
+      "user_risk": "当前运行错误展示工作区其他运行的 Release",
+      "expected_delivery_state": "not_delivered",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/api/test_delivery_routes.py::test_delivery_endpoint_never_falls_back_to_workspace_latest_release"
+    },
+    {
+      "scenario_id": "cancelled_run_no_old_release",
+      "user_risk": "取消后仍看到旧版本或产生新发布",
+      "expected_delivery_state": "not_delivered",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/api/test_delivery_routes.py::test_cancelled_run_has_run_status_but_no_fake_delivery"
+    },
+    {
+      "scenario_id": "degraded_fact_not_release",
+      "user_risk": "估算或降级事实被包装成不可变发布",
+      "expected_delivery_state": "review_required",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/domain/test_delivery_gate.py::test_degraded_fact_or_estimated_leg_cannot_be_immutable_release"
+    },
+    {
+      "scenario_id": "experience_advice_preserved_in_release",
+      "user_risk": "普通体验建议反复阻断结果，或发布后丢失具体建议",
+      "expected_delivery_state": "publishable_with_advice",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/domain/test_delivery_gate.py::test_experience_advice_is_preserved_in_a_publishable_trip"
+    },
+    {
+      "scenario_id": "compiled_constraint_violation_specific",
+      "user_risk": "风险提示泛化且没有具体日期、地点与调整建议",
+      "expected_delivery_state": "blocked",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/domain/test_experience_validation.py::test_compiled_arrival_is_checked_against_source_time_window"
+    },
+    {
+      "scenario_id": "chengdu_named_meal_strict_release",
+      "user_risk": "局部检查通过但真实资料驱动旅程不可执行",
+      "expected_delivery_state": "publishable",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/evals/test_chengdu_end_to_end.py::test_chengdu_named_meal_journey_reaches_strict_release"
+    },
+    {
+      "scenario_id": "explicit_place_cannot_bypass_grounding",
+      "user_risk": "显式景点、酒店或餐厅被错误标记为 reference 后绕过查询和覆盖",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_deepseek_adapters.py::test_explicit_schedulable_place_cannot_be_silently_referenced"
+    },
+    {
+      "scenario_id": "grounding_phase_is_monotonic",
+      "user_risk": "规划修订重新打开已完成消歧，重复候选和旧选择重新污染上下文",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_root_agent_controls_actions_while_runtime_owns_facts_and_release"
+    },
+    {
+      "scenario_id": "invalid_plan_is_agent_feedback",
+      "user_risk": "一次不合法候选或处置提交把可修复 Agent 偏差升级为系统 failed",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_deepseek_adapters.py::test_plan_commitment_error_becomes_model_retry"
+    },
+    {
+      "scenario_id": "provider_history_compacts_at_checkpoint",
+      "user_risk": "旧候选、旧草案和旧事实在业务阶段之间持续累积到 provider 上下文",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_deepseek_adapters.py::test_root_agent_compacts_provider_history_at_business_checkpoint"
+    },
+    {
+      "scenario_id": "fact_only_blocker_requests_user",
+      "user_risk": "外部事实无法继续调查后 Agent 仍反复改写相同行程而不形成具体确认",
+      "expected_delivery_state": "waiting_user",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_deepseek_adapters.py::test_fact_only_blockers_close_as_clarification"
+    },
+    {
+      "scenario_id": "provider_balance_is_resumable",
+      "user_risk": "外部模型余额、限流或临时不可用被误标为不可恢复业务失败",
+      "expected_delivery_state": "needs_resume",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/api/test_delivery_routes.py::test_provider_balance_blocker_is_resumable_and_never_publishes"
+    },
+    {
+      "scenario_id": "same_run_resume_visible",
+      "user_risk": "needs_resume 只有内部状态，用户没有继续同一 run 的可执行入口",
+      "expected_delivery_state": "needs_resume",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/api/test_delivery_routes.py::test_resume_endpoint_reuses_same_run_and_records_request"
+    },
+    {
+      "scenario_id": "inflight_cancel_not_failed",
+      "user_risk": "执行中取消同时追加 failed 事件，导致运行与交付语义冲突",
+      "expected_delivery_state": "cancelled",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/api/test_delivery_routes.py::test_inflight_user_cancellation_does_not_also_emit_run_failed"
+    },
+    {
+      "scenario_id": "missing_anchor_clarified_before_search",
+      "user_risk": "用户未提供酒店或机场时系统先搜索全部景点，最后才因路线锚点缺失失败",
+      "expected_delivery_state": "waiting_user",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_missing_daily_anchor_waits_before_any_provider_query"
+    },
+    {
+      "scenario_id": "merged_mentions_share_identity_and_stop",
+      "user_risk": "重复地点虽标记 merge，却被跳过消歧或在覆盖账本中再次丢失",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_plan_commitment.py::test_merged_mentions_share_one_selected_candidate_and_stop"
+    },
+    {
+      "scenario_id": "source_clarification_precedes_search",
+      "user_risk": "资料已判定具体门店不足，却仍先查询其他地点并留下无法处置的 clarify obligation",
+      "expected_delivery_state": "waiting_user",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_source_level_place_clarification_precedes_provider_search"
+    },
+    {
+      "scenario_id": "explicit_meal_time_preserved",
+      "user_risk": "用户指定午餐或晚餐后，模型遗漏对应时间约束导致餐厅被排到错误时段",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_requirement_compilation.py::test_explicit_meal_slot_is_inferred_when_interpreter_omits_constraint"
+    },
+    {
+      "scenario_id": "airport_time_clarified_before_search",
+      "user_risk": "行程含机场接送但没有航班时间，系统先消耗地点查询后才发现首末日不可排",
+      "expected_delivery_state": "waiting_user",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_airport_anchor_without_flight_times_waits_before_search"
+    },
+    {
+      "scenario_id": "timeline_preserves_user_place_name",
+      "user_risk": "地图候选别名覆盖用户资料中的地点名，使交付时间线难以核对原始需求",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/runtime/test_autonomous_runtime.py::test_timeline_keeps_user_place_names_when_provider_uses_aliases"
+    },
+    {
+      "scenario_id": "invalid_domain_plan_shape_is_agent_feedback",
+      "user_risk": "模型提交字段结构错误时直接终止运行，而不是获得可修复的领域反馈",
+      "expected_delivery_state": "contract_pass",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/integration/test_deepseek_adapters.py::test_invalid_domain_plan_shape_becomes_model_retry"
+    },
+    {
+      "scenario_id": "balance_blocker_stops_new_cases",
+      "user_risk": "模型余额不足后批量运行仍继续启动新场景并制造重复失败事件",
+      "expected_delivery_state": "needs_resume",
+      "pytest_nodeid": "backend/tests/trip_agent_v3/evals/test_shadow_corpus.py::test_shadow_runner_stops_starting_cases_after_balance_blocker"
+    }
+  ]
+}

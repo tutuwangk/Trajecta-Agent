@@ -1,5 +1,5 @@
-import { AgentWorkspaceApp } from "@/components/agent-v2/AgentWorkspaceApp";
+import { AgentV3WorkspaceApp } from "@/components/agent-v3/AgentV3WorkspaceApp";
 
 export default function HomePage() {
-  return <AgentWorkspaceApp />;
+  return <AgentV3WorkspaceApp />;
 }

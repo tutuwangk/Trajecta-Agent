@@ -70,9 +70,9 @@ async function proxy(request: Request, context: RouteContext) {
           code: "network_error",
           message: isPlanningRequest
             ? "路线生成连接意外中断，请稍后重试；服务端可能仍在处理。"
-            : process.env.NODE_ENV === "production"
-              ? "无法连接后端服务，请检查 BACKEND_API_BASE_URL 是否指向可访问的后端地址。"
-              : "整理服务暂时不可用，请确认本地服务已启动后再重试。"
+            : localHostnames.has(new URL(backendBase).hostname)
+              ? "本地旅行规划服务未启动或连接已断开，请启动服务后重试。"
+              : "无法连接旅行规划服务，请检查服务地址后重试。"
         },
         step_status: {}
       },
