@@ -1,33 +1,73 @@
 # Trajecta-Agent
 
-**English** | [简体中文](./README.zh-CN.md)
+把零散旅行资料和想法整理好，给你一份每日行程规划。
 
-Trajecta is a travel planning agent that turns source material into an itinerary. The repository
-runs a single V3 stack. One `TripPlannerAgent` selects places, resolves ambiguity, assigns days,
-orders stops, and arranges meals. Deterministic Python code owns place identity, route facts,
-time calculations, state, idempotency, and release eligibility.
+Trajecta-Agent 面向真实旅行决策场景。用户输入目的地、天数、交通偏好、路线目标和行程强度等信息，并粘贴攻略、地点清单、餐厅推荐或自由描述后，系统会整理地点、确认位置，并生成可继续调整的每日路线。
 
-A completed run accounts for every explicit place and produces an executable timeline with
-traceable key facts. Route estimates, missing key facts, pending place confirmations, and fixed
-appointment conflicts produce an itinerary preview with specific review items. Itineraries with
-verified facts can be delivered with advice on pace, long days, and transport preferences.
 
-The frontend displays a daily timeline beside a linked map. It supports place selection, zoom,
-pan, navigation links, and a fallback when map tiles fail. The home page's demo uses local sample
-data. Generating a plan calls the model and place services.
+## 功能简介
 
-The desktop trip form pairs inputs with a trip summary and provides preference shortcuts and
-button feedback. During planning, the workspace shows runtime events, current tasks, tool names,
-call durations, and total runtime. Pause, resume, and refresh retain the same run's records.
-The result map includes expandable planning records. See the
-[UI change and validation record](./docs/agent-v3/UI_EXPERIENCE_2026-10-03.md).
+- 收集目的地、天数、酒店名、出行人数、预算、兴趣偏好、交通偏好、路线目标和行程强度
+- 识别资料里的景点、餐厅、酒店和其他地点
+- 生成轻量地点池，让用户用少量操作完成关键决策
+- 生成按天拆分的旅行路线
+- 在结果页继续修改，让 Agent 重新整理
+- 连锁品牌可先做“顺路规划”，先选参考地点，再匹配最近的具体门店
 
-![Trip input screen, 2026-10-03](./docs/agent-v3/ui-evidence/create-trip-2026-10-03.jpg)
+适合的输入包括攻略摘录、餐厅清单、朋友推荐、酒店地址、备忘录，以及自然语言形式的旅行想法。
 
-## Run locally
+## 功能演示
 
-Install Python 3, Node.js, and pnpm. Copy `.env.example` to a local `.env` and configure
-`LLM_API_KEY`, `LLM_BASE_URL`, and `AMAP_API_KEY`. Keep `.env` and local SQLite files out of Git.
+### 操作演示
+
+![操作演示](./demo/操作演示.gif)
+
+### 结果展示
+
+![结果展示](./demo/结果展示.gif)
+
+## Agent 工作流程
+
+1. 收集行程约束
+   用户填写目的地、天数、酒店、人数、偏好、交通方式、路线目标和行程强度，并补充攻略、地点清单、餐厅推荐或自由描述。结构化设置和原始资料共同构成规划依据。
+
+2. 解析资料、确认地点并整理地点池
+   资料解析角色从文本中识别地点和用户意图，优先保证不漏掉简称、混合名称和未指定门店的品牌；高德服务再负责确认真实位置。系统结合资料证据、地点类型、酒店位置与用户偏好给出默认建议，用户可将地点设为必去、待定、移除或改名。
+
+   对未指定门店的连锁品牌，用户可以选择“顺路规划”，以酒店或其他已识别地点为参考，系统匹配最近的具体门店后再参与路线规划。
+
+3. 生成路线蓝图
+   只有已确认、且未被移除的地点会进入正式规划。系统分别使用时长估计、路线规划、体验评审和文案生成等角色：时长估计先判断各地点适合停留多久；规划角色负责选点、分天、排序、饭点策略和取舍；体验评审检查节奏是否合理；文案角色把已确定的结果整理为用户可读说明。
+
+   规划会综合天数、酒店位置、交通偏好、路线目标、兴趣偏好和行程强度。LLM 负责行程语义与取舍，地图事实、地点合法性和时间安排仍由系统掌握。
+
+4. 系统落地、校验并修正
+   后端根据实际采用的相邻地点请求高德交通信息，确定性生成酒店往返、点间交通、饭点、到达时间和每日总外出时长。系统优先保护明确要求和必去地点；当节奏或空间安排不够理想时，会自动调整或给出提示，而不是把普通取舍交还给用户。
+
+   生成结果会经过事实与时间线校验。模型输出不稳定时，系统会重试并回退到基于真实地点和地图事实的稳定方案。前端只展示最终路线说明和后端已确定的时间线。
+
+5. 根据反馈继续调整
+   用户可以继续调整某一天的节奏、更换酒店、后置地点，或重新做连锁店的顺路规划。若重新识别地点、改名重搜或修改地点决定，旧路线会标记为需要重新生成，避免继续展示过期结果。
+
+## 本地部署
+
+需要本地安装：
+
+- Python 3
+- Node.js
+- pnpm
+
+复制 `.env.example` 为 `.env`，填入必要配置：
+
+- `LLM_API_KEY`：LLM 服务密钥
+- `LLM_MODEL`：默认模型
+- `AMAP_API_KEY`：高德 Web 服务密钥
+
+可按角色分别设置 `LLM_DURATION_MODEL`、`LLM_PLANNING_MODEL` 和 `LLM_COPY_MODEL`；未设置时均使用 `LLM_MODEL`。其他运行参数请参考 `.env.example` 和 [技术说明](./docs/ARCHITECTURE.md)。
+
+后端会自动读取项目根目录的 `.env`。
+
+启动后端：
 
 ```bash
 cd backend
@@ -37,97 +77,27 @@ pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
+启动前端：
+
 ```bash
 cd frontend
 pnpm install
 pnpm run dev
 ```
 
-Open `http://localhost:3000`. The frontend proxies FastAPI through `/api/backend/*`.
-Set `BACKEND_API_BASE_URL` when the backend runs on another host.
+浏览器打开 `http://localhost:3000` 即可开始使用。
 
-## API
 
-```text
-GET  /health
-POST /api/v3/trip-workspaces
-GET  /api/v3/trip-workspaces/{workspace_id}
-POST /api/v3/trip-workspaces/{workspace_id}/runs
-POST /api/v3/trip-workspaces/{workspace_id}/revisions
-GET  /api/v3/agent-runs/{run_id}
-GET  /api/v3/agent-runs/{run_id}/events
-GET  /api/v3/agent-runs/{run_id}/metrics
-GET  /api/v3/agent-runs/{run_id}/delivery
-POST /api/v3/agent-runs/{run_id}/resume
-POST /api/v3/agent-runs/{run_id}/answers
-POST /api/v3/agent-runs/{run_id}/cancel
-```
+## 项目结构
 
-The page URL stores `workspace` and `run`. Refresh restores that run, and delivery reads use
-its bound Release.
+- `frontend/`：前端页面、组件和前端代理
+- `backend/`：后端接口、地点整理、路线生成和校验
+- `database/`：数据库结构参考
+- `examples/`：样例输入输出
 
-## Agent architecture and data flow
+## 当前边界
 
-Constrained structured calls turn source material into a `RequirementLedger` and a `QueryPlan`
-that defines allowed map queries. Each place retains up to three candidates. Decisions are stored
-in the `GroundingRegistry`. One `TripPlannerAgent` chooses places and prepares the draft.
-The Runtime saves checkpoints. Deterministic Python code retrieves facts, compiles time,
-and assesses delivery.
+- 当前版本以本地运行和完整规划闭环为重点
+- 输入范围聚焦用户主动提供的文本资料
+- 地图能力以高德地点链接为主
 
-```mermaid
-flowchart TD
-  UI["Travel workspace / Next.js"] --> API["Workspace / Run API / FastAPI"]
-  API --> RT["Runtime / checkpoints / bounded execution"]
-  RT --> Agent["Single TripPlannerAgent"]
-  Agent -->|"Place selection / days / order / meals"| Draft["WorkingDraft"]
-  Draft --> Routes["Route FactNeed"]
-  Routes --> Timeline["CompiledTimeline"]
-  Timeline --> Ops["Operational FactNeed"]
-  Ops --> Candidate["CandidateSnapshot"]
-  Candidate --> Gate{"DeliveryAssessment"}
-  Gate -->|"Adjustment feedback"| Agent
-  Gate -->|"Verified facts / no blocking issues"| Release["Run-bound Release / experience advice"]
-  Gate -->|"Fact gaps / fixed commitment conflicts"| Preview["Preview / review / clarification"]
-  Release --> View["Daily timeline / linked map"]
-  RT --> Python["Deterministic Python / facts / time / versions / idempotency"]
-  Python -.-> Routes
-  Python -.-> Timeline
-  Python -.-> Ops
-  Python -.-> Gate
-```
-
-Route facts produce the timeline first. Operational facts are then queried for the actual visit
-times. Verified facts and zero blocking issues allow a Release bound to the current run, with
-experience advice attached. See the [V3 architecture](./docs/agent-v3/ARCHITECTURE.md).
-
-## Project structure
-
-- `backend/app/trip_agent_v3/`: domain models, single-agent Runtime, provider adapters, facts, and delivery.
-- `backend/tests/trip_agent_v3/`: domain, integration, API, architecture, and travel risk tests.
-- `backend/evals/agent_v3/`: 30 provider scenarios across six cities and trips of one to five days.
-- `backend/scripts/run_trip_agent_v3_shadow.py`: auditable provider evaluation runner.
-- `frontend/components/agent-v3/`: trip input, place confirmation, timeline, map, and appointment reminders.
-- `docs/agent-v3/`: architecture, acceptance criteria, provider evidence, and cutover records.
-
-See the [2026-10-02 redesign record](./docs/agent-v3/REDESIGN_2026-10-02.md) for the recent
-architecture and product changes.
-
-V1 and V2 execution code, routes, frontend, tests, scripts, and evaluation datasets were removed
-on 2026-08-01.
-
-## Validation
-
-```bash
-backend/.venv/bin/pytest -q
-backend/.venv/bin/python -m compileall -q backend/app backend/main.py
-backend/.venv/bin/python backend/scripts/run_trip_agent_v3_shadow.py \
-  --validate-corpus-only --output-dir /tmp/trajecta-v3-corpus-check
-cd frontend && pnpm test
-cd frontend && ./node_modules/.bin/tsc --noEmit --incremental false
-cd frontend && pnpm exec next build --webpack
-```
-
-The historical provider evaluation started 16 of 30 scenarios. Manual review passed two of
-five Releases. The remaining 14 scenarios were stopped at the user's request on 2026-08-01.
-See the [migration record](./docs/agent-v3/MIGRATION_AND_CUTOVER.md) and
-[partial evaluation evidence](./docs/agent-v3/PARTIAL_DISTRIBUTION_2026-07-31.md).

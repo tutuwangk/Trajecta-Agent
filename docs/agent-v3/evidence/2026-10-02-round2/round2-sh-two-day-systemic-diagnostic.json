@@ -1,8 +1,0 @@
-{
-  "run_id": "run-ffd18810-f23b-45b8-8e36-3d64b794ea89",
-  "previous_run_id": "run-95db7bc3-4f89-46f0-aa8c-5fbe14d07872",
-  "workspace_id": "shadow-round2-sh-two-day-round2-20261002",
-  "root_request_limit": 10,
-  "balance_before_cny": "0.69",
-  "seed": "same-source ledger with typed transport policy; existing draft and verified facts reused; root explicitly assesses before revising or publishing"
-}

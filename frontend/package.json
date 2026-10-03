@@ -1,10 +1,10 @@
 {
   "name": "travel-agent-frontend",
-  "version": "3.0.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "test": "node --experimental-strip-types --test lib/agent-v3-view.test.ts lib/agent-v3-api.test.ts lib/agent-v3-progress.test.ts",
+    "test": "node --experimental-strip-types --test lib/planning-flow.test.ts lib/planning-recovery.test.ts lib/timeline.test.ts lib/displayText.test.ts",
     "build": "next build",
     "typecheck": "next typegen && tsc --noEmit"
   },

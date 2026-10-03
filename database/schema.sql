@@ -51,30 +51,6 @@ CREATE TABLE IF NOT EXISTS planning_interventions (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS planning_runs (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  status TEXT NOT NULL,
-  stage TEXT NOT NULL,
-  checkpoint TEXT NOT NULL DEFAULT 'understanding',
-  result_status TEXT NOT NULL DEFAULT '',
-  error_code TEXT,
-  error_message TEXT,
-  attempt_count INTEGER NOT NULL DEFAULT 0,
-  duration_ms INTEGER NOT NULL DEFAULT 0,
-  input_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
-  fact_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
-  blueprint JSONB NOT NULL DEFAULT '{}'::jsonb,
-  validation_report JSONB NOT NULL DEFAULT '{}'::jsonb,
-  release_decision JSONB NOT NULL DEFAULT '{}'::jsonb,
-  metrics JSONB NOT NULL DEFAULT '{}'::jsonb,
-  result_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
-  idempotency_key TEXT NOT NULL DEFAULT '',
-  debug JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS route_cache (
   cache_key TEXT PRIMARY KEY,
   value JSONB NOT NULL,

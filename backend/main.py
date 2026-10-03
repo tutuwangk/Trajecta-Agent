@@ -9,11 +9,11 @@ from app.env import load_project_env
 
 load_project_env()
 
-from app.trip_agent_v3.api import router as trip_agent_v3_router
+from app.api.routes import router
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Trajecta Travel Agent", version="3.0.0")
+    app = FastAPI(title="Travel Agent v0.2", version="0.2.0")
     origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
     app.add_middleware(
         CORSMiddleware,
@@ -22,12 +22,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.include_router(trip_agent_v3_router)
-
-    @app.get("/health", tags=["system"])
-    def health() -> dict[str, str]:
-        return {"status": "ok", "stack": "v3"}
-
+    app.include_router(router)
     return app
 
 

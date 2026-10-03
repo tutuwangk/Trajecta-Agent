@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Trajecta 迹旅 · 把想去的地方串成旅程",
-  description: "从旅行笔记出发，安排每天的行程、地点与路线。"
+  title: "旅行路线整理",
+  description: "把旅行笔记整理成可执行路线"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

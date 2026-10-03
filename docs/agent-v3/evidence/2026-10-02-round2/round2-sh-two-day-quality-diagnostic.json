@@ -1,8 +1,0 @@
-{
-  "run_id": "run-93e77467-f3de-419d-9b21-569ce4274bbb",
-  "previous_run_id": "run-c218fa1b-6e38-4ba1-a9a2-457537619553",
-  "workspace_id": "shadow-round2-sh-two-day-round2-20261002",
-  "root_request_limit": 12,
-  "balance_before_cny": "1.39",
-  "seed": "same-input ledger and selected grounding; fresh draft and fact execution; prior correctly scoped operational sources reused for new-time extraction"
-}
